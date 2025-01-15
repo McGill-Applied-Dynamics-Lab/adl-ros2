@@ -36,15 +36,17 @@ def robot_description_dependent_nodes_spawner(
     context: LaunchContext,
     robot_ip,
     arm_id,
-    use_fake_hardware,
-    fake_sensor_commands,
+    # use_fake_hardware,
+    # fake_sensor_commands,
     load_gripper,
     hw_type,
 ):
     robot_ip_str = context.perform_substitution(robot_ip)
     arm_id_str = context.perform_substitution(arm_id)
-    use_fake_hardware_str = context.perform_substitution(use_fake_hardware)
-    fake_sensor_commands_str = context.perform_substitution(fake_sensor_commands)
+    use_fake_hardware_str = "false"  # context.perform_substitution(use_fake_hardware)
+    fake_sensor_commands_str = (
+        "false"  # context.perform_substitution(fake_sensor_commands)
+    )
     load_gripper_str = context.perform_substitution(load_gripper)
     hw_type_str = context.perform_substitution(hw_type)
 
@@ -65,12 +67,11 @@ def robot_description_dependent_nodes_spawner(
             "hand": load_gripper_str,
             "use_fake_hardware": use_fake_hardware_str,
             "fake_sensor_commands": fake_sensor_commands_str,
-            "test_param": "ALLOO",
         },
     ).toprettyxml(indent="  ")
 
     franka_controllers = PathJoinSubstitution(
-        [FindPackageShare("franka_bringup"), "config", "controllers.yaml"]
+        [FindPackageShare("my_bringup"), "config", "controllers.yaml"]
     )
 
     return [
@@ -86,11 +87,14 @@ def robot_description_dependent_nodes_spawner(
             executable="ros2_control_node",
             parameters=[
                 franka_controllers,
-                {"robot_description": robot_description},
+                # {"robot_description": robot_description},
                 {"arm_id": arm_id},
                 {"load_gripper": load_gripper},
             ],
-            remappings=[("joint_states", "franka/joint_states")],
+            remappings=[
+                ("joint_states", "franka/joint_states"),
+                ("/controller_manager/robot_description", "/robot_description"),
+            ],
             output={
                 "stdout": "screen",
                 "stderr": "screen",
@@ -106,18 +110,20 @@ def generate_launch_description():
     load_gripper_parameter_name = "load_gripper"
     hw_type_parameter_name = "hw_type"
 
-    use_fake_hardware_parameter_name = "use_fake_hardware"
-    fake_sensor_commands_parameter_name = "fake_sensor_commands"
     use_rviz_parameter_name = "use_rviz"
+    # use_fake_hardware_parameter_name = "use_fake_hardware"
+    # fake_sensor_commands_parameter_name = "fake_sensor_commands"
 
     arm_id = LaunchConfiguration(arm_id_parameter_name)
     robot_ip = LaunchConfiguration(robot_ip_parameter_name)
     load_gripper = LaunchConfiguration(load_gripper_parameter_name)
-    use_fake_hardware = LaunchConfiguration(use_fake_hardware_parameter_name)
-    fake_sensor_commands = LaunchConfiguration(fake_sensor_commands_parameter_name)
     hw_type = LaunchConfiguration(hw_type_parameter_name)  # fake, real, or isaac
-    use_rviz = LaunchConfiguration(use_rviz_parameter_name)
 
+    use_rviz = LaunchConfiguration(use_rviz_parameter_name)
+    # use_fake_hardware = LaunchConfiguration(use_fake_hardware_parameter_name)
+    # fake_sensor_commands = LaunchConfiguration(fake_sensor_commands_parameter_name)
+
+    #! Configs
     rviz_file = os.path.join(
         get_package_share_directory("franka_description"),
         "rviz",
@@ -129,8 +135,8 @@ def generate_launch_description():
         args=[
             robot_ip,
             arm_id,
-            use_fake_hardware,
-            fake_sensor_commands,
+            # use_fake_hardware,
+            # fake_sensor_commands,
             load_gripper,
             hw_type,
         ],
@@ -155,19 +161,19 @@ def generate_launch_description():
         description="Visualize the robot in Rviz",
     )
 
-    use_fake_hw_launch_arg = DeclareLaunchArgument(
-        use_fake_hardware_parameter_name,
-        default_value="false",
-        description="Use fake hardware",
-    )
+    # use_fake_hw_launch_arg = DeclareLaunchArgument(
+    #     use_fake_hardware_parameter_name,
+    #     default_value="false",
+    #     description="Use fake hardware",
+    # )
 
-    fake_sensor_commands_launch_arg = DeclareLaunchArgument(
-        fake_sensor_commands_parameter_name,
-        default_value="false",
-        description='Fake sensor commands. Only valid when "{}" is true'.format(
-            use_fake_hardware_parameter_name
-        ),
-    )
+    # fake_sensor_commands_launch_arg = DeclareLaunchArgument(
+    #     fake_sensor_commands_parameter_name,
+    #     default_value="false",
+    #     description='Fake sensor commands. Only valid when "{}" is true'.format(
+    #         use_fake_hardware_parameter_name
+    #     ),
+    # )
 
     load_gripper_launch_arg = DeclareLaunchArgument(
         load_gripper_parameter_name,
@@ -180,7 +186,7 @@ def generate_launch_description():
         hw_type_parameter_name,
         default_value="fake",
         description="Which hardware to use: 'real', 'fake', or 'isaac'",
-        choices=["real", "fake", "isaac"],
+        choices=["real", "fake", "isaac", "gazebo"],
     )
 
     # MARK: Nodes
@@ -207,40 +213,33 @@ def generate_launch_description():
         output="screen",
     )
 
-    franka_robot_state_broadcaster_spawner = Node(
-        package="controller_manager",
-        executable="spawner",
-        arguments=["franka_robot_state_broadcaster"],
-        parameters=[{"arm_id": arm_id}],
-        output="screen",
-        condition=UnlessCondition(use_fake_hardware),
-    )
+    # franka_robot_state_broadcaster_spawner = Node(
+    #     package="controller_manager",
+    #     executable="spawner",
+    #     arguments=["franka_robot_state_broadcaster"],
+    #     parameters=[{"arm_id": arm_id}],
+    #     output="screen",
+    #     # condition=UnlessCondition(use_fake_hardware),
+    # )
 
-    gripper_launch_description = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(
-            [
-                PathJoinSubstitution(
-                    [
-                        FindPackageShare("franka_gripper"),
-                        "launch",
-                        "gripper.launch.py",
-                    ]
-                )
-            ]
-        ),
-        launch_arguments={
-            robot_ip_parameter_name: robot_ip,
-            use_fake_hardware_parameter_name: use_fake_hardware,
-        }.items(),
-        condition=IfCondition(load_gripper),
-    )
-
-    move_to_start_ctrl = Node(
-        package="controller_manager",
-        executable="spawner",
-        arguments=["move_to_start_example_controller"],
-        output="screen",
-    )
+    # gripper_launch_description = IncludeLaunchDescription(
+    #     PythonLaunchDescriptionSource(
+    #         [
+    #             PathJoinSubstitution(
+    #                 [
+    #                     FindPackageShare("franka_gripper"),
+    #                     "launch",
+    #                     "gripper.launch.py",
+    #                 ]
+    #             )
+    #         ]
+    #     ),
+    #     launch_arguments={
+    #         robot_ip_parameter_name: robot_ip,
+    #         use_fake_hardware_parameter_name: use_fake_hardware,
+    #     }.items(),
+    #     condition=IfCondition(load_gripper),
+    # )
 
     rviz2_node = Node(
         package="rviz2",
@@ -256,15 +255,15 @@ def generate_launch_description():
             robot_ip_launch_arg,
             arm_id_launch_arg,
             use_rviz_launch_arg,
-            use_fake_hw_launch_arg,
-            fake_sensor_commands_launch_arg,
+            # use_fake_hw_launch_arg,
+            # fake_sensor_commands_launch_arg,
             load_gripper_launch_arg,
             hw_type_launch_arg,
             # Nodes
             joint_state_publisher_node,
             robot_description_dependent_nodes_spawner_opaque_function,
             joint_state_broadcaster_spawner,
-            franka_robot_state_broadcaster_spawner,
+            # franka_robot_state_broadcaster_spawner,
             # move_to_start_ctrl,
             # gripper_launch_description,
             rviz2_node,
