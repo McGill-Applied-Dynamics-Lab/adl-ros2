@@ -1,6 +1,6 @@
 controller_manager:
   ros__parameters:
-    update_rate: 1000  # Hz
+    update_rate: 100  # Hz
 
     gravity_compensation_example_controller:
       type: franka_example_controllers/GravityCompensationExampleController
@@ -38,9 +38,17 @@ controller_manager:
     model_example_controller:
       type: franka_example_controllers/ModelExampleController
 
+    # ros2_controllers
     joint_trajectory_controller:
       type: joint_trajectory_controller/JointTrajectoryController
 
+    velocity_controller:
+      type: velocity_controllers/JointGroupVelocityController
+
+    test_controller:
+      type: my_controllers/TestController
+
+    # Broadcasters
     joint_state_broadcaster:
       type: joint_state_broadcaster/JointStateBroadcaster
     
@@ -116,3 +124,34 @@ forward_position_controller:
       - fr3_joint6
       - fr3_joint7
     interface_name: position
+
+velocity_controller:
+  ros__parameters:
+    joints:
+      - fr3_joint1
+      - fr3_joint2
+      - fr3_joint3
+      - fr3_joint4
+      - fr3_joint5
+      - fr3_joint6
+      - fr3_joint7
+
+test_controller:
+  ros__parameters:
+    type: my_controllers/TestController
+    joints:
+      - fr3_joint1
+      - fr3_joint2
+      - fr3_joint3
+      - fr3_joint4
+      - fr3_joint5
+      - fr3_joint6
+      - fr3_joint7
+
+    command_interfaces:
+      - position
+      - velocity
+
+    state_interfaces:
+      - position
+      - velocity

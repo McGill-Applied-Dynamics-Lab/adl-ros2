@@ -25,7 +25,11 @@ from launch.actions import (
 )
 from launch.conditions import IfCondition, UnlessCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
+from launch.substitutions import (
+    LaunchConfiguration,
+    PathJoinSubstitution,
+    PythonExpression,
+)
 from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
 
@@ -109,19 +113,13 @@ def generate_launch_description():
     robot_ip_parameter_name = "robot_ip"
     load_gripper_parameter_name = "load_gripper"
     hw_type_parameter_name = "hw_type"
-
     use_rviz_parameter_name = "use_rviz"
-    # use_fake_hardware_parameter_name = "use_fake_hardware"
-    # fake_sensor_commands_parameter_name = "fake_sensor_commands"
 
     arm_id = LaunchConfiguration(arm_id_parameter_name)
     robot_ip = LaunchConfiguration(robot_ip_parameter_name)
     load_gripper = LaunchConfiguration(load_gripper_parameter_name)
     hw_type = LaunchConfiguration(hw_type_parameter_name)  # fake, real, or isaac
-
     use_rviz = LaunchConfiguration(use_rviz_parameter_name)
-    # use_fake_hardware = LaunchConfiguration(use_fake_hardware_parameter_name)
-    # fake_sensor_commands = LaunchConfiguration(fake_sensor_commands_parameter_name)
 
     #! Configs
     rviz_file = os.path.join(
@@ -161,20 +159,6 @@ def generate_launch_description():
         description="Visualize the robot in Rviz",
     )
 
-    # use_fake_hw_launch_arg = DeclareLaunchArgument(
-    #     use_fake_hardware_parameter_name,
-    #     default_value="false",
-    #     description="Use fake hardware",
-    # )
-
-    # fake_sensor_commands_launch_arg = DeclareLaunchArgument(
-    #     fake_sensor_commands_parameter_name,
-    #     default_value="false",
-    #     description='Fake sensor commands. Only valid when "{}" is true'.format(
-    #         use_fake_hardware_parameter_name
-    #     ),
-    # )
-
     load_gripper_launch_arg = DeclareLaunchArgument(
         load_gripper_parameter_name,
         default_value="true",
@@ -184,7 +168,7 @@ def generate_launch_description():
 
     hw_type_launch_arg = DeclareLaunchArgument(
         hw_type_parameter_name,
-        default_value="fake",
+        default_value="isaac",
         description="Which hardware to use: 'real', 'fake', or 'isaac'",
         choices=["real", "fake", "isaac", "gazebo"],
     )
@@ -241,12 +225,26 @@ def generate_launch_description():
     #     condition=IfCondition(load_gripper),
     # )
 
+    isaac_topics_remapper_node = Node(
+        package="isaac_joint_state_remapper",
+        executable="isaac_joint_state_remapper",
+        name="isaac_joint_state_remapper",
+        condition=IfCondition(PythonExpression(["'", hw_type, "' == 'isaac'"])),
+    )
+
     rviz2_node = Node(
         package="rviz2",
         executable="rviz2",
         name="rviz2",
         arguments=["--display-config", rviz_file],
         condition=IfCondition(use_rviz),
+    )
+
+    vel_controller_node = Node(
+        package="controller_manager",
+        executable="spawner",
+        arguments=["velocity_controller"],
+        output="screen",
     )
 
     launch_description = LaunchDescription(
@@ -267,6 +265,8 @@ def generate_launch_description():
             # move_to_start_ctrl,
             # gripper_launch_description,
             rviz2_node,
+            isaac_topics_remapper_node,
+            vel_controller_node,
         ]
     )
 
