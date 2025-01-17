@@ -23,7 +23,7 @@ from launch.actions import (
     OpaqueFunction,
     Shutdown,
 )
-from launch.conditions import IfCondition, UnlessCondition
+from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import (
     LaunchConfiguration,
@@ -197,14 +197,14 @@ def generate_launch_description():
         output="screen",
     )
 
-    # franka_robot_state_broadcaster_spawner = Node(
-    #     package="controller_manager",
-    #     executable="spawner",
-    #     arguments=["franka_robot_state_broadcaster"],
-    #     parameters=[{"arm_id": arm_id}],
-    #     output="screen",
-    #     # condition=UnlessCondition(use_fake_hardware),
-    # )
+    franka_robot_state_broadcaster_spawner = Node(
+        package="controller_manager",
+        executable="spawner",
+        arguments=["franka_robot_state_broadcaster"],
+        parameters=[{"arm_id": arm_id}],
+        output="screen",
+        condition=IfCondition(PythonExpression(["'", hw_type, "' == 'real'"])),
+    )
 
     # gripper_launch_description = IncludeLaunchDescription(
     #     PythonLaunchDescriptionSource(
@@ -225,6 +225,7 @@ def generate_launch_description():
     #     condition=IfCondition(load_gripper),
     # )
 
+    # To remap the joints names
     isaac_topics_remapper_node = Node(
         package="isaac_joint_state_remapper",
         executable="isaac_joint_state_remapper",
@@ -240,6 +241,7 @@ def generate_launch_description():
         condition=IfCondition(use_rviz),
     )
 
+    # For joint velocity control (from ros2_control)
     vel_controller_node = Node(
         package="controller_manager",
         executable="spawner",
@@ -261,8 +263,7 @@ def generate_launch_description():
             joint_state_publisher_node,
             robot_description_dependent_nodes_spawner_opaque_function,
             joint_state_broadcaster_spawner,
-            # franka_robot_state_broadcaster_spawner,
-            # move_to_start_ctrl,
+            franka_robot_state_broadcaster_spawner,
             # gripper_launch_description,
             rviz2_node,
             isaac_topics_remapper_node,
