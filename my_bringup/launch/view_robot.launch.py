@@ -168,7 +168,7 @@ def generate_launch_description():
 
     hw_type_launch_arg = DeclareLaunchArgument(
         hw_type_parameter_name,
-        default_value="isaac",
+        default_value="fake",
         description="Which hardware to use: 'real', 'fake', or 'isaac'",
         choices=["real", "fake", "isaac", "gazebo"],
     )
@@ -176,18 +176,18 @@ def generate_launch_description():
     # MARK: Nodes
     # To publish the state of the robot joints. Subscribes to the topics in `source_list`
     joint_state_publisher_node = Node(
-        package="joint_state_publisher",
-        executable="joint_state_publisher",
-        name="joint_state_publisher",
-        parameters=[
-            {
-                "source_list": [
-                    "franka/joint_states",
-                    "franka_gripper/joint_states",
-                ],
-                "rate": 30,
-            }
-        ],
+        package="joint_state_publisher_gui",
+        executable="joint_state_publisher_gui",
+        # name="joint_state_publisher",
+        # parameters=[
+        #     {
+        #         "source_list": [
+        #             "franka/joint_states",
+        #             "franka_gripper/joint_states",
+        #         ],
+        #         "rate": 30,
+        #     }
+        # ],
     )
 
     joint_state_broadcaster_spawner = Node(
@@ -225,13 +225,13 @@ def generate_launch_description():
     #     condition=IfCondition(load_gripper),
     # )
 
-    # To remap the joints names
-    isaac_topics_remapper_node = Node(
-        package="isaac_joint_state_remapper",
-        executable="isaac_joint_state_remapper",
-        name="isaac_joint_state_remapper",
-        condition=IfCondition(PythonExpression(["'", hw_type, "' == 'isaac'"])),
-    )
+    # # To remap the joints names
+    # isaac_topics_remapper_node = Node(
+    #     package="isaac_joint_state_remapper",
+    #     executable="isaac_joint_state_remapper",
+    #     name="isaac_joint_state_remapper",
+    #     condition=IfCondition(PythonExpression(["'", hw_type, "' == 'isaac'"])),
+    # )
 
     rviz2_node = Node(
         package="rviz2",
@@ -239,14 +239,6 @@ def generate_launch_description():
         name="rviz2",
         arguments=["--display-config", rviz_file],
         condition=IfCondition(use_rviz),
-    )
-
-    # For joint velocity control (from ros2_control)
-    vel_controller_node = Node(
-        package="controller_manager",
-        executable="spawner",
-        arguments=["velocity_controller"],
-        output="screen",
     )
 
     launch_description = LaunchDescription(
@@ -266,8 +258,7 @@ def generate_launch_description():
             franka_robot_state_broadcaster_spawner,
             # gripper_launch_description,
             rviz2_node,
-            isaac_topics_remapper_node,
-            vel_controller_node,
+            # isaac_topics_remapper_node,
         ]
     )
 
