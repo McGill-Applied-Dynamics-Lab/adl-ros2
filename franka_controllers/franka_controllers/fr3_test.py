@@ -7,9 +7,17 @@ from tf2_ros import TransformListener, Buffer
 from geometry_msgs.msg import TransformStamped
 
 import numpy as np
+import roboticstoolbox as rtb
 from robotic_arm_controller.RobotArm import RobotArm
 from spatialmath.base.quaternions import q2r
 from spatialmath.pose3d import SO3
+
+from rclpy.action import ActionServer
+from arm_interfaces.action import Empty
+import asyncio  # Add this at the top of the file
+import time
+
+from rclpy.executors import MultiThreadedExecutor
 
 
 class FR3Test(Node):
@@ -28,12 +36,18 @@ class FR3Test(Node):
             JointState, joint_states_topic, self._joint_state_callback, 10
         )
 
+        # Trajectories
+        self.trajectory = None
+
         # Command Publisher
         self._commmand_pub = self.create_publisher(
             Float64MultiArray, controller_command_topic, 10
         )
         self._command_msg = Float64MultiArray()
         self._command_msg.data = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+
+        self._cmd_timer_freq = 100  # Hz
+        self._cmd_pub_timer = self.create_timer(1 / 100, self._pub_joint_vels_cmd)
 
         # Pose Publisher
         self._pose_pub = self.create_publisher(PoseStamped, "/fr3_pose", 10)
@@ -45,11 +59,26 @@ class FR3Test(Node):
         self.tf_listener = TransformListener(self.tf_buffer, self)
         self.timer_tf = self.create_timer(0.25, self._tf_callback)  # Publish at 4 Hz
 
+        # Attributes
+        self._is_state_initialialized = False
+
+        # Actions
+        _as_freq = 100
+        self._as_loop_rate = self.create_rate(_as_freq, self.get_clock())  # 100 Hz rate
+        self._action_server = ActionServer(
+            self, Empty, "go_to_joint_positions", self.go_to_joint_positions
+        )
+
+    # Callbacks
     def _joint_state_callback(self, joint_msg):
+        """
+        Update the robot state with the joint state message from '\joint_states' topic
+        """
         q = np.array(joint_msg.position)
+        q = q[:7]  # Remove the fingers
         self._robot_arm.state.q = q
 
-        # self._commmand_pub.publish(self._command_msg)
+        self._is_state_initialialized = True
 
     def _publish_ee_pose(self):
         ee_position = self._robot_arm.state.ee_position
@@ -73,6 +102,7 @@ class FR3Test(Node):
                 "base", "fr3_hand", rclpy.time.Time()
             )
             self._handle_transform(trans)
+
         except Exception as e:
             self.get_logger().warn(f"Could not transform: {e}")
 
@@ -109,15 +139,112 @@ class FR3Test(Node):
         #     f"EE Position error: {ee_position_rviz - ee_position_py}"
         # )
         # self.get_logger().info(f"rviz: {rpy_rviz}\tpy: {rpy_py}")
-        self.get_logger().info(f"EE Orientation error: {rpy_rviz - rpy_py}")
+        # self.get_logger().info(f"EE Orientation error: {rpy_rviz - rpy_py}")
+
+    def _pub_joint_vels_cmd(self):
+        """
+        Publish joint velocities at 100 Hz based on the current trajectory.
+        """
+        if self.trajectory is None or self.current_index >= len(self.trajectory):
+            return
+
+        # Get the current time
+        # current_time = self.get_clock().now()
+
+        # Find the current trajectory point
+        if self.current_index < len(self.trajectory):
+            current_point: np.ndarray = self.trajectory[self.current_index]
+
+            data = current_point.tolist()
+            self._command_msg.data = data
+            self._commmand_pub.publish(self._command_msg)
+            # self.get_logger().info(
+            #     f"Published point {self.current_index + 1}: {self._command_msg.data}"
+            # )
+
+            # # Send feedback to the client
+            # # feedback_msg = GoToCartesianPosition.Feedback()
+            # # feedback_msg.current_pose = self.compute_current_pose()  # Replace with actual computation
+            # # feedback_msg.distance_to_target = self.compute_distance_to_target(self.goal_handle.request.target_pose)
+            # # self.goal_handle.publish_feedback(feedback_msg)
+            # feedback_msg = Empty.Feedback()
+            # # feedback_msg.current_pose = self.compute_current_pose()  # Replace with actual computation
+            # # feedback_msg.distance_to_target = self.compute_distance_to_target(self.goal_handle.request.target_pose)
+            # self.goal_handle.publish_feedback(feedback_msg)
+
+            # Move to the next point
+            self.current_index += 1
+
+        else:
+            print("Done")
+
+    # ---- Actions
+    def go_to_joint_positions(self, goal_handle):
+        self.get_logger().info("Executing goal...")
+
+        # goal_handle.succeed()
+        # self.get_logger().info(f"Received goal: {goal_handle.request.target_pose}")
+
+        # Paramters
+        goal = np.array(
+            [0, -np.pi / 4, np.pi / 2, -3 * np.pi / 4, 0, np.pi / 2, np.pi / 4]
+        )
+        start_q = self._robot_arm.state.q
+        traj_time = 2  # Time to reach goal [s]
+        freq = 100  # Frequency [Hz]
+
+        # Compute traj
+        n_points = int(traj_time * freq)
+        joint_traj = rtb.jtraj(start_q, goal, n_points)
+        self.trajectory = joint_traj.qd
+        self.current_index = 0
+
+        self.goal_handle = goal_handle
+        start_time = self.get_clock().now()
+
+        # Wait for the trajectory to complete or goal to be canceled
+        while self.current_index < len(self.trajectory):
+            if self.goal_handle.is_cancel_requested:
+                self.goal_handle.canceled()
+                self.get_logger().info("Goal canceled by client.")
+                # return GoToCartesianPosition.Result(success=False, message="Goal canceled.")
+                return Empty.Result()
+            # rclpy.spin_once(self)  # Allow the timer callback to run
+            time.sleep(0.01)
+
+        # Check if trajectory was successfully executed
+        end_time = self.get_clock().now()
+        duration = (end_time - start_time).nanoseconds / 1e9
+        self.get_logger().info(
+            f"Trajectory execution completed in {duration:.2f} seconds."
+        )
+
+        self.trajectory = None
+
+        # Set result
+        goal_handle.succeed()
+        result = Empty.Result()
+        # result.success = True
+        # result.message = "Trajectory executed successfully."
+        # result.final_pose = self.compute_current_pose()  # Replace with actual final pose
+        return result
 
 
 def main(args=None):
     rclpy.init(args=args)
     node = FR3Test()
-    rclpy.spin(node)
-    node.destroy_node()
-    rclpy.shutdown()
+    executor = MultiThreadedExecutor()
+
+    try:
+        rclpy.spin(node, executor=executor)
+    except KeyboardInterrupt:
+        pass
+
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
+
+    # rclpy.shutdown()
 
 
 if __name__ == "__main__":
