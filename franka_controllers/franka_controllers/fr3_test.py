@@ -14,7 +14,6 @@ from spatialmath.pose3d import SO3
 
 from rclpy.action import ActionServer
 from arm_interfaces.action import Empty
-import asyncio  # Add this at the top of the file
 import time
 
 from rclpy.executors import MultiThreadedExecutor
@@ -180,22 +179,29 @@ class FR3Test(Node):
 
     # ---- Actions
     def go_to_joint_positions(self, goal_handle):
-        self.get_logger().info("Executing goal...")
+        self.get_logger().info("Received goal joint position goal")
+        # self.get_logger().info(f"Received goal joint position goal: {goal_handle.request.target_pose}")
 
         # goal_handle.succeed()
-        # self.get_logger().info(f"Received goal: {goal_handle.request.target_pose}")
 
         # Paramters
-        goal = np.array(
-            [0, -np.pi / 4, np.pi / 2, -3 * np.pi / 4, 0, np.pi / 2, np.pi / 4]
-        )
+        # home_position = np.deg2rad([0, -45, 0, -135, 0, 90, 45])
         start_q = self._robot_arm.state.q
-        traj_time = 2  # Time to reach goal [s]
+        goal = np.deg2rad([-90, -45, 0, -135, 0, 90, 45])
+
+        self.get_logger().info(
+            f"Current joint positions: {np.rad2deg(self._robot_arm.state.q)}"
+        )
+        self.get_logger().info(f"Goal joint positions: {np.rad2deg(goal)}")
+
+        traj_time = 5  # Time to reach goal [s]
         freq = 100  # Frequency [Hz]
 
         # Compute traj
         n_points = int(traj_time * freq)
         joint_traj = rtb.jtraj(start_q, goal, n_points)
+        joint_traj.plot(block=False)
+
         self.trajectory = joint_traj.qd
         self.current_index = 0
 
@@ -209,7 +215,6 @@ class FR3Test(Node):
                 self.get_logger().info("Goal canceled by client.")
                 # return GoToCartesianPosition.Result(success=False, message="Goal canceled.")
                 return Empty.Result()
-            # rclpy.spin_once(self)  # Allow the timer callback to run
             time.sleep(0.01)
 
         # Check if trajectory was successfully executed
