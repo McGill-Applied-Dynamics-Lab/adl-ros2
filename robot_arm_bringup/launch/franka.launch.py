@@ -286,8 +286,8 @@ def generate_launch_description():
     # Spawn the ros2_control controllers
     controllers_list = [
         "joint_state_broadcaster",
-        "fr3_arm_controller",
-        # "velocity_controller",
+        # "fr3_arm_controller",
+        "velocity_controller",
     ]
 
     ros_controllers_nodes = []

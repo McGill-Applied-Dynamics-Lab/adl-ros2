@@ -1,0 +1,31 @@
+[tool.ruff]
+# Specify the line length
+line-length = 180
+
+# Enable specific rules
+select = [
+    "E",  # Pyflakes error codes
+    "F",  # Pyflakes warning codes
+    "W",  # PEP8 warning codes
+    "C90",  # McCabe complexity
+]
+
+# Exclude specific directories or files
+exclude = [
+    "build",
+    "dist",
+    ".venv",
+    "__pycache__",
+    "*.pyc",
+    "*.pyo",
+    ".git",
+    ".tox",
+    ".eggs",
+    "*.egg",
+]
+
+# Ignore specific rules
+ignore = [
+    "E501",  # Line too long
+    "W503",  # Line break before binary operator
+]

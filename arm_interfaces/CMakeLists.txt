@@ -27,7 +27,10 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "action/Empty.action"
   "action/GotoJoints.action"
   "action/GotoPose.action"
-  DEPENDENCIES geometry_msgs
+  "action/GotoJointVelocities.action"
+  DEPENDENCIES 
+  geometry_msgs
+  builtin_interfaces
 )
 
 ament_package()

@@ -1,12 +1,14 @@
 # ROS Imports
 import rclpy
 from rclpy.node import Node
+from rclpy.duration import Duration
 
 from rclpy.action import ActionClient
-from arm_interfaces.action import GotoJoints, GotoPose
+from arm_interfaces.action import GotoJoints, GotoPose, GotoJointVelocities
 from geometry_msgs.msg import PoseStamped
 
 import numpy as np
+from typing import List, Literal
 from spatialmath.pose3d import SO3, SE3
 from robot_arm_interface.utils import SE32PoseStamped, PoseStamped2SE3
 
@@ -25,6 +27,11 @@ class FrankaArm(Node):
 
         self._goto_pose_ac = ActionClient(self, GotoPose, "goto_pose")
         self._action_client_list.append(self._goto_pose_ac)
+
+        self._goto_joint_vel_ac = ActionClient(
+            self, GotoJointVelocities, "goto_joint_vels"
+        )
+        self._action_client_list.append(self._goto_joint_vel_ac)
 
         self._wait_for_server()
 
@@ -115,7 +122,30 @@ class FrankaArm(Node):
 
     def goto_ee_vel(self): ...
 
-    def goto_joints_vel(self): ...
+    def goto_joint_vels(
+        self,
+        joint_vels: List | np.ndarray,
+        duration: Duration,
+        unit: str = Literal["rad", "deg"],
+    ):
+        # Process the joint vels
+        if unit == "deg":
+            joint_vels = np.deg2rad(joint_vels)
+
+        if type(joint_vels) is list:
+            joint_vels = np.array(joint_vels)
+
+        self.get_logger().info(
+            f"Moving joints with velocities: {np.rad2deg(joint_vels)}"
+        )
+
+        # Build the goal message
+        goal_msg = GotoJointVelocities.Goal()
+        goal_msg.joint_velocities = joint_vels.tolist()
+        goal_msg.duration = duration.to_msg()
+
+        future = self._goto_joint_vel_ac.send_goal_async(goal_msg)
+        return self._wait_for_action(future)
 
     def open_gripper(self): ...
 

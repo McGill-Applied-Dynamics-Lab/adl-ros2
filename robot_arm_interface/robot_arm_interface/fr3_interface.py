@@ -7,6 +7,7 @@ from rclpy.executors import MultiThreadedExecutor
 from rclpy.duration import Duration
 
 # Interfaces
+import rclpy.time
 from sensor_msgs.msg import JointState
 from std_msgs.msg import Float64MultiArray
 from geometry_msgs.msg import PoseStamped
@@ -14,7 +15,7 @@ from geometry_msgs.msg import TransformStamped
 from tf2_ros import TransformListener, Buffer
 from control_msgs.action import FollowJointTrajectory
 
-from arm_interfaces.action import Empty, GotoJoints, GotoPose
+from arm_interfaces.action import Empty, GotoJoints, GotoPose, GotoJointVelocities
 
 # from arm_interfaces.msg import Joints
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
@@ -41,45 +42,57 @@ class FR3Interface(Node):
         # Initialize robot arm
         self._robot_arm = RobotArm("fr3")
 
-        joint_states_topic = "/joint_states"
+        #! Attributes
+        self._is_state_initialialized = False
+        self._home_position = np.deg2rad([0, -45, 0, -135, 0, 90, 45])
 
+        # TODO: remove
+        self.trajectory = None
+
+        #! Subscribers
+        joint_states_topic = "/joint_states"
         self._joint_state_sub = self.create_subscription(
             JointState, joint_states_topic, self._joint_state_callback, 10
         )
 
-        # Trajectories
-        self.trajectory = None
-
-        # Command Publisher
-        # # For the velocity_controller
-        # controller_name = "fr3_arm_controller"
-        # controller_command_topic = f"/{controller_name}/joint_trajectory"
-        # self._commmand_pub = self.create_publisher(
-        #     Float64MultiArray, controller_command_topic, 10
-        # )
-        # self._command_msg = Float64MultiArray()
-        # self._command_msg.data = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
-        # self._cmd_timer_freq = 100  # Hz
-        # self._cmd_pub_timer = self.create_timer(1 / 100, self._pub_joint_vels_cmd)
-
         #! Publisher
+        self._init_publishers()
+
+        #! Actions
+        self._init_actions()
+
+    def _init_publishers(self):
+        self.get_logger().info("Initializing publishers...")
+
         # Pose Publisher
         self._pose_pub = self.create_publisher(PoseStamped, "/fr3_pose", 10)
         self._pose_msg = PoseStamped()
+        self._pose_pub_timer = self.create_timer(0.1, self._publish_ee_pose)
 
-        self.timer = self.create_timer(0.25, self._publish_ee_pose)  # Publish at 10 Hz
-
+        # TF Publisher
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
         self.timer_tf = self.create_timer(0.25, self._tf_callback)  # Publish at 4 Hz
 
-        # Attributes
-        self._is_state_initialialized = False
-        self._home_position = np.deg2rad([0, -45, 0, -135, 0, 90, 45])
+        # Command Publisher
+        # --- velocity_controller ---
+        joint_vels_controller: str = "velocity_controller"
+        joint_vels_controller_topic = f"/{joint_vels_controller}/commands"
+        self._joint_vels_cmd_pub = self.create_publisher(
+            Float64MultiArray, joint_vels_controller_topic, 10
+        )
 
-        #! Actions
-        _as_freq = 100  # Asction
-        self._as_loop_rate = self.create_rate(_as_freq, self.get_clock())  # 100 Hz rate
+        self._joint_vels_cmd_msg = Float64MultiArray()
+        self._joint_vels_cmd_msg.data = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+        self._joint_vels_cmd_freq = 100  # Hz
+        self._joint_vels_cmd_pub_timer = self.create_timer(
+            1 / self._joint_vels_cmd_freq, self._pub_joint_vels_cmd
+        )
+
+    def _init_actions(self):
+        self.get_logger().info("Initializing action servers...")
+        # _as_freq = 100  # Asction
+        # self._as_loop_rate = self.create_rate(_as_freq, self.get_clock())  # 100 Hz rate
 
         # goto_joints Action Server
         self._joint_traj_msg = JointTrajectory()
@@ -93,19 +106,17 @@ class FR3Interface(Node):
             self, GotoPose, "goto_pose", self._goto_pose_action
         )
 
-        # joint_trajectory_controller action client (from ros_control)
-        self.get_logger().info("Subscribing to controller's action server...")
-        self._follow_joint_trajectory_ac = ActionClient(
-            self, FollowJointTrajectory, "/fr3_arm_controller/follow_joint_trajectory"
-        )
-        self._follow_joint_trajectory_ac.wait_for_server()
-        self.get_logger().info("Controller's action server is up!")
+        # # joint_trajectory_controller action client (from ros_control)
+        # self.get_logger().info("Subscribing to controller's action server...")
+        # self._follow_joint_trajectory_ac = ActionClient(
+        #     self, FollowJointTrajectory, "/fr3_arm_controller/follow_joint_trajectory"
+        # )
+        # self._follow_joint_trajectory_ac.wait_for_server()
+        # self.get_logger().info("Controller's action server is up!")
 
-        # joint_trajectory_controller
-        controller_name = "fr3_arm_controller"
-        controller_command_topic = f"/{controller_name}/joint_trajectory"
-        self._commmand_pub = self.create_publisher(
-            JointTrajectory, controller_command_topic, 10
+        # goto_joint_vels Action Server
+        self._goto_joint_vels_as = ActionServer(
+            self, GotoJointVelocities, "goto_joint_vels", self._goto_joint_vels_action
         )
 
     # Callbacks
@@ -182,40 +193,9 @@ class FR3Interface(Node):
 
     def _pub_joint_vels_cmd(self):
         """
-        Publish joint velocities at 100 Hz based on the current trajectory.
+        Publish joint velocities command at 100 Hz.
         """
-        if self.trajectory is None or self.current_index >= len(self.trajectory):
-            return
-
-        # Get the current time
-        # current_time = self.get_clock().now()
-
-        # Find the current trajectory point
-        if self.current_index < len(self.trajectory):
-            current_point: np.ndarray = self.trajectory[self.current_index]
-
-            data = current_point.tolist()
-            self._command_msg.data = data
-            self._commmand_pub.publish(self._command_msg)
-            # self.get_logger().info(
-            #     f"Published point {self.current_index + 1}: {self._command_msg.data}"
-            # )
-
-            # # Send feedback to the client
-            # # feedback_msg = GoToCartesianPosition.Feedback()
-            # # feedback_msg.current_pose = self.compute_current_pose()  # Replace with actual computation
-            # # feedback_msg.distance_to_target = self.compute_distance_to_target(self.goal_handle.request.target_pose)
-            # # self.goal_handle.publish_feedback(feedback_msg)
-            # feedback_msg = Empty.Feedback()
-            # # feedback_msg.current_pose = self.compute_current_pose()  # Replace with actual computation
-            # # feedback_msg.distance_to_target = self.compute_distance_to_target(self.goal_handle.request.target_pose)
-            # self.goal_handle.publish_feedback(feedback_msg)
-
-            # Move to the next point
-            self.current_index += 1
-
-        else:
-            print("Done")
+        self._joint_vels_cmd_pub.publish(self._joint_vels_cmd_msg)
 
     # ---- Actions
     def _goto_joints_action(self, goal_handle):
@@ -346,6 +326,44 @@ class FR3Interface(Node):
         result = GotoPose.Result()
         result.success = True
         result.final_pose = SE32PoseStamped(end_pose)
+        self.get_logger().info("Goal succeeded.")
+        return result
+
+    def _goto_joint_vels_action(self, goal_handle):
+        self.get_logger().info("Received goal joint velocities goal")
+
+        joint_vels = np.array(goal_handle.request.joint_velocities)
+        duration: rclpy.time.Duration = rclpy.time.Duration.from_msg(
+            goal_handle.request.duration
+        )
+
+        self.get_logger().info(f"Target joint velocities: {joint_vels}")
+        self.get_logger().info(f"Duration [s]: {duration.nanoseconds / 1e9}")
+
+        #! Setup joint velocities
+        start_time = self.get_clock().now()
+
+        self._joint_vels_cmd_msg.data = joint_vels.tolist()
+        self._joint_vels_cmd_pub_timer.reset()
+
+        self._joint_vels_cmd_pub_timer.reset()
+        while (self.get_clock().now() - start_time) < duration:
+            if goal_handle.is_cancel_requested:
+                goal_handle.canceled()
+                self.get_logger().info("Goal canceled by client.")
+                return GotoJointVelocities.Result()
+
+            else:
+                ...
+
+        # self._joint_vels_cmd_pub_timer.cancel()
+
+        #! Return results
+        self._joint_vels_cmd_msg.data = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+
+        goal_handle.succeed()
+        result = GotoJointVelocities.Result()
+        result.success = True
         self.get_logger().info("Goal succeeded.")
         return result
 
