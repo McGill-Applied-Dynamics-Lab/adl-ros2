@@ -26,7 +26,9 @@ endif()
 find_package(rosidl_default_generators REQUIRED)
 
 rosidl_generate_interfaces(${PROJECT_NAME}
+  "msg/Joints.msg"
   "action/Empty.action"
+  "action/GotoJoints.action"
 )
 
 ament_package()

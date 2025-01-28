@@ -18,7 +18,8 @@ from spatialmath.pose3d import SO3
 from rclpy.action import ActionServer
 from rclpy.executors import MultiThreadedExecutor
 
-from arm_interfaces.action import Empty
+from arm_interfaces.action import Empty, GotoJoints
+from arm_interfaces.msg import Joints
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 from builtin_interfaces.msg import Duration
 
@@ -72,13 +73,13 @@ class FR3Test(Node):
 
         # Attributes
         self._is_state_initialialized = False
+        self._home_position = np.deg2rad([0, -45, 0, -135, 0, 90, 45])
 
         #! Actions
         _as_freq = 100  # Asction
-        print("\n\n\n\ALLO\n\n\n\n")
         self._as_loop_rate = self.create_rate(_as_freq, self.get_clock())  # 100 Hz rate
         self._goto_joint_as = ActionServer(
-            self, Empty, "goto_joints", self._goto_joints_action
+            self, GotoJoints, "goto_joints", self._goto_joints_action
         )
 
         self._joint_traj_msg = JointTrajectory()
@@ -195,32 +196,26 @@ class FR3Test(Node):
     # ---- Actions
     def _goto_joints_action(self, goal_handle):
         self.get_logger().info("Received goal joint position goal")
-        # self.get_logger().info(f"Received goal joint position goal: {goal_handle.request.target_pose}")
 
-        # goal_handle.succeed()
-
-        # Paramters
-        # home_position = np.deg2rad([0, -45, 0, -135, 0, 90, 45])
-        start_q = self._robot_arm.state.q
+        start_q = np.array(self._robot_arm.state.q)  # [rad]
+        goal = np.array(goal_handle.request.joints_goal)  # [rad]
+        duration = goal_handle.request.duration  # [s]
         # goal = np.deg2rad([90, -45, 0, -135, 0, 90, 45])
-        goal = np.deg2rad([90, -90, 0, 45, 0, 90, 180])
 
         self.get_logger().info(
             f"Current joint positions: {np.rad2deg(self._robot_arm.state.q)}"
         )
         self.get_logger().info(f"Goal joint positions: {np.rad2deg(goal)}")
+        self.get_logger().info(f"Duration [s]: {duration}")
 
-        traj_time = 5  # Time to reach goal [s]
-        freq = 100  # Frequency [Hz]
+        traj_time_step = 0.01  # time between the trajectory points [s]
 
         # Compute traj
-        n_points = int(500)
+        n_points = int(duration / traj_time_step)
         joint_traj = rtb.jtraj(start_q, goal, n_points)
+        print(joint_traj.q.shape)
+        self.get_logger().info(f"\n\nTrajectory shape: {joint_traj.q.shape}")
 
-        self.trajectory = joint_traj.qd
-        self.current_index = 0
-
-        self.goal_handle = goal_handle
         start_time = self.get_clock().now()
 
         # Build the JointTrajectory message
@@ -235,8 +230,7 @@ class FR3Test(Node):
             "fr3_joint7",
         ]
 
-        self._joint_traj_msg.points = joint_traj_to_msg(joint_traj, traj_time)
-
+        self._joint_traj_msg.points = joint_traj_to_msg(joint_traj, traj_time_step)
         self._commmand_pub.publish(self._joint_traj_msg)
 
         # Check if trajectory was successfully executed
@@ -246,14 +240,10 @@ class FR3Test(Node):
             f"Trajectory execution completed in {duration:.2f} seconds."
         )
 
-        self.trajectory = None
-
         # Set result
         goal_handle.succeed()
-        result = Empty.Result()
-        # result.success = True
-        # result.message = "Trajectory executed successfully."
-        # result.final_pose = self.compute_current_pose()  # Replace with actual final pose
+        result = GotoJoints.Result()
+        result.success = True
         return result
 
     def _continuous_action_example(self, goal_handle):
@@ -320,7 +310,7 @@ Utilities
 
 def joint_traj_to_msg(
     joint_traj: rtb.tools.trajectory.Trajectory,
-    duration: float,
+    traj_time_step: float,
 ) -> List[JointTrajectoryPoint]:
     """
     Convert a joint trajectory to a list of JointTrajectoryPoint messages.
@@ -329,7 +319,7 @@ def joint_traj_to_msg(
 
     for i, (q, qd, qdd) in enumerate(zip(joint_traj.q, joint_traj.qd, joint_traj.qdd)):
         point = JointTrajectoryPoint()
-        seconds = i * 0.01
+        seconds = i * traj_time_step
         time_from_start = Duration()
         time_from_start.sec = int(seconds)
         time_from_start.nanosec = int((seconds - time_from_start.sec) * 1e9)
