@@ -1,29 +1,37 @@
 from typing import List
 import rclpy
 from rclpy.node import Node
+from rclpy.action import ActionClient
+from rclpy.action import ActionServer
+from rclpy.executors import MultiThreadedExecutor
+from rclpy.duration import Duration
+
+# Interfaces
 from sensor_msgs.msg import JointState
 from std_msgs.msg import Float64MultiArray
 from geometry_msgs.msg import PoseStamped
-from tf2_ros import TransformListener, Buffer
 from geometry_msgs.msg import TransformStamped
+from tf2_ros import TransformListener, Buffer
+from control_msgs.action import FollowJointTrajectory
 
+from arm_interfaces.action import Empty, GotoJoints, GotoPose
+
+# from arm_interfaces.msg import Joints
+from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
+# from builtin_interfaces.msg import Duration
+
+# Python packages
 import numpy as np
+import time
+
 import roboticstoolbox as rtb
 
 from robotic_arm_controller.RobotArm import RobotArm
 
 from spatialmath.base.quaternions import q2r
-from spatialmath.pose3d import SO3
+from spatialmath.pose3d import SO3, SE3
 
-from rclpy.action import ActionServer
-from rclpy.executors import MultiThreadedExecutor
-
-from arm_interfaces.action import Empty, GotoJoints
-from arm_interfaces.msg import Joints
-from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
-from builtin_interfaces.msg import Duration
-
-import time
+from robot_arm_interface.utils import PoseStamped2SE3, SE32PoseStamped
 
 
 class FR3Interface(Node):
@@ -54,13 +62,7 @@ class FR3Interface(Node):
         # self._cmd_timer_freq = 100  # Hz
         # self._cmd_pub_timer = self.create_timer(1 / 100, self._pub_joint_vels_cmd)
 
-        # joint_trajectory_controller
-        controller_name = "fr3_arm_controller"
-        controller_command_topic = f"/{controller_name}/joint_trajectory"
-        self._commmand_pub = self.create_publisher(
-            JointTrajectory, controller_command_topic, 10
-        )
-
+        #! Publisher
         # Pose Publisher
         self._pose_pub = self.create_publisher(PoseStamped, "/fr3_pose", 10)
         self._pose_msg = PoseStamped()
@@ -78,11 +80,33 @@ class FR3Interface(Node):
         #! Actions
         _as_freq = 100  # Asction
         self._as_loop_rate = self.create_rate(_as_freq, self.get_clock())  # 100 Hz rate
+
+        # goto_joints Action Server
+        self._joint_traj_msg = JointTrajectory()
+
         self._goto_joint_as = ActionServer(
             self, GotoJoints, "goto_joints", self._goto_joints_action
         )
 
-        self._joint_traj_msg = JointTrajectory()
+        # goto_pose Action Server
+        self._goto_pose_as = ActionServer(
+            self, GotoPose, "goto_pose", self._goto_pose_action
+        )
+
+        # joint_trajectory_controller action client (from ros_control)
+        self.get_logger().info("Subscribing to controller's action server...")
+        self._follow_joint_trajectory_ac = ActionClient(
+            self, FollowJointTrajectory, "/fr3_arm_controller/follow_joint_trajectory"
+        )
+        self._follow_joint_trajectory_ac.wait_for_server()
+        self.get_logger().info("Controller's action server is up!")
+
+        # joint_trajectory_controller
+        controller_name = "fr3_arm_controller"
+        controller_command_topic = f"/{controller_name}/joint_trajectory"
+        self._commmand_pub = self.create_publisher(
+            JointTrajectory, controller_command_topic, 10
+        )
 
     # Callbacks
     def _joint_state_callback(self, joint_msg):
@@ -231,7 +255,18 @@ class FR3Interface(Node):
         ]
 
         self._joint_traj_msg.points = joint_traj_to_msg(joint_traj, traj_time_step)
-        self._commmand_pub.publish(self._joint_traj_msg)
+
+        #! Send the trajectory to the controller
+        # Via the action server
+        traj_goal = FollowJointTrajectory.Goal()
+        traj_goal.trajectory = self._joint_traj_msg
+
+        self._follow_joint_trajectory_ac.send_goal(traj_goal)
+        # future = self._follow_joint_trajectory_ac.send_goal_async(traj_goal)
+        # rclpy.spin_until_future_complete(self, future)
+
+        # Via the publisher
+        # self._commmand_pub.publish(self._joint_traj_msg)
 
         # Check if trajectory was successfully executed
         end_time = self.get_clock().now()
@@ -244,6 +279,74 @@ class FR3Interface(Node):
         goal_handle.succeed()
         result = GotoJoints.Result()
         result.success = True
+        self.get_logger().info("Goal succeeded.")
+        return result
+
+    def _goto_pose_action(self, goal_handle):
+        self.get_logger().info("Received cartesian position goal")
+
+        start_cartesian_pose: SE3 = self._robot_arm.state.ee_pose
+        start_q = np.array(self._robot_arm.state.q)  # [rad]
+
+        goal_msg = goal_handle.request.pose_goal
+        goal_pose = PoseStamped2SE3(goal_msg)
+        duration = goal_handle.request.duration  # [s]
+
+        self.get_logger().info(f"Current cartesian pose:\n {start_cartesian_pose}")
+        self.get_logger().info(f"Goal cartesian pose:\n {goal_pose}")
+        self.get_logger().info(f"Duration [s]: {duration}")
+
+        traj_time_step = 0.01  # time between the trajectory points [s]
+
+        #! Ikine to find goal joint positions
+        goal_q = self._robot_arm.ikine(goal_pose)
+        self.get_logger().info(
+            f"Goal joint positions (from ikine): {np.rad2deg(goal_q)}"
+        )
+
+        #! Compute traj
+        n_points = int(duration / traj_time_step)
+        joint_traj = rtb.jtraj(start_q, goal_q, n_points)
+        print(joint_traj.q.shape)
+        self.get_logger().info(f"\n\nTrajectory shape: {joint_traj.q.shape}")
+
+        start_time = self.get_clock().now()
+
+        #! Build the JointTrajectory message
+        self._joint_traj_msg.header.stamp = self.get_clock().now().to_msg()
+        self._joint_traj_msg.joint_names = [
+            "fr3_joint1",
+            "fr3_joint2",
+            "fr3_joint3",
+            "fr3_joint4",
+            "fr3_joint5",
+            "fr3_joint6",
+            "fr3_joint7",
+        ]
+
+        self._joint_traj_msg.points = joint_traj_to_msg(joint_traj, traj_time_step)
+
+        #! Send the trajectory to the controller
+        # Via the action server
+        traj_goal = FollowJointTrajectory.Goal()
+        traj_goal.trajectory = self._joint_traj_msg
+
+        self._follow_joint_trajectory_ac.send_goal(traj_goal)
+
+        end_time = self.get_clock().now()
+        duration = (end_time - start_time).nanoseconds / 1e9
+        self.get_logger().info(
+            f"Trajectory execution completed in {duration:.2f} seconds."
+        )
+
+        end_pose = self._robot_arm.state.ee_pose
+
+        #! Return results
+        goal_handle.succeed()
+        result = GotoPose.Result()
+        result.success = True
+        result.final_pose = SE32PoseStamped(end_pose)
+        self.get_logger().info("Goal succeeded.")
         return result
 
     def _continuous_action_example(self, goal_handle):
@@ -320,15 +423,15 @@ def joint_traj_to_msg(
     for i, (q, qd, qdd) in enumerate(zip(joint_traj.q, joint_traj.qd, joint_traj.qdd)):
         point = JointTrajectoryPoint()
         seconds = i * traj_time_step
-        time_from_start = Duration()
-        time_from_start.sec = int(seconds)
-        time_from_start.nanosec = int((seconds - time_from_start.sec) * 1e9)
+        time_from_start = Duration(seconds=seconds)
+        # time_from_start.sec = int(seconds)
+        # time_from_start.nanosec = int((seconds - time_from_start.sec) * 1e9)
 
         point.positions = q.tolist()
         point.velocities = qd.tolist()
         point.accelerations = qdd.tolist()
 
-        point.time_from_start = time_from_start
+        point.time_from_start = time_from_start.to_msg()
         joint_traj_points.append(point)
 
     return joint_traj_points

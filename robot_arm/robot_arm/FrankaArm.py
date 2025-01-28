@@ -3,9 +3,12 @@ import rclpy
 from rclpy.node import Node
 
 from rclpy.action import ActionClient
-from arm_interfaces.action import GotoJoints
+from arm_interfaces.action import GotoJoints, GotoPose
+from geometry_msgs.msg import PoseStamped
 
 import numpy as np
+from spatialmath.pose3d import SO3, SE3
+from robot_arm_interface.utils import SE32PoseStamped, PoseStamped2SE3
 
 
 class FrankaArm(Node):
@@ -20,6 +23,9 @@ class FrankaArm(Node):
         self._goto_joints_ac = ActionClient(self, GotoJoints, "goto_joints")
         self._action_client_list.append(self._goto_joints_ac)
 
+        self._goto_pose_ac = ActionClient(self, GotoPose, "goto_pose")
+        self._action_client_list.append(self._goto_pose_ac)
+
         self._wait_for_server()
 
     def _wait_for_server(self):
@@ -29,6 +35,32 @@ class FrankaArm(Node):
 
         self.get_logger().info("Action servers are up!")
 
+    #! Action clients
+    def _wait_for_action(self, future):
+        rclpy.spin_until_future_complete(self, future)
+
+        if future.done():
+            goal_handle = future.result()
+            if not goal_handle.accepted:
+                self.get_logger().error("Goal was rejected by the action server!")
+                return False
+
+            self.get_logger().info("Goal accepted, waiting for result...")
+            result_future = goal_handle.get_result_async()
+            rclpy.spin_until_future_complete(self, result_future)
+
+            if result_future.done():
+                result = result_future.result()
+                self.get_logger().info(f"Result received: {result.result.success}")
+                return result.result.success
+
+            else:
+                self.get_logger().error("Failed to get result!")
+                return False
+        else:
+            self.get_logger().error("Failed to send goal!")
+            return False
+
     def goto_joints(self, joint_goal: np.ndarray, duration: float):
         self.get_logger().info(f"Moving joints to goal: {joint_goal}")
 
@@ -36,7 +68,65 @@ class FrankaArm(Node):
         goal_msg.joints_goal = joint_goal.tolist()
         goal_msg.duration = duration
 
-        return self._goto_joints_ac.send_goal_async(goal_msg)
+        future = self._goto_joints_ac.send_goal_async(goal_msg)
+        rclpy.spin_until_future_complete(self, future)
+
+        if future.done():
+            goal_handle = future.result()
+            if not goal_handle.accepted:
+                self.get_logger().error("Goal was rejected by the action server!")
+                return False
+
+            self.get_logger().info("Goal accepted, waiting for result...")
+            result_future = goal_handle.get_result_async()
+            rclpy.spin_until_future_complete(self, result_future)
+
+            if result_future.done():
+                result = result_future.result()
+                self.get_logger().info(f"Result received: {result.result.success}")
+                return result.result.success
+
+            else:
+                self.get_logger().error("Failed to get result!")
+                return False
+        else:
+            self.get_logger().error("Failed to send goal!")
+            return False
+
+    def goto_home(self):
+        self.get_logger().info("Moving to home position")
+
+        joint_home_position = np.deg2rad([0, -45, 0, -135, 0, 90, 45])
+        self.goto_joints(joint_home_position, 5.0)
+
+    def goto_pose(self, pose_goal: SE3, duration: float):
+        self.get_logger().info(f"Moving to cartesian goal:\n {pose_goal}")
+
+        pose_goal_msg = SE32PoseStamped(pose_goal)
+
+        T = PoseStamped2SE3(pose_goal_msg)
+
+        goal_msg = GotoPose.Goal()
+        goal_msg.pose_goal = pose_goal_msg
+        goal_msg.duration = duration
+
+        future = self._goto_pose_ac.send_goal_async(goal_msg)
+        return self._wait_for_action(future)
+
+    def goto_ee_vel(self): ...
+
+    def goto_joints_vel(self): ...
+
+    def open_gripper(self): ...
+
+    def close_gripper(self): ...
+
+    #! Services
+    def get_robot_state(self): ...
+
+    def get_joints(self): ...
+
+    def get_pose(self): ...
 
 
 def main(args=None):
