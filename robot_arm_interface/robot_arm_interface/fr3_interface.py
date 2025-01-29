@@ -72,7 +72,7 @@ class FeedbackControllerManager:
         self._node = node
         self._node.get_logger().info("Initializing Feedback Controller Manager...")
 
-        self._controllers = {}
+        self._controllers: dict | None = None
         self._activated_controller = None
         self._cb_group = cb_group
 
@@ -111,6 +111,8 @@ class FeedbackControllerManager:
         """
         self._node.get_logger().info("Getting list of controllers from cm...")
 
+        self._controllers = {}
+
         req = ListControllers.Request()
         future = self._list_controllers_srv.call_async(req)
         # rclpy.spin_until_future_complete(self._node, future)
@@ -133,6 +135,7 @@ class FeedbackControllerManager:
         To switch to a controller
         """
         self._node.get_logger().info(f"Switching to controller: {controller_name}")
+
         await self._get_cm_controllers()
 
         if controller_name not in self._controllers:
@@ -157,8 +160,6 @@ class FeedbackControllerManager:
 
         # Call service
         future = self._switch_controller_srv.call_async(req)
-        # rclpy.spin_until_future_complete(self._node, future)
-
         result = await future
 
         if result is not None:
