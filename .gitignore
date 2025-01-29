@@ -1,0 +1,11 @@
+.idea
+.vscode
+*.pyc
+**/__pycache/
+COLCON_IGNORE
+AMENT_IGNORE
+cmake-build-*/
+build/
+install/
+log/
+robot_arm_interface/robot_arm_interface/__pycache__/fr3_interface.cpython-310.pyc

@@ -419,36 +419,7 @@ class FR3Interface(Node):
             goal_handle.abort()
             return GotoJoints.Result(success=False)
 
-        # # self._follow_joint_trajectory_ac.send_goal(traj_goal)
-        # follow_traj_send_goal_future = self._follow_joint_trajectory_ac.send_goal_async(traj_goal)
-        # rclpy.spin_until_future_complete(self, follow_traj_send_goal_future)
-
-        # # Goal received
-        # if follow_traj_send_goal_future.done():
-        #     follow_traj_goal_handle = follow_traj_send_goal_future.result()
-
-        #     if not follow_traj_goal_handle.accepted:
-        #         self.get_logger().error("Goal was rejected by the action server!")
-        #         return False
-
-        #     self.get_logger().info("Goal accepted, waiting for result...")
-        #     follow_traj_result_future = follow_traj_goal_handle.get_result_async()
-        #     rclpy.spin_until_future_complete(self, follow_traj_result_future)
-
-        #     if follow_traj_result_future.done():
-        #         traj_result = follow_traj_result_future.result()
-        #         # traj_result = result.result.success
-        #         self.get_logger().info(f"follow_joint_trajectory action completed")
-
-        #     else:
-        #         self.get_logger().error("Failed to get result!")
-        #         return False
-
-        # else:
-        #     self.get_logger().error("Failed to send goal!")
-        #     return False
-
-        # ? Via the publisher
+        # # Via the publisher
         # self._commmand_pub.publish(self._joint_traj_msg)
 
         #! Send result
@@ -463,11 +434,11 @@ class FR3Interface(Node):
 
         return result
 
-    def _goto_pose_action(self, goal_handle):
+    async def _goto_pose_action(self, goal_handle):
         self.get_logger().info("Received cartesian position goal")
 
-        # Switch controller
-        self._feedback_controller_manager.switch_controller("joint_trajectory_controller")
+        # # Switch controller
+        # self._feedback_controller_manager.switch_controller("joint_trajectory_controller")
 
         start_cartesian_pose: SE3 = self._robot_arm.state.ee_pose
         start_q = np.array(self._robot_arm.state.q)  # [rad]
@@ -513,15 +484,37 @@ class FR3Interface(Node):
         traj_goal = FollowJointTrajectory.Goal()
         traj_goal.trajectory = self._joint_traj_msg
 
-        self._follow_joint_trajectory_ac.send_goal(traj_goal)
+        # self._follow_joint_trajectory_ac.send_goal(traj_goal)
+        send_goal_future = self._follow_joint_trajectory_ac.send_goal_async(traj_goal)
+        goal_handle_future = await send_goal_future
 
+        if not goal_handle_future.accepted:
+            self.get_logger().error("Goal rejected by follow_traj action server")
+            goal_handle.abort()
+            return GotoJoints.Result(success=False)
+
+        self.get_logger().info("Goal accepted, waiting for result...")
+
+        # Wait for the result asynchronously
+        result_future = goal_handle_future.get_result_async()
+        follow_traj_result = await result_future
+
+        if follow_traj_result.result:
+            self.get_logger().info("Trajectory execution completed successfully")
+            # goal_handle.succeed()
+            # return GotoJoints.Result(success=True)
+        else:
+            self.get_logger().error("Trajectory execution failed")
+            goal_handle.abort()
+            return GotoJoints.Result(success=False)
+
+        #! Return results
         end_time = self.get_clock().now()
         duration = (end_time - start_time).nanoseconds / 1e9
         self.get_logger().info(f"Trajectory execution completed in {duration:.2f} seconds.")
 
         end_pose = self._robot_arm.state.ee_pose
 
-        #! Return results
         goal_handle.succeed()
         result = GotoPose.Result()
         result.success = True
