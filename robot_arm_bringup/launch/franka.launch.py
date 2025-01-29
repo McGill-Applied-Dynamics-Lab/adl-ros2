@@ -211,7 +211,7 @@ def generate_launch_description():
     # Spawn the ros2_control controllers
     controllers_list = [
         "joint_state_broadcaster",
-        "joint_trajectory_controller",
+        "joint_trajectory_controller --inactive",
         "joint_velocity_controller --inactive",
     ]
 

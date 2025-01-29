@@ -68,30 +68,33 @@ class FeedbackController:
 
 
 class FeedbackControllerManager:
-    def __init__(self, node: Node):
+    def __init__(self, node: Node, cb_group: MutuallyExclusiveCallbackGroup):
         self._node = node
         self._node.get_logger().info("Initializing Feedback Controller Manager...")
 
         self._controllers = {}
         self._activated_controller = None
+        self._cb_group = cb_group
 
         #! Services
         self._list_controllers_srv = None
         self._switch_controller_srv = None
         self._init_services()
 
-        self._get_cm_controllers()
+        # await self._get_cm_controllers()
 
     def _init_services(self):
         self._service_list = []
 
-        # List controllers service
-        self._list_controllers_srv = self._node.create_client(ListControllers, "/controller_manager/list_controllers")
+        # Service - List controllers
+        self._list_controllers_srv = self._node.create_client(
+            ListControllers, "/controller_manager/list_controllers", callback_group=self._cb_group
+        )
         self._service_list.append(self._list_controllers_srv)
 
-        # Switch controller service
+        # Service - Switch controller
         self._switch_controller_srv = self._node.create_client(
-            SwitchController, "/controller_manager/switch_controller"
+            SwitchController, "/controller_manager/switch_controller", callback_group=self._cb_group
         )
         self._service_list.append(self._switch_controller_srv)
 
@@ -102,16 +105,20 @@ class FeedbackControllerManager:
 
         self._node.get_logger().info("CM services are up!")
 
-    def _get_cm_controllers(self):
+    async def _get_cm_controllers(self):
         """
         Get a list of controllers from the controller manager
         """
+        self._node.get_logger().info("Getting list of controllers from cm...")
+
         req = ListControllers.Request()
         future = self._list_controllers_srv.call_async(req)
-        rclpy.spin_until_future_complete(self._node, future)
+        # rclpy.spin_until_future_complete(self._node, future)
 
-        if future.result() is not None:
-            controllers = future.result().controller
+        result = await future
+
+        if result is not None:
+            controllers = result.controller
 
             for controller_msg in controllers:
                 controller = FeedbackController.from_controller_state_msg(controller_msg)
@@ -121,12 +128,12 @@ class FeedbackControllerManager:
         else:
             self._node.get_logger().error("Service call failed!")
 
-    def switch_controller(self, controller_name: str):
+    async def switch_controller(self, controller_name: str):
         """
         To switch to a controller
         """
         self._node.get_logger().info(f"Switching to controller: {controller_name}")
-        self._get_cm_controllers()
+        await self._get_cm_controllers()
 
         if controller_name not in self._controllers:
             self._node.get_logger().error(f"Controller: {controller_name} is not available!")
@@ -150,10 +157,12 @@ class FeedbackControllerManager:
 
         # Call service
         future = self._switch_controller_srv.call_async(req)
-        rclpy.spin_until_future_complete(self._node, future)
+        # rclpy.spin_until_future_complete(self._node, future)
 
-        if future.result() is not None:
-            switch_ok = future.result().ok
+        result = await future
+
+        if result is not None:
+            switch_ok = result.ok
 
             if switch_ok:
                 self._node.get_logger().info(f"Switched to controller: {controller_name}")
@@ -164,6 +173,36 @@ class FeedbackControllerManager:
 
         else:
             self._node.get_logger().error("Service call failed!")
+
+        # #! Switch controller
+        # req = SwitchController.Request()
+
+        # # Set message
+        # req.activate_controllers = [controller_name]
+
+        # if self._activated_controller is not None:
+        #     req.deactivate_controllers = [self._activated_controller]
+
+        # req.strictness = 1  # BEST_EFFORT=1, STRICT=2
+        # # req.activate_asap
+        # req.timeout = Duration(seconds=1).to_msg()
+
+        # # Call service
+        # future = self._switch_controller_srv.call_async(req)
+        # rclpy.spin_until_future_complete(self._node, future)
+
+        # if future.result() is not None:
+        #     switch_ok = future.result().ok
+
+        #     if switch_ok:
+        #         self._node.get_logger().info(f"Switched to controller: {controller_name}")
+        #         self._activated_controller = controller_name
+
+        #     else:
+        #         self._node.get_logger().error(f"Failed to switch to controller: {controller_name}")
+
+        # else:
+        #     self._node.get_logger().error("Service call failed!")
 
 
 class FR3Interface(Node):
@@ -179,6 +218,7 @@ class FR3Interface(Node):
 
         self._as_cb_group = MutuallyExclusiveCallbackGroup()
         self._ac_cb_group = MutuallyExclusiveCallbackGroup()
+        self._feedback_controller_manager_cb_group = MutuallyExclusiveCallbackGroup()
 
         # TODO: remove
         self.trajectory = None
@@ -194,10 +234,13 @@ class FR3Interface(Node):
         self._init_services()
 
         # Feedback Controller Manager
-        # self._feedback_controller_manager = FeedbackControllerManager(node=self)
-        # # self.get_logger().info(f"{self._feedback_controller_manager._controllers}")
+        self._feedback_controller_manager = FeedbackControllerManager(
+            node=self, cb_group=self._feedback_controller_manager_cb_group
+        )
+        # self.get_logger().info(f"{self._feedback_controller_manager._controllers}")
 
         # self._feedback_controller_manager.switch_controller("joint_trajectory_controller")
+        # self._feedback_controller_manager.switch_controller("joint_velocity_controller")
 
     def _init_publishers(self):
         self.get_logger().info("Initializing publishers...")
@@ -354,7 +397,7 @@ class FR3Interface(Node):
         self._current_goal_handle = goal_handle
 
         # Switch controller
-        # self._feedback_controller_manager.switch_controller("joint_trajectory_controller")
+        await self._feedback_controller_manager.switch_controller("joint_trajectory_controller")
 
         start_q = np.array(self._robot_arm.state.q)  # [rad]
         goal = np.array(goal_handle.request.joints_goal)  # [rad]
@@ -437,8 +480,8 @@ class FR3Interface(Node):
     async def _goto_pose_action(self, goal_handle):
         self.get_logger().info("Received cartesian position goal")
 
-        # # Switch controller
-        # self._feedback_controller_manager.switch_controller("joint_trajectory_controller")
+        # Switch controller
+        await self._feedback_controller_manager.switch_controller("joint_trajectory_controller")
 
         start_cartesian_pose: SE3 = self._robot_arm.state.ee_pose
         start_q = np.array(self._robot_arm.state.q)  # [rad]
@@ -522,11 +565,11 @@ class FR3Interface(Node):
         self.get_logger().info("Goal succeeded.")
         return result
 
-    def _goto_joint_vels_action(self, goal_handle):
+    async def _goto_joint_vels_action(self, goal_handle):
         self.get_logger().info("Received goal joint velocities goal")
 
         # Switch controller
-        self._feedback_controller_manager.switch_controller("joint_velocity_controller")
+        await self._feedback_controller_manager.switch_controller("joint_velocity_controller")
 
         joint_vels = np.array(goal_handle.request.joint_velocities)
         duration: rclpy.time.Duration = rclpy.time.Duration.from_msg(goal_handle.request.duration)
@@ -548,9 +591,7 @@ class FR3Interface(Node):
                 return GotoJointVelocities.Result()
 
             else:
-                ...
-
-        # self._joint_vels_cmd_pub_timer.cancel()
+                time.sleep(0.01)
 
         #! Return results
         self._joint_vels_cmd_msg.data = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
@@ -561,59 +602,8 @@ class FR3Interface(Node):
         self.get_logger().info("Goal succeeded.")
         return result
 
-    def _continuous_action_example(self, goal_handle):
-        self.get_logger().info("Received goal joint position goal")
-        # self.get_logger().info(f"Received goal joint position goal: {goal_handle.request.target_pose}")
-
-        # goal_handle.succeed()
-
-        # Paramters
-        # home_position = np.deg2rad([0, -45, 0, -135, 0, 90, 45])
-        start_q = self._robot_arm.state.q
-        goal = np.deg2rad([-90, -45, 0, -135, 0, 90, 45])
-
-        self.get_logger().info(f"Current joint positions: {np.rad2deg(self._robot_arm.state.q)}")
-        self.get_logger().info(f"Goal joint positions: {np.rad2deg(goal)}")
-
-        traj_time = 5  # Time to reach goal [s]
-        freq = 100  # Frequency [Hz]
-
-        # Compute traj
-        n_points = int(traj_time * freq)
-        joint_traj = rtb.jtraj(start_q, goal, n_points)
-        joint_traj.plot(block=False)
-
-        self.trajectory = joint_traj.qd
-        self.current_index = 0
-
-        self.goal_handle = goal_handle
-        start_time = self.get_clock().now()
-
-        # Wait for the trajectory to complete or goal to be canceled
-        while self.current_index < len(self.trajectory):
-            if self.goal_handle.is_cancel_requested:
-                self.goal_handle.canceled()
-                self.get_logger().info("Goal canceled by client.")
-                # return GoToCartesianPosition.Result(success=False, message="Goal canceled.")
-                return Empty.Result()
-            time.sleep(0.01)
-
-        # Check if trajectory was successfully executed
-        end_time = self.get_clock().now()
-        duration = (end_time - start_time).nanoseconds / 1e9
-        self.get_logger().info(f"Trajectory execution completed in {duration:.2f} seconds.")
-
-        self.trajectory = None
-
-        # Set result
-        goal_handle.succeed()
-        result = Empty.Result()
-        # result.success = True
-        # result.message = "Trajectory executed successfully."
-        # result.final_pose = self.compute_current_pose()  # Replace with actual final pose
-        return result
-
     # --- Services, clients
+    ...
 
 
 """
