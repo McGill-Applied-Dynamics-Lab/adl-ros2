@@ -1,0 +1,12 @@
+# Request
+geometry_msgs/PoseStamped pose_goal
+float64 duration  # [sec]  
+---
+# Result
+bool success
+geometry_msgs/PoseStamped final_pose
+string error
+---
+# Feedback
+Joints joints_position  # [rad]
+geometry_msgs/PoseStamped pose
