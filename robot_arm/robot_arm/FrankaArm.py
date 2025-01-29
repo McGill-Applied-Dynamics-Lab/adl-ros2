@@ -28,9 +28,7 @@ class FrankaArm(Node):
         self._goto_pose_ac = ActionClient(self, GotoPose, "goto_pose")
         self._action_client_list.append(self._goto_pose_ac)
 
-        self._goto_joint_vel_ac = ActionClient(
-            self, GotoJointVelocities, "goto_joint_vels"
-        )
+        self._goto_joint_vel_ac = ActionClient(self, GotoJointVelocities, "goto_joint_vels")
         self._action_client_list.append(self._goto_joint_vel_ac)
 
         self._wait_for_server()
@@ -104,7 +102,7 @@ class FrankaArm(Node):
         self.get_logger().info("Moving to home position")
 
         joint_home_position = np.deg2rad([0, -45, 0, -135, 0, 90, 45])
-        self.goto_joints(joint_home_position, 5.0)
+        self.goto_joints(joint_home_position, 3.0)
 
     def goto_pose(self, pose_goal: SE3, duration: float):
         self.get_logger().info(f"Moving to cartesian goal:\n {pose_goal}")
@@ -135,9 +133,7 @@ class FrankaArm(Node):
         if type(joint_vels) is list:
             joint_vels = np.array(joint_vels)
 
-        self.get_logger().info(
-            f"Moving joints with velocities: {np.rad2deg(joint_vels)}"
-        )
+        self.get_logger().info(f"Moving joints with velocities: {np.rad2deg(joint_vels)}")
 
         # Build the goal message
         goal_msg = GotoJointVelocities.Goal()

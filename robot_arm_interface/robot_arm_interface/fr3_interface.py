@@ -5,6 +5,7 @@ from rclpy.action import ActionClient
 from rclpy.action import ActionServer
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.duration import Duration
+from rclpy.callback_groups import ReentrantCallbackGroup, MutuallyExclusiveCallbackGroup
 
 # Interfaces
 import rclpy.time
@@ -19,12 +20,15 @@ from arm_interfaces.action import Empty, GotoJoints, GotoPose, GotoJointVelociti
 
 # from arm_interfaces.msg import Joints
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
+
 # from builtin_interfaces.msg import Duration
+from controller_manager_msgs.srv import (
+    ConfigureController,
+    ListControllers,
+    SwitchController,
+)
 
-# Python packages
-import numpy as np
-import time
-
+from controller_manager_msgs.msg import ControllerState
 import roboticstoolbox as rtb
 
 from robotic_arm_controller.RobotArm import RobotArm
@@ -33,6 +37,133 @@ from spatialmath.base.quaternions import q2r
 from spatialmath.pose3d import SO3, SE3
 
 from robot_arm_interface.utils import PoseStamped2SE3, SE32PoseStamped
+
+# Python packages
+import numpy as np
+import time
+
+from enum import Enum
+
+
+class ControllerStateEnum(Enum):
+    UNCONFIGURED = "unconfigured"
+    INACTIVE = "inactive"
+    ACTIVE = "active"
+    FINALIZED = "finalized"
+
+
+class FeedbackController:
+    def __init__(self, name: str, state: ControllerStateEnum, type: str):
+        self.name = name
+        self.state = state
+        self.type = type
+
+    @classmethod
+    def from_controller_state_msg(cls, controller_state: ControllerState):
+        ctrl_name = controller_state.name
+        ctrl_state = ControllerStateEnum(controller_state.state)
+        type = controller_state.type
+
+        return cls(ctrl_name, ctrl_state, type)
+
+
+class FeedbackControllerManager:
+    def __init__(self, node: Node):
+        self._node = node
+        self._node.get_logger().info("Initializing Feedback Controller Manager...")
+
+        self._controllers = {}
+        self._activated_controller = None
+
+        #! Services
+        self._list_controllers_srv = None
+        self._switch_controller_srv = None
+        self._init_services()
+
+        self._get_cm_controllers()
+
+    def _init_services(self):
+        self._service_list = []
+
+        # List controllers service
+        self._list_controllers_srv = self._node.create_client(ListControllers, "/controller_manager/list_controllers")
+        self._service_list.append(self._list_controllers_srv)
+
+        # Switch controller service
+        self._switch_controller_srv = self._node.create_client(
+            SwitchController, "/controller_manager/switch_controller"
+        )
+        self._service_list.append(self._switch_controller_srv)
+
+        # Wait for services
+        self._node.get_logger().info("Waiting cm services...")
+        for srv in self._service_list:
+            srv.wait_for_service()
+
+        self._node.get_logger().info("CM services are up!")
+
+    def _get_cm_controllers(self):
+        """
+        Get a list of controllers from the controller manager
+        """
+        req = ListControllers.Request()
+        future = self._list_controllers_srv.call_async(req)
+        rclpy.spin_until_future_complete(self._node, future)
+
+        if future.result() is not None:
+            controllers = future.result().controller
+
+            for controller_msg in controllers:
+                controller = FeedbackController.from_controller_state_msg(controller_msg)
+
+                self._controllers[controller.name] = controller
+
+        else:
+            self._node.get_logger().error("Service call failed!")
+
+    def switch_controller(self, controller_name: str):
+        """
+        To switch to a controller
+        """
+        self._node.get_logger().info(f"Switching to controller: {controller_name}")
+        self._get_cm_controllers()
+
+        if controller_name not in self._controllers:
+            self._node.get_logger().error(f"Controller: {controller_name} is not available!")
+
+        if self._controllers[controller_name].state == ControllerStateEnum.ACTIVE:
+            self._node.get_logger().info(f"Controller: {controller_name} is already active!")
+            return
+
+        #! Switch controller
+        req = SwitchController.Request()
+
+        # Set message
+        req.activate_controllers = [controller_name]
+
+        if self._activated_controller is not None:
+            req.deactivate_controllers = [self._activated_controller]
+
+        req.strictness = 1  # BEST_EFFORT=1, STRICT=2
+        # req.activate_asap
+        req.timeout = Duration(seconds=1).to_msg()
+
+        # Call service
+        future = self._switch_controller_srv.call_async(req)
+        rclpy.spin_until_future_complete(self._node, future)
+
+        if future.result() is not None:
+            switch_ok = future.result().ok
+
+            if switch_ok:
+                self._node.get_logger().info(f"Switched to controller: {controller_name}")
+                self._activated_controller = controller_name
+
+            else:
+                self._node.get_logger().error(f"Failed to switch to controller: {controller_name}")
+
+        else:
+            self._node.get_logger().error("Service call failed!")
 
 
 class FR3Interface(Node):
@@ -46,20 +177,27 @@ class FR3Interface(Node):
         self._is_state_initialialized = False
         self._home_position = np.deg2rad([0, -45, 0, -135, 0, 90, 45])
 
+        self._as_cb_group = MutuallyExclusiveCallbackGroup()
+        self._ac_cb_group = MutuallyExclusiveCallbackGroup()
+
         # TODO: remove
         self.trajectory = None
 
         #! Subscribers
         joint_states_topic = "/joint_states"
-        self._joint_state_sub = self.create_subscription(
-            JointState, joint_states_topic, self._joint_state_callback, 10
-        )
+        self._joint_state_sub = self.create_subscription(JointState, joint_states_topic, self._joint_state_callback, 10)
 
-        #! Publisher
         self._init_publishers()
 
-        #! Actions
         self._init_actions()
+
+        self._init_services()
+
+        # Feedback Controller Manager
+        # self._feedback_controller_manager = FeedbackControllerManager(node=self)
+        # # self.get_logger().info(f"{self._feedback_controller_manager._controllers}")
+
+        # self._feedback_controller_manager.switch_controller("joint_trajectory_controller")
 
     def _init_publishers(self):
         self.get_logger().info("Initializing publishers...")
@@ -76,18 +214,14 @@ class FR3Interface(Node):
 
         # Command Publisher
         # --- velocity_controller ---
-        joint_vels_controller: str = "velocity_controller"
+        joint_vels_controller: str = "joint_velocity_controller"
         joint_vels_controller_topic = f"/{joint_vels_controller}/commands"
-        self._joint_vels_cmd_pub = self.create_publisher(
-            Float64MultiArray, joint_vels_controller_topic, 10
-        )
+        self._joint_vels_cmd_pub = self.create_publisher(Float64MultiArray, joint_vels_controller_topic, 10)
 
         self._joint_vels_cmd_msg = Float64MultiArray()
         self._joint_vels_cmd_msg.data = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
         self._joint_vels_cmd_freq = 100  # Hz
-        self._joint_vels_cmd_pub_timer = self.create_timer(
-            1 / self._joint_vels_cmd_freq, self._pub_joint_vels_cmd
-        )
+        self._joint_vels_cmd_pub_timer = self.create_timer(1 / self._joint_vels_cmd_freq, self._pub_joint_vels_cmd)
 
     def _init_actions(self):
         self.get_logger().info("Initializing action servers...")
@@ -98,26 +232,44 @@ class FR3Interface(Node):
         self._joint_traj_msg = JointTrajectory()
 
         self._goto_joint_as = ActionServer(
-            self, GotoJoints, "goto_joints", self._goto_joints_action
+            self,
+            GotoJoints,
+            "goto_joints",
+            execute_callback=self._goto_joints_action,
+            callback_group=self._as_cb_group,
         )
 
         # goto_pose Action Server
-        self._goto_pose_as = ActionServer(
-            self, GotoPose, "goto_pose", self._goto_pose_action
-        )
+        self._goto_pose_as = ActionServer(self, GotoPose, "goto_pose", self._goto_pose_action)
 
-        # # joint_trajectory_controller action client (from ros_control)
-        # self.get_logger().info("Subscribing to controller's action server...")
-        # self._follow_joint_trajectory_ac = ActionClient(
-        #     self, FollowJointTrajectory, "/fr3_arm_controller/follow_joint_trajectory"
-        # )
-        # self._follow_joint_trajectory_ac.wait_for_server()
-        # self.get_logger().info("Controller's action server is up!")
+        # joint_trajectory_controller action client (from ros_control)
+        self.get_logger().info("Subscribing to controller's action server...")
+        self._follow_joint_trajectory_ac = ActionClient(
+            self,
+            FollowJointTrajectory,
+            "/joint_trajectory_controller/follow_joint_trajectory",
+            callback_group=self._ac_cb_group,
+        )
+        self._follow_joint_trajectory_ac.wait_for_server()
+        self.get_logger().info("Controller's action server is up!")
 
         # goto_joint_vels Action Server
         self._goto_joint_vels_as = ActionServer(
             self, GotoJointVelocities, "goto_joint_vels", self._goto_joint_vels_action
         )
+
+    def _init_services(self):
+        self.get_logger().info("Initializing services...")
+
+        ...
+
+        self.get_logger().info("Services initialized")
+
+    def destroy(self):
+        self._goto_joint_as.destroy()
+        self._goto_pose_as.destroy()
+        self._goto_joint_vels_as.destroy()
+        super().destroy_node()
 
     # Callbacks
     def _joint_state_callback(self, joint_msg):
@@ -148,9 +300,7 @@ class FR3Interface(Node):
 
     def _tf_callback(self):
         try:
-            trans = self.tf_buffer.lookup_transform(
-                "base", "fr3_hand", rclpy.time.Time()
-            )
+            trans = self.tf_buffer.lookup_transform("base", "fr3_hand", rclpy.time.Time())
             self._handle_transform(trans)
 
         except Exception as e:
@@ -198,17 +348,19 @@ class FR3Interface(Node):
         self._joint_vels_cmd_pub.publish(self._joint_vels_cmd_msg)
 
     # ---- Actions
-    def _goto_joints_action(self, goal_handle):
+    async def _goto_joints_action(self, goal_handle):
         self.get_logger().info("Received goal joint position goal")
+
+        self._current_goal_handle = goal_handle
+
+        # Switch controller
+        # self._feedback_controller_manager.switch_controller("joint_trajectory_controller")
 
         start_q = np.array(self._robot_arm.state.q)  # [rad]
         goal = np.array(goal_handle.request.joints_goal)  # [rad]
         duration = goal_handle.request.duration  # [s]
-        # goal = np.deg2rad([90, -45, 0, -135, 0, 90, 45])
 
-        self.get_logger().info(
-            f"Current joint positions: {np.rad2deg(self._robot_arm.state.q)}"
-        )
+        self.get_logger().info(f"Current joint positions: {np.rad2deg(self._robot_arm.state.q)}")
         self.get_logger().info(f"Goal joint positions: {np.rad2deg(goal)}")
         self.get_logger().info(f"Duration [s]: {duration}")
 
@@ -217,8 +369,7 @@ class FR3Interface(Node):
         # Compute traj
         n_points = int(duration / traj_time_step)
         joint_traj = rtb.jtraj(start_q, goal, n_points)
-        print(joint_traj.q.shape)
-        self.get_logger().info(f"\n\nTrajectory shape: {joint_traj.q.shape}")
+        # self.get_logger().info(f"\n\nTrajectory shape: {joint_traj.q.shape}")
 
         start_time = self.get_clock().now()
 
@@ -237,33 +388,86 @@ class FR3Interface(Node):
         self._joint_traj_msg.points = joint_traj_to_msg(joint_traj, traj_time_step)
 
         #! Send the trajectory to the controller
-        # Via the action server
+        # ? Via the action server
         traj_goal = FollowJointTrajectory.Goal()
         traj_goal.trajectory = self._joint_traj_msg
 
-        self._follow_joint_trajectory_ac.send_goal(traj_goal)
-        # future = self._follow_joint_trajectory_ac.send_goal_async(traj_goal)
-        # rclpy.spin_until_future_complete(self, future)
+        # Send goal asynchronously
+        traj_goal = FollowJointTrajectory.Goal()
+        traj_goal.trajectory = self._joint_traj_msg
 
-        # Via the publisher
+        send_goal_future = self._follow_joint_trajectory_ac.send_goal_async(traj_goal)
+        goal_handle_future = await send_goal_future
+
+        if not goal_handle_future.accepted:
+            self.get_logger().error("Goal rejected by follow_traj action server")
+            goal_handle.abort()
+            return GotoJoints.Result(success=False)
+
+        self.get_logger().info("Goal accepted, waiting for result...")
+
+        # Wait for the result asynchronously
+        result_future = goal_handle_future.get_result_async()
+        follow_traj_result = await result_future
+
+        if follow_traj_result.result:
+            self.get_logger().info("Trajectory execution completed successfully")
+            # goal_handle.succeed()
+            # return GotoJoints.Result(success=True)
+        else:
+            self.get_logger().error("Trajectory execution failed")
+            goal_handle.abort()
+            return GotoJoints.Result(success=False)
+
+        # # self._follow_joint_trajectory_ac.send_goal(traj_goal)
+        # follow_traj_send_goal_future = self._follow_joint_trajectory_ac.send_goal_async(traj_goal)
+        # rclpy.spin_until_future_complete(self, follow_traj_send_goal_future)
+
+        # # Goal received
+        # if follow_traj_send_goal_future.done():
+        #     follow_traj_goal_handle = follow_traj_send_goal_future.result()
+
+        #     if not follow_traj_goal_handle.accepted:
+        #         self.get_logger().error("Goal was rejected by the action server!")
+        #         return False
+
+        #     self.get_logger().info("Goal accepted, waiting for result...")
+        #     follow_traj_result_future = follow_traj_goal_handle.get_result_async()
+        #     rclpy.spin_until_future_complete(self, follow_traj_result_future)
+
+        #     if follow_traj_result_future.done():
+        #         traj_result = follow_traj_result_future.result()
+        #         # traj_result = result.result.success
+        #         self.get_logger().info(f"follow_joint_trajectory action completed")
+
+        #     else:
+        #         self.get_logger().error("Failed to get result!")
+        #         return False
+
+        # else:
+        #     self.get_logger().error("Failed to send goal!")
+        #     return False
+
+        # ? Via the publisher
         # self._commmand_pub.publish(self._joint_traj_msg)
 
-        # Check if trajectory was successfully executed
+        #! Send result
         end_time = self.get_clock().now()
         duration = (end_time - start_time).nanoseconds / 1e9
-        self.get_logger().info(
-            f"Trajectory execution completed in {duration:.2f} seconds."
-        )
+        self.get_logger().info(f"Trajectory execution completed in {duration:.2f} seconds.")
 
-        # Set result
         goal_handle.succeed()
         result = GotoJoints.Result()
         result.success = True
         self.get_logger().info("Goal succeeded.")
+
         return result
 
     def _goto_pose_action(self, goal_handle):
         self.get_logger().info("Received cartesian position goal")
+
+        # Switch controller
+        self._feedback_controller_manager.switch_controller("joint_trajectory_controller")
 
         start_cartesian_pose: SE3 = self._robot_arm.state.ee_pose
         start_q = np.array(self._robot_arm.state.q)  # [rad]
@@ -280,9 +484,7 @@ class FR3Interface(Node):
 
         #! Ikine to find goal joint positions
         goal_q = self._robot_arm.ikine(goal_pose)
-        self.get_logger().info(
-            f"Goal joint positions (from ikine): {np.rad2deg(goal_q)}"
-        )
+        self.get_logger().info(f"Goal joint positions (from ikine): {np.rad2deg(goal_q)}")
 
         #! Compute traj
         n_points = int(duration / traj_time_step)
@@ -315,9 +517,7 @@ class FR3Interface(Node):
 
         end_time = self.get_clock().now()
         duration = (end_time - start_time).nanoseconds / 1e9
-        self.get_logger().info(
-            f"Trajectory execution completed in {duration:.2f} seconds."
-        )
+        self.get_logger().info(f"Trajectory execution completed in {duration:.2f} seconds.")
 
         end_pose = self._robot_arm.state.ee_pose
 
@@ -332,10 +532,11 @@ class FR3Interface(Node):
     def _goto_joint_vels_action(self, goal_handle):
         self.get_logger().info("Received goal joint velocities goal")
 
+        # Switch controller
+        self._feedback_controller_manager.switch_controller("joint_velocity_controller")
+
         joint_vels = np.array(goal_handle.request.joint_velocities)
-        duration: rclpy.time.Duration = rclpy.time.Duration.from_msg(
-            goal_handle.request.duration
-        )
+        duration: rclpy.time.Duration = rclpy.time.Duration.from_msg(goal_handle.request.duration)
 
         self.get_logger().info(f"Target joint velocities: {joint_vels}")
         self.get_logger().info(f"Duration [s]: {duration.nanoseconds / 1e9}")
@@ -378,9 +579,7 @@ class FR3Interface(Node):
         start_q = self._robot_arm.state.q
         goal = np.deg2rad([-90, -45, 0, -135, 0, 90, 45])
 
-        self.get_logger().info(
-            f"Current joint positions: {np.rad2deg(self._robot_arm.state.q)}"
-        )
+        self.get_logger().info(f"Current joint positions: {np.rad2deg(self._robot_arm.state.q)}")
         self.get_logger().info(f"Goal joint positions: {np.rad2deg(goal)}")
 
         traj_time = 5  # Time to reach goal [s]
@@ -409,9 +608,7 @@ class FR3Interface(Node):
         # Check if trajectory was successfully executed
         end_time = self.get_clock().now()
         duration = (end_time - start_time).nanoseconds / 1e9
-        self.get_logger().info(
-            f"Trajectory execution completed in {duration:.2f} seconds."
-        )
+        self.get_logger().info(f"Trajectory execution completed in {duration:.2f} seconds.")
 
         self.trajectory = None
 
@@ -422,6 +619,8 @@ class FR3Interface(Node):
         # result.message = "Trajectory executed successfully."
         # result.final_pose = self.compute_current_pose()  # Replace with actual final pose
         return result
+
+    # --- Services, clients
 
 
 """
@@ -459,15 +658,26 @@ def main(args=None):
     rclpy.init(args=args)
     node = FR3Interface()
     executor = MultiThreadedExecutor()
+    executor.add_node(node)
 
     try:
-        rclpy.spin(node, executor=executor)
-    except KeyboardInterrupt:
-        pass
+        node.get_logger().info("fr3_interface launched, end with CTRL-C")
+        executor.spin()
 
-    finally:
-        node.destroy_node()
-        rclpy.shutdown()
+    except KeyboardInterrupt:
+        node.get_logger().info("KeyboardInterrupt, shutting down.\n")
+
+    node.destroy_node()
+    rclpy.shutdown()
+
+    # try:
+    #     rclpy.spin(node, executor=executor)
+    # except KeyboardInterrupt:
+    #     pass
+
+    # finally:
+    #     node.destroy_node()
+    #     rclpy.shutdown()
 
     # rclpy.shutdown()
 

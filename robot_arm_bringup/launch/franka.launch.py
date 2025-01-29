@@ -16,16 +16,18 @@
 import os
 
 from ament_index_python.packages import get_package_share_directory
-from launch import LaunchContext, LaunchDescription
+from launch import LaunchDescription
 from launch.actions import (
     DeclareLaunchArgument,
-    IncludeLaunchDescription,
-    OpaqueFunction,
+    # IncludeLaunchDescription,
+    # OpaqueFunction,
     ExecuteProcess,
     Shutdown,
+    TimerAction,
 )
 from launch.conditions import IfCondition
-from launch.launch_description_sources import PythonLaunchDescriptionSource
+
+# from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import (
     LaunchConfiguration,
     PathJoinSubstitution,
@@ -37,79 +39,7 @@ from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
 from launch_ros.parameter_descriptions import ParameterValue
 
-import xacro
-
-
-# def robot_description_dependent_nodes_spawner(
-#     context: LaunchContext,
-#     robot_ip,
-#     arm_id,
-#     # use_fake_hardware,
-#     # fake_sensor_commands,
-#     load_gripper,
-#     hw_type,
-# ):
-#     robot_ip_str = context.perform_substitution(robot_ip)
-#     arm_id_str = context.perform_substitution(arm_id)
-#     use_fake_hardware_str = "false"  # context.perform_substitution(use_fake_hardware)
-#     fake_sensor_commands_str = (
-#         "false"  # context.perform_substitution(fake_sensor_commands)
-#     )
-#     load_gripper_str = context.perform_substitution(load_gripper)
-#     hw_type_str = context.perform_substitution(hw_type)
-
-#     franka_xacro_filepath = os.path.join(
-#         get_package_share_directory("franka_description"),
-#         "robots",
-#         arm_id_str,
-#         arm_id_str + ".urdf.xacro",
-#     )
-
-#     robot_description = xacro.process_file(
-#         franka_xacro_filepath,
-#         mappings={
-#             "hw_type": hw_type_str,
-#             "ros2_control": "true",
-#             "arm_id": arm_id_str,
-#             "robot_ip": robot_ip_str,
-#             "hand": load_gripper_str,
-#             "use_fake_hardware": use_fake_hardware_str,
-#             "fake_sensor_commands": fake_sensor_commands_str,
-#         },
-#     ).toprettyxml(indent="  ")
-
-#     franka_controllers = PathJoinSubstitution(
-#         [FindPackageShare("my_bringup"), "config", "controllers.yaml"]
-#     )
-
-#     return [
-#         Node(
-#             package="robot_state_publisher",
-#             executable="robot_state_publisher",
-#             name="robot_state_publisher",
-#             output="screen",
-#             parameters=[{"robot_description": robot_description}],
-#         ),
-#         Node(
-#             package="controller_manager",
-#             executable="ros2_control_node",
-#             parameters=[
-#                 franka_controllers,
-#                 # {"robot_description": robot_description},
-#                 {"arm_id": arm_id},
-#                 {"load_gripper": load_gripper},
-#             ],
-#             remappings=[
-#                 ("joint_states", "franka/joint_states"),
-#                 ("/controller_manager/robot_description", "/robot_description"),
-#             ],
-#             output={
-#                 "stdout": "screen",
-#                 "stderr": "screen",
-#             },
-#             on_exit=Shutdown(),
-#         ),
-#     ]
+# import xacro
 
 
 def generate_launch_description():
@@ -157,13 +87,9 @@ def generate_launch_description():
         ]
     )
 
-    robot_description = {
-        "robot_description": ParameterValue(robot_description_config, value_type=str)
-    }
+    robot_description = {"robot_description": ParameterValue(robot_description_config, value_type=str)}
 
-    franka_controllers = PathJoinSubstitution(
-        [FindPackageShare("robot_arm_bringup"), "config", "controllers.yaml"]
-    )
+    franka_controllers = PathJoinSubstitution([FindPackageShare("robot_arm_bringup"), "config", "controllers.yaml"])
 
     #! MARK: Launch Arguments
     robot_ip_launch_arg = DeclareLaunchArgument(
@@ -187,8 +113,7 @@ def generate_launch_description():
     load_gripper_launch_arg = DeclareLaunchArgument(
         load_gripper_parameter_name,
         default_value="true",
-        description="Use Franka Gripper as an end-effector, otherwise, the robot is loaded "
-        "without an end-effector.",
+        description="Use Franka Gripper as an end-effector, otherwise, the robot is loaded without an end-effector.",
     )
 
     hw_type_launch_arg = DeclareLaunchArgument(
@@ -286,8 +211,8 @@ def generate_launch_description():
     # Spawn the ros2_control controllers
     controllers_list = [
         "joint_state_broadcaster",
-        # "fr3_arm_controller",
-        "velocity_controller",
+        "joint_trajectory_controller",
+        "joint_velocity_controller --inactive",
     ]
 
     ros_controllers_nodes = []
@@ -313,6 +238,12 @@ def generate_launch_description():
         package="robot_arm_interface",
         executable="fr3_interface",
         name="fr3_interface",
+        output="screen",
+    )
+
+    delayed_franka_interface_node = TimerAction(
+        period=2.0,  # Delay in seconds
+        actions=[franka_interface_node],
     )
 
     #! MARK: Launch Description
@@ -334,7 +265,7 @@ def generate_launch_description():
             franka_robot_state_broadcaster_spawner,
             rviz2_node,
             isaac_topics_remapper_node,
-            franka_interface_node,
+            delayed_franka_interface_node,
         ]
         + ros_controllers_nodes
     )

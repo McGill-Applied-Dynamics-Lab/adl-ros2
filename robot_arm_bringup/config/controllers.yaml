@@ -3,13 +3,10 @@ controller_manager:
     update_rate: 1000  # Hz
 
     # ros2_controllers
-    fr3_arm_controller:
-      type: joint_trajectory_controller/JointTrajectoryController
-
     joint_trajectory_controller:
       type: joint_trajectory_controller/JointTrajectoryController
 
-    velocity_controller:
+    joint_velocity_controller:
       type: velocity_controllers/JointGroupVelocityController
 
     test_controller:
@@ -26,20 +23,7 @@ franka_robot_state_broadcaster:
   ros__parameters:
     arm_id: fr3
 
-forward_position_controller:
-  ros__parameters:
-    type: forward_command_controller/ForwardCommandController
-    joints:
-      - fr3_joint1
-      - fr3_joint2
-      - fr3_joint3
-      - fr3_joint4
-      - fr3_joint5
-      - fr3_joint6
-      - fr3_joint7
-    interface_name: position
-
-velocity_controller:
+joint_velocity_controller:
   ros__parameters:
     joints:
       - fr3_joint1
@@ -50,7 +34,7 @@ velocity_controller:
       - fr3_joint6
       - fr3_joint7
 
-fr3_arm_controller:
+joint_trajectory_controller:
   ros__parameters:
     joints:
       - fr3_joint1
