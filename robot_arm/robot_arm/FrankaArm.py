@@ -4,8 +4,8 @@ from rclpy.node import Node
 from rclpy.duration import Duration
 
 from rclpy.action import ActionClient
-from arm_interfaces.action import GotoJoints, GotoPose, GotoJointVelocities
-from geometry_msgs.msg import PoseStamped
+from arm_interfaces.action import GotoJoints, GotoPose, GotoJointVelocities, GotoEEVelocity
+# from geometry_msgs.msg import PoseStamped
 
 import numpy as np
 from typing import List, Literal
@@ -21,19 +21,25 @@ class FrankaArm(Node):
         #! Action clients
         self._action_client_list = []
 
-        # Go to joints
+        # goto_joints
         self._goto_joints_ac = ActionClient(self, GotoJoints, "goto_joints")
         self._action_client_list.append(self._goto_joints_ac)
 
+        # goto_pose
         self._goto_pose_ac = ActionClient(self, GotoPose, "goto_pose")
         self._action_client_list.append(self._goto_pose_ac)
 
-        self._goto_joint_vel_ac = ActionClient(self, GotoJointVelocities, "goto_joint_vels")
-        self._action_client_list.append(self._goto_joint_vel_ac)
+        # goto_joint_vels
+        self._goto_joint_vels_ac = ActionClient(self, GotoJointVelocities, "goto_joint_vels")
+        self._action_client_list.append(self._goto_joint_vels_ac)
 
-        self._wait_for_server()
+        # goto_ee_vels
+        self._goto_ee_vel_ac = ActionClient(self, GotoEEVelocity, "goto_ee_vels")
+        self._action_client_list.append(self._goto_ee_vel_ac)
 
-    def _wait_for_server(self):
+        self._wait_for_action_servers()
+
+    def _wait_for_action_servers(self):
         self.get_logger().info("Waiting for action servers...")
         for ac in self._action_client_list:
             ac.wait_for_server()
@@ -42,6 +48,9 @@ class FrankaArm(Node):
 
     #! Action clients
     def _wait_for_action(self, future):
+        """
+        To wait until `future` is completed and return the result.
+        """
         rclpy.spin_until_future_complete(self, future)
 
         if future.done():
@@ -109,7 +118,7 @@ class FrankaArm(Node):
 
         pose_goal_msg = SE32PoseStamped(pose_goal)
 
-        T = PoseStamped2SE3(pose_goal_msg)
+        # T = PoseStamped2SE3(pose_goal_msg)
 
         goal_msg = GotoPose.Goal()
         goal_msg.pose_goal = pose_goal_msg
@@ -118,7 +127,31 @@ class FrankaArm(Node):
         future = self._goto_pose_ac.send_goal_async(goal_msg)
         return self._wait_for_action(future)
 
-    def goto_ee_vel(self): ...
+    def goto_ee_vel(self, ee_vel: List | np.ndarray, duration: Duration):
+        """
+        Move the end effector with a given velocity.
+
+        Args:
+            ee_vel (np.ndarray): End effector velocity [vx, vy, vz, wx, wy, wz] in m/s and rad/s
+            duration (Duration): Duration of the movement in seconds
+        """
+        if type(ee_vel) is list:
+            ee_vel = np.array(ee_vel)
+
+        self.get_logger().info(f"Moving end effector with velocity: {ee_vel}")
+
+        if len(ee_vel) != 6:
+            self.get_logger().error("End effector velocity must have 6 elements!")
+            return False
+
+        # Build the goal message
+        goal_msg = GotoEEVelocity.Goal()
+
+        goal_msg.ee_velocity = ee_vel.tolist()
+        goal_msg.duration = duration.to_msg()
+
+        future = self._goto_ee_vel_ac.send_goal_async(goal_msg)
+        return self._wait_for_action(future)
 
     def goto_joint_vels(
         self,
@@ -140,7 +173,7 @@ class FrankaArm(Node):
         goal_msg.joint_velocities = joint_vels.tolist()
         goal_msg.duration = duration.to_msg()
 
-        future = self._goto_joint_vel_ac.send_goal_async(goal_msg)
+        future = self._goto_joint_vels_ac.send_goal_async(goal_msg)
         return self._wait_for_action(future)
 
     def open_gripper(self): ...

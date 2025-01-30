@@ -28,6 +28,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "action/GotoJoints.action"
   "action/GotoPose.action"
   "action/GotoJointVelocities.action"
+  "action/GotoEEVelocity.action"
   DEPENDENCIES 
   geometry_msgs
   builtin_interfaces
