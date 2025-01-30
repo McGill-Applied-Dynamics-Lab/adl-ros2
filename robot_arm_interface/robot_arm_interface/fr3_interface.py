@@ -16,7 +16,7 @@ from geometry_msgs.msg import TransformStamped
 from tf2_ros import TransformListener, Buffer
 from control_msgs.action import FollowJointTrajectory
 
-from arm_interfaces.action import Empty, GotoJoints, GotoPose, GotoJointVelocities
+from arm_interfaces.action import Empty, GotoJoints, GotoPose, GotoJointVelocities, GotoEEVelocity
 
 # from arm_interfaces.msg import Joints
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
@@ -43,6 +43,8 @@ import numpy as np
 import time
 
 from enum import Enum
+
+import debugpy  # Import the debugpy module
 
 
 class ControllerStateEnum(Enum):
@@ -224,6 +226,9 @@ class FR3Interface(Node):
         # TODO: remove
         self.trajectory = None
 
+        self._joint_vels_desired: None | np.ndarray = None
+        self._ee_vel_desired: None | np.ndarray = None
+
         #! Subscribers
         joint_states_topic = "/joint_states"
         self._joint_state_sub = self.create_subscription(JointState, joint_states_topic, self._joint_state_callback, 10)
@@ -272,9 +277,9 @@ class FR3Interface(Node):
         # _as_freq = 100  # Asction
         # self._as_loop_rate = self.create_rate(_as_freq, self.get_clock())  # 100 Hz rate
 
-        # goto_joints Action Server
         self._joint_traj_msg = JointTrajectory()
 
+        # goto_joints Action Server
         self._goto_joint_as = ActionServer(
             self,
             GotoJoints,
@@ -300,6 +305,15 @@ class FR3Interface(Node):
         # goto_joint_vels Action Server
         self._goto_joint_vels_as = ActionServer(
             self, GotoJointVelocities, "goto_joint_vels", self._goto_joint_vels_action
+        )
+
+        # goto_ee_vels Action Server
+        self._goto_ee_vels_as = ActionServer(
+            self,
+            GotoEEVelocity,
+            "goto_ee_vels",
+            execute_callback=self._goto_ee_vel_action,
+            callback_group=self._as_cb_group,
         )
 
     def _init_services(self):
@@ -389,6 +403,21 @@ class FR3Interface(Node):
         """
         Publish joint velocities command at 100 Hz.
         """
+        if self._joint_vels_desired is None:
+            return
+
+        if self._joint_vels_desired.shape != (7,):
+            self.get_logger().warn("Invalid joint velocities shape!")
+            return
+
+        if isinstance(self._joint_vels_desired, np.ndarray):
+            self._joint_vels_cmd_msg.data = self._joint_vels_desired.tolist()
+        elif isinstance(self._joint_vels_desired, list):
+            self._joint_vels_cmd_msg.data = self._joint_vels_desired
+        else:
+            self.get_logger().warn("Invalid type for joint velocities command!")
+            return
+
         self._joint_vels_cmd_pub.publish(self._joint_vels_cmd_msg)
 
     # ---- Actions
@@ -572,19 +601,18 @@ class FR3Interface(Node):
         # Switch controller
         await self._feedback_controller_manager.switch_controller("joint_velocity_controller")
 
-        joint_vels = np.array(goal_handle.request.joint_velocities)
+        self._joint_vels_desired = np.array(goal_handle.request.joint_velocities)
         duration: rclpy.time.Duration = rclpy.time.Duration.from_msg(goal_handle.request.duration)
 
-        self.get_logger().info(f"Target joint velocities: {joint_vels}")
+        self.get_logger().info(f"Target joint velocities: {self._joint_vels_desired}")
         self.get_logger().info(f"Duration [s]: {duration.nanoseconds / 1e9}")
 
         #! Setup joint velocities
         start_time = self.get_clock().now()
 
-        self._joint_vels_cmd_msg.data = joint_vels.tolist()
+        # self._joint_vels_cmd_msg.data = joint_vels.tolist()
         self._joint_vels_cmd_pub_timer.reset()
 
-        self._joint_vels_cmd_pub_timer.reset()
         while (self.get_clock().now() - start_time) < duration:
             if goal_handle.is_cancel_requested:
                 goal_handle.canceled()
@@ -595,7 +623,7 @@ class FR3Interface(Node):
                 time.sleep(0.01)
 
         #! Return results
-        self._joint_vels_cmd_msg.data = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+        self._joint_vels_desired = np.zeros(7)
 
         goal_handle.succeed()
         result = GotoJointVelocities.Result()
@@ -603,8 +631,61 @@ class FR3Interface(Node):
         self.get_logger().info("Goal succeeded.")
         return result
 
+    async def _goto_ee_vel_action(self, goal_handle):
+        self.get_logger().info("Received ee velocity goal")
+
+        # Switch controller
+        await self._feedback_controller_manager.switch_controller("joint_velocity_controller")
+
+        self._ee_vel_desired = np.array(goal_handle.request.ee_velocity)
+        duration: rclpy.time.Duration = rclpy.time.Duration.from_msg(goal_handle.request.duration)
+
+        self.get_logger().info(f"Target ee velocities: {self._ee_vel_desired}")
+        self.get_logger().info(f"Duration [s]: {duration.nanoseconds / 1e9}")
+
+        #! Setup joint velocities
+        start_time = self.get_clock().now()
+
+        self._joint_vels_desired = np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+        self._joint_vels_cmd_pub_timer.reset()
+
+        dik_timer = self.create_timer(0.1, self._compute_dik, callback_group=ReentrantCallbackGroup())
+
+        while (self.get_clock().now() - start_time) < duration:
+            if goal_handle.is_cancel_requested:
+                goal_handle.canceled()
+                self.get_logger().info("Goal canceled by client.")
+                return GotoEEVelocity.Result()
+
+            else:
+                time.sleep(0.01)
+
+        #! Cleanup
+        dik_timer.cancel()
+        self._ee_vel_desired = np.zeros(6)
+        self._joint_vels_desired = np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+
+        #! Return results
+        goal_handle.succeed()
+        result = GotoEEVelocity.Result()
+        result.success = True
+        self.get_logger().info("Goal succeeded.")
+        return result
+
     # --- Services, clients
     ...
+
+    # ---
+    def _compute_dik(self):
+        """
+        Compute differential inverse kinematics; the joint velocities to achieve the desired ee velocity.
+        """
+        print("Computing dikine...")
+        if self._ee_vel_desired is None:
+            self.get_logger().warn("Desired ee velocity is not set!")
+            return
+
+        self._joint_vels_desired = self._robot_arm.diff_ikine(self._ee_vel_desired)
 
 
 """
@@ -639,6 +720,11 @@ def joint_traj_to_msg(
 
 
 def main(args=None):
+    # # Start the debugger and wait for the VS Code debugger to attach
+    # debugpy.listen(("0.0.0.0", 5678))  # Listen on all interfaces, port 5678
+    # debugpy.wait_for_client()  # Pause execution until the debugger attaches
+    # print("Debugger attached!")
+
     rclpy.init(args=args)
     node = FR3Interface()
     executor = MultiThreadedExecutor()
