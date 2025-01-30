@@ -1,4 +1,4 @@
-from typing import List
+from typing import List, Literal
 import rclpy
 from rclpy.node import Node
 from rclpy.action import ActionClient
@@ -27,6 +27,7 @@ from controller_manager_msgs.srv import (
     ListControllers,
     SwitchController,
 )
+from isaac_ros2_messages.srv import GetPrimAttribute, SetPrimAttribute
 
 from controller_manager_msgs.msg import ControllerState
 import roboticstoolbox as rtb
@@ -100,6 +101,17 @@ class FeedbackControllerManager:
         )
         self._service_list.append(self._switch_controller_srv)
 
+        # IsaacSim services if hw_type is isaac
+        if self._node.hw_type == "isaac":
+            self._get_prim_attribute_srv = self._node.create_client(
+                GetPrimAttribute, "/get_prim_attribute", callback_group=self._cb_group
+            )
+            self._service_list.append(self._get_prim_attribute_srv)
+
+            self._set_prim_attribute_srv = self._node.create_client(
+                SetPrimAttribute, "/set_prim_attribute", callback_group=self._cb_group
+            )
+
         # Wait for services
         self._node.get_logger().info("Waiting cm services...")
         for srv in self._service_list:
@@ -148,6 +160,13 @@ class FeedbackControllerManager:
             return
 
         #! Switch controller
+        if self._node.hw_type == "isaac":
+            self._node.get_logger().info("Setting Isaac Sim drive gains...")
+            if controller_name == "joint_trajectory_controller":
+                await self._set_isaac_drive_gains("position")
+            elif controller_name == "joint_velocity_controller":
+                await self._set_isaac_drive_gains("velocity")
+
         req = SwitchController.Request()
 
         # Set message
@@ -177,43 +196,76 @@ class FeedbackControllerManager:
         else:
             self._node.get_logger().error("Service call failed!")
 
-        # #! Switch controller
-        # req = SwitchController.Request()
+    async def _set_isaac_drive_gains(self, ctrl_type: Literal["position", "velocity"]):
+        self._node.get_logger().info(f"Setting Isaac Sim drive gains for {ctrl_type}")
 
-        # # Set message
-        # req.activate_controllers = [controller_name]
+        base_prim_path = "/World/franka_alt_fingers"
+        damping_attr = "drive:angular:physics:damping"
+        stiffness_attr = "drive:angular:physics:stiffness"
 
-        # if self._activated_controller is not None:
-        #     req.deactivate_controllers = [self._activated_controller]
+        GAINS = {
+            # '<prim>': ([position_damping, position_stiffness], [velocity_damping, velocity_stiffness])
+            "/panda_link0/panda_joint1": ([52, 1050], [500, 0]),
+            "/panda_link1/panda_joint2": ([52, 1050], [500, 0]),
+            "/panda_link2/panda_joint3": ([52, 1050], [500, 0]),
+            "/panda_link3/panda_joint4": ([52, 436], [500, 0]),
+            "/panda_link4/panda_joint5": ([52, 436], [500, 0]),
+            "/panda_link5/panda_joint6": ([52, 261], [500, 0]),
+            "/panda_link6/panda_joint7": ([52, 87], [500, 0]),
+        }
 
-        # req.strictness = 1  # BEST_EFFORT=1, STRICT=2
-        # # req.activate_asap
-        # req.timeout = Duration(seconds=1).to_msg()
+        for each_joint, gains in GAINS.items():
+            srv_req = SetPrimAttribute.Request()
+            srv_req.path = base_prim_path + each_joint
 
-        # # Call service
-        # future = self._switch_controller_srv.call_async(req)
-        # rclpy.spin_until_future_complete(self._node, future)
+            # Damping
+            srv_req.attribute = damping_attr
+            val = gains[0][0] if ctrl_type == "position" else gains[1][0]
+            srv_req.value = str(val)
 
-        # if future.result() is not None:
-        #     switch_ok = future.result().ok
+            future = self._set_prim_attribute_srv.call_async(srv_req)
+            result = await future
 
-        #     if switch_ok:
-        #         self._node.get_logger().info(f"Switched to controller: {controller_name}")
-        #         self._activated_controller = controller_name
+            if result is not None:
+                if result.success:
+                    self._node.get_logger().info(f"Set {ctrl_type} damping for {each_joint} to {val}")
 
-        #     else:
-        #         self._node.get_logger().error(f"Failed to switch to controller: {controller_name}")
+                else:
+                    self._node.get_logger().error(f"Failed to set {ctrl_type} damping for {each_joint}")
+                    return
 
-        # else:
-        #     self._node.get_logger().error("Service call failed!")
+            else:
+                self._node.get_logger().error("Service call failed!")
+                return
+
+            # Stiffness
+            srv_req.attribute = stiffness_attr
+            val = gains[0][1] if ctrl_type == "position" else gains[1][1]
+            srv_req.value = str(val)
+
+            future = self._set_prim_attribute_srv.call_async(srv_req)
+            result = await future
+
+            if result is not None:
+                if result.success:
+                    self._node.get_logger().info(f"Set {ctrl_type} stiffness for {each_joint} to {val}")
+
+                else:
+                    self._node.get_logger().error(f"Failed to set {ctrl_type} stiffness for {each_joint}")
+                    return
+
+            else:
+                self._node.get_logger().error("Service call failed!")
+                return
 
 
 class FR3Interface(Node):
-    def __init__(self):
+    def __init__(self, hw_type: Literal["isaac", "fake", "real"]):
         super().__init__("fr3_interface")
 
         # Initialize robot arm
         self._robot_arm = RobotArm("fr3")
+        self.hw_type = hw_type
 
         #! Attributes
         self._is_state_initialialized = False
@@ -662,6 +714,7 @@ class FR3Interface(Node):
 
         #! Cleanup
         dik_timer.cancel()
+        time.sleep(0.01)
         self._ee_vel_desired = np.zeros(6)
         self._joint_vels_desired = np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
 
@@ -680,7 +733,6 @@ class FR3Interface(Node):
         """
         Compute differential inverse kinematics; the joint velocities to achieve the desired ee velocity.
         """
-        print("Computing dikine...")
         if self._ee_vel_desired is None:
             self.get_logger().warn("Desired ee velocity is not set!")
             return
@@ -724,9 +776,10 @@ def main(args=None):
     # debugpy.listen(("0.0.0.0", 5678))  # Listen on all interfaces, port 5678
     # debugpy.wait_for_client()  # Pause execution until the debugger attaches
     # print("Debugger attached!")
+    hw_type: Literal["isaac", "fake", "real"] = "isaac"
 
     rclpy.init(args=args)
-    node = FR3Interface()
+    node = FR3Interface(hw_type=hw_type)
     executor = MultiThreadedExecutor()
     executor.add_node(node)
 
