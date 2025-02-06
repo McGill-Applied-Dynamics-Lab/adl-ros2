@@ -484,18 +484,26 @@ class FR3Interface(Node):
 
         start_q = np.array(self._robot_arm.state.q)  # [rad]
         goal = np.array(goal_handle.request.joints_goal)  # [rad]
-        duration = goal_handle.request.duration  # [s]
+        duration: rclpy.time.Duration = rclpy.time.Duration.from_msg(goal_handle.request.duration)
+        duration_secs = duration.nanoseconds / 1e9
 
         self.get_logger().info(f"Current joint positions: {np.rad2deg(self._robot_arm.state.q)}")
         self.get_logger().info(f"Goal joint positions: {np.rad2deg(goal)}")
-        self.get_logger().info(f"Duration [s]: {duration}")
+        self.get_logger().info(f"Duration [s]: {duration_secs}")
 
         traj_time_step = 0.01  # time between the trajectory points [s]
 
         # Compute traj
-        n_points = int(duration / traj_time_step)
-        joint_traj = rtb.jtraj(start_q, goal, n_points)
+        n_points = int(duration_secs / traj_time_step)
+        t = np.linspace(0, duration_secs, n_points)
+
+        joint_traj = rtb.jtraj(start_q, goal, t=t)
         # self.get_logger().info(f"\n\nTrajectory shape: {joint_traj.q.shape}")
+        jx = 2
+        max_vel_jx = np.abs(joint_traj.qd[:, jx - 1]).max()
+        max_accel_jx = np.abs(joint_traj.qdd[:, jx - 1]).max()
+        self.get_logger().info(f"Max vel joint {jx}: {max_vel_jx}")
+        self.get_logger().info(f"Max accel joint {jx}: {max_accel_jx}")
 
         start_time = self.get_clock().now()
 
@@ -571,11 +579,12 @@ class FR3Interface(Node):
 
         goal_msg = goal_handle.request.pose_goal
         goal_pose = PoseStamped2SE3(goal_msg)
-        duration = goal_handle.request.duration  # [s]
+        duration: rclpy.time.Duration = rclpy.time.Duration.from_msg(goal_handle.request.duration)
+        duration_secs = duration.nanoseconds / 1e9
 
         self.get_logger().info(f"Current cartesian pose:\n {start_cartesian_pose}")
         self.get_logger().info(f"Goal cartesian pose:\n {goal_pose}")
-        self.get_logger().info(f"Duration [s]: {duration}")
+        self.get_logger().info(f"Duration [s]: {duration_secs}")
 
         traj_time_step = 0.01  # time between the trajectory points [s]
 
@@ -584,7 +593,7 @@ class FR3Interface(Node):
         self.get_logger().info(f"Goal joint positions (from ikine): {np.rad2deg(goal_q)}")
 
         #! Compute traj
-        n_points = int(duration / traj_time_step)
+        n_points = int(duration_secs / traj_time_step)
         joint_traj = rtb.jtraj(start_q, goal_q, n_points)
         print(joint_traj.q.shape)
         self.get_logger().info(f"\n\nTrajectory shape: {joint_traj.q.shape}")

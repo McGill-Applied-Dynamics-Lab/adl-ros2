@@ -75,12 +75,12 @@ class FrankaArm(Node):
             self.get_logger().error("Failed to send goal!")
             return False
 
-    def goto_joints(self, joint_goal: np.ndarray, duration: float):
+    def goto_joints(self, joint_goal: np.ndarray, duration: Duration):
         self.get_logger().info(f"Moving joints to goal: {joint_goal}")
 
         goal_msg = GotoJoints.Goal()
         goal_msg.joints_goal = joint_goal.tolist()
-        goal_msg.duration = duration
+        goal_msg.duration = duration.to_msg()
 
         future = self._goto_joints_ac.send_goal_async(goal_msg)
         rclpy.spin_until_future_complete(self, future)
@@ -111,9 +111,9 @@ class FrankaArm(Node):
         self.get_logger().info("Moving to home position")
 
         joint_home_position = np.deg2rad([0, -45, 0, -135, 0, 90, 45])
-        self.goto_joints(joint_home_position, 3.0)
+        self.goto_joints(joint_home_position, Duration(seconds=3))
 
-    def goto_pose(self, pose_goal: SE3, duration: float):
+    def goto_pose(self, pose_goal: SE3, duration: Duration):
         self.get_logger().info(f"Moving to cartesian goal:\n {pose_goal}")
 
         pose_goal_msg = SE32PoseStamped(pose_goal)
@@ -122,7 +122,7 @@ class FrankaArm(Node):
 
         goal_msg = GotoPose.Goal()
         goal_msg.pose_goal = pose_goal_msg
-        goal_msg.duration = duration
+        goal_msg.duration = duration.to_msg()
 
         future = self._goto_pose_ac.send_goal_async(goal_msg)
         return self._wait_for_action(future)

@@ -1,6 +1,6 @@
 # Request
 geometry_msgs/PoseStamped pose_goal
-float64 duration  # [sec]  
+builtin_interfaces/Duration duration  # [sec]  
 ---
 # Result
 bool success
