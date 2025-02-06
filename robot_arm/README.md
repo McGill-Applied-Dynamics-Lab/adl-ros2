@@ -1,4 +1,4 @@
-# robotic_arm_ros
+# robot_arm
 Collection of ros2 packages to control robotic arms using python.
 
 Supported arms:
@@ -7,3 +7,5 @@ Supported arms:
 
 
 ## Packages
+
+## Installation

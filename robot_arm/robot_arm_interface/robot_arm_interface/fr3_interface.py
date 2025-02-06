@@ -115,7 +115,8 @@ class FeedbackControllerManager:
         # Wait for services
         self._node.get_logger().info("Waiting cm services...")
         for srv in self._service_list:
-            srv.wait_for_service()
+            while not srv.wait_for_service(timeout_sec=1.0):
+                self._node.get_logger().info(f"service {srv.srv_name} not available, waiting again...")
 
         self._node.get_logger().info("CM services are up!")
 
@@ -776,7 +777,7 @@ def main(args=None):
     # debugpy.listen(("0.0.0.0", 5678))  # Listen on all interfaces, port 5678
     # debugpy.wait_for_client()  # Pause execution until the debugger attaches
     # print("Debugger attached!")
-    hw_type: Literal["isaac", "fake", "real"] = "isaac"
+    hw_type: Literal["isaac", "fake", "real"] = "fake"
 
     rclpy.init(args=args)
     node = FR3Interface(hw_type=hw_type)
