@@ -1,5 +1,5 @@
 import rclpy
-from robot_arm.FrankaArm import FrankaArm
+from robot_arm_client.FrankaArm import FrankaArm
 from rclpy.duration import Duration
 
 import numpy as np
