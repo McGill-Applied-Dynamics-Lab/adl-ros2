@@ -27,7 +27,7 @@ from controller_manager_msgs.srv import (
     ListControllers,
     SwitchController,
 )
-from isaac_ros2_messages.srv import GetPrimAttribute, SetPrimAttribute
+# from isaac_ros2_messages.srv import GetPrimAttribute, SetPrimAttribute
 
 from controller_manager_msgs.msg import ControllerState
 import roboticstoolbox as rtb
@@ -45,7 +45,7 @@ import time
 
 from enum import Enum
 
-import debugpy  # Import the debugpy module
+# import debugpy  # Import the debugpy module
 
 
 class ControllerStateEnum(Enum):
@@ -776,7 +776,7 @@ def main(args=None):
     # debugpy.listen(("0.0.0.0", 5678))  # Listen on all interfaces, port 5678
     # debugpy.wait_for_client()  # Pause execution until the debugger attaches
     # print("Debugger attached!")
-    hw_type: Literal["isaac", "fake", "real"] = "isaac"
+    hw_type: Literal["isaac", "fake", "real"] = "real"
 
     rclpy.init(args=args)
     node = FR3Interface(hw_type=hw_type)

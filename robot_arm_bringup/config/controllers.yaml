@@ -19,9 +19,9 @@ controller_manager:
     franka_robot_state_broadcaster:
       type: franka_robot_state_broadcaster/FrankaRobotStateBroadcaster
 
-franka_robot_state_broadcaster:
-  ros__parameters:
-    arm_id: fr3
+# franka_robot_state_broadcaster:
+#   ros__parameters:
+#     arm_id: fr3
 
 joint_velocity_controller:
   ros__parameters:

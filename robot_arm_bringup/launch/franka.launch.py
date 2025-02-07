@@ -266,7 +266,7 @@ def generate_launch_description():
             franka_robot_state_broadcaster_spawner,
             rviz2_node,
             isaac_topics_remapper_node,
-            # delayed_franka_interface_node,
+            delayed_franka_interface_node,
         ]
         + ros_controllers_nodes
     )
