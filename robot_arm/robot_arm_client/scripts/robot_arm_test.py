@@ -1,5 +1,5 @@
 import rclpy
-from robot_arm.FrankaArm import FrankaArm
+from robot_arm_client.FrankaArm import FrankaArm
 from rclpy.duration import Duration
 
 import numpy as np
@@ -12,12 +12,12 @@ def main(args=None):
     print("Starting robot")
     franka_arm = FrankaArm()
 
-    # # Move joints to a position
-    # joints_goal = np.deg2rad([0, 0, 0, -135, 0, 90, 45])
-    # franka_arm.goto_joints(joints_goal, 5.0)
-
     # # Move joints home
     # franka_arm.goto_home()
+
+    # Move joints to a position
+    joints_goal = np.deg2rad([0, 0, 0, -135, 0, 90, 45])
+    franka_arm.goto_joints(joints_goal, Duration(seconds=5.0))
 
     # # Move to pose
     # pose_goal = SE3(0.5, 0.5, 0.5)

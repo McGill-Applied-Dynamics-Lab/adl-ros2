@@ -1,9 +1,5 @@
-# robotic_arm_ros
-Collection of ros2 packages to control robotic arms using python.
-
-Supported arms:
-- Franka Research 3
-- Vectis?
-
+# adg-ros2
+ROS2 packages for the Applied Dynamics Group at McGill.
 
 ## Packages
+* **[robot_arm](robot_arm/README.md)**
