@@ -214,8 +214,8 @@ def generate_launch_description():
         # "joint_trajectory_controller --inactive",
         # "joint_velocity_controller",
         # "joint_velocity_example_controller",
-        "my_vel_controller",
-        # "move_to_start_example_controller",
+        # "my_vel_controller",
+        "move_to_start_example_controller",
     ]
 
     ros_controllers_nodes = []

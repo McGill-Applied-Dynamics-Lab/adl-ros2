@@ -65,14 +65,14 @@ controller_interface::return_type JointVelocityController::update(const rclcpp::
   double omega = cycle * omega_max / 2.0 * (1.0 - std::cos(phase_angle));
 
   for (int i = 0; i < num_joints; i++) {
-    if (i == 3 || i == 4) {
-      command_interfaces_[i].set_value(omega);
-    } else {
-      command_interfaces_[i].set_value(0.0);
-    }
-    // if (i == 6) {
-    //   command_interfaces_[i].set_value(2.0);
+    // if (i == 3 || i == 4) {
+    //   command_interfaces_[i].set_value(omega);
+    // } else {
+    //   command_interfaces_[i].set_value(0.0);
     // }
+    if (i == 6) {
+      command_interfaces_[i].set_value(0.010);
+    }
   }
   return controller_interface::return_type::OK;
 }
