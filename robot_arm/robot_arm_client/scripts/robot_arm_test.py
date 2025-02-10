@@ -17,16 +17,16 @@ def main(args=None):
 
     # Move joints to a position
     joints_goal = np.deg2rad([0, 0, 0, -135, 0, 90, 45])
-    franka_arm.goto_joints(joints_goal, Duration(seconds=5.0))
+    franka_arm.goto_joints(joints_goal, Duration(seconds=10.0))
 
     # # Move to pose
     # pose_goal = SE3(0.5, 0.5, 0.5)
     # franka_arm.goto_pose(pose_goal, 5.0)
 
-    # Joint velocities
-    joint_vels = [0, 0, 0, 0, 0, 0, 5]
-    duration = 5.0
-    franka_arm.goto_joint_vels(joint_vels, unit="deg", duration=Duration(seconds=duration))
+    # # Joint velocities
+    # joint_vels = [0, 0, 0, 0, 0, 0, 5]
+    # duration = 5.0
+    # franka_arm.goto_joint_vels(joint_vels, unit="deg", duration=Duration(seconds=duration))
 
     # # EE velocities
     # ee_vel = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]

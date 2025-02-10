@@ -9,7 +9,7 @@
 
   <exec_depend>rclpy</exec_depend>
 
-  <depend>franka_controllers</depend>
+  <!-- <depend>franka_controllers</depend> -->
   <depend>arm_interfaces</depend>
 
   <test_depend>ament_copyright</test_depend>

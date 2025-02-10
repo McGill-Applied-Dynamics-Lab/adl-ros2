@@ -44,6 +44,21 @@ endforeach()
 foreach(Dependency IN ITEMS ${CONTROLLER_INCLUDE_DEPENDS})
   find_package(${Dependency} REQUIRED)
 endforeach()
+find_package(Eigen3 REQUIRED)
+find_package(franka_msgs REQUIRED)
+
+# from franka_ros2_example
+# find_package(ament_index_cpp REQUIRED)
+# find_package(controller_interface REQUIRED)
+# find_package(franka_semantic_components REQUIRED)
+# find_package(hardware_interface REQUIRED)
+# find_package(moveit_core REQUIRED)
+# find_package(moveit_msgs REQUIRED)
+# find_package(pinocchio REQUIRED)
+# find_package(pluginlib REQUIRED)
+# find_package(rclcpp REQUIRED)
+# find_package(rclcpp_lifecycle REQUIRED)
+# find_package(std_srvs REQUIRED)
 
 #! COMPILE
 # add_executable(send_trajectory reference_generator/send_trajectory.cpp)
@@ -57,6 +72,7 @@ add_library(
   my_controllers
   SHARED
   src/test_controller.cpp
+  src/joint_velocity_controller.cpp
 )
 
 target_compile_features(my_controllers PUBLIC cxx_std_17)
@@ -64,12 +80,14 @@ target_include_directories(my_controllers PUBLIC
   # $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/hardware/include>
   $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include/my_controllers>
+  ${EIGEN3_INCLUDE_DIRS}
 )
 
 ament_target_dependencies(
   my_controllers PUBLIC
   ${HW_IF_INCLUDE_DEPENDS}
   ${CONTROLLER_INCLUDE_DEPENDS}
+  franka_msgs
 )
 
 # Export controller plugins
@@ -101,6 +119,10 @@ install(TARGETS my_controllers
   RUNTIME DESTINATION bin
 )
 
+install(
+        DIRECTORY include/
+        DESTINATION include
+)
 
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
@@ -115,6 +137,17 @@ if(BUILD_TESTING)
 endif()
 
 ## EXPORTS
+ament_export_include_directories(
+        include
+)
+ament_export_libraries(
+        ${PROJECT_NAME}
+)
+
 ament_export_targets(export_my_controllers HAS_LIBRARY_TARGET)
-ament_export_dependencies(${HW_IF_INCLUDE_DEPENDS} ${REF_GEN_INCLUDE_DEPENDS} ${CONTROLLER_INCLUDE_DEPENDS})
+ament_export_dependencies(
+  ${HW_IF_INCLUDE_DEPENDS} 
+  ${REF_GEN_INCLUDE_DEPENDS} 
+  ${CONTROLLER_INCLUDE_DEPENDS}
+)
 ament_package()
