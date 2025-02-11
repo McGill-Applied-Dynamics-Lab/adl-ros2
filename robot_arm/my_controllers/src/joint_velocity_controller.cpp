@@ -22,7 +22,19 @@
 #include <my_controllers/robot_utils.hpp>
 #include <string>
 
+double clamp(double desired, double lower, double upper) { return std::max(lower, std::min(desired, upper)); }
 namespace my_controllers {
+
+CallbackReturn JointVelocityController::on_init() {
+  try {
+    auto_declare<bool>("gazebo", false);
+    auto_declare<std::string>("robot_description", "");
+  } catch (const std::exception& e) {
+    fprintf(stderr, "Exception thrown during init stage with message: %s \n", e.what());
+    return CallbackReturn::ERROR;
+  }
+  return CallbackReturn::SUCCESS;
+}
 
 controller_interface::InterfaceConfiguration JointVelocityController::command_interface_configuration() const {
   controller_interface::InterfaceConfiguration config;
@@ -45,50 +57,8 @@ controller_interface::InterfaceConfiguration JointVelocityController::state_inte
   return config;
 }
 
-controller_interface::return_type JointVelocityController::update(const rclcpp::Time& /*time*/,
-                                                                  const rclcpp::Duration& period) {
-  elapsed_time_ = elapsed_time_ + period;
-  rclcpp::Duration time_max(3.0, 0.0);
-  double omega_max = 0.5;
-
-  // Calculate the number of complete cycles that have passed
-  double elapsed_seconds = elapsed_time_.seconds();
-  double time_max_seconds = time_max.seconds();
-  double cycle_count = (elapsed_seconds - std::fmod(elapsed_seconds, time_max_seconds)) / time_max_seconds;
-  double cycle = std::floor(std::pow(-1.0, cycle_count));
-
-  // Calculate the phase angle
-  double angular_frequency = 2.0 * M_PI / time_max_seconds;
-  double phase_angle = angular_frequency * elapsed_seconds;
-
-  // Calculate the oscillating angular velocity
-  double omega = cycle * omega_max / 2.0 * (1.0 - std::cos(phase_angle));
-
-  for (int i = 0; i < num_joints; i++) {
-    // if (i == 3 || i == 4) {
-    //   command_interfaces_[i].set_value(omega);
-    // } else {
-    //   command_interfaces_[i].set_value(0.0);
-    // }
-    if (i == 6) {
-      command_interfaces_[i].set_value(0.010);
-    }
-  }
-  return controller_interface::return_type::OK;
-}
-
-CallbackReturn JointVelocityController::on_init() {
-  try {
-    auto_declare<bool>("gazebo", false);
-    auto_declare<std::string>("robot_description", "");
-  } catch (const std::exception& e) {
-    fprintf(stderr, "Exception thrown during init stage with message: %s \n", e.what());
-    return CallbackReturn::ERROR;
-  }
-  return CallbackReturn::SUCCESS;
-}
-
 CallbackReturn JointVelocityController::on_configure(const rclcpp_lifecycle::State& /*previous_state*/) {
+  //! Parameters
   is_gazebo = get_node()->get_parameter("gazebo").as_bool();
 
   auto parameters_client = std::make_shared<rclcpp::AsyncParametersClient>(get_node(), "/robot_state_publisher");
@@ -104,6 +74,7 @@ CallbackReturn JointVelocityController::on_configure(const rclcpp_lifecycle::Sta
 
   arm_id_ = robot_utils::getRobotNameFromDescription(robot_description_, get_node()->get_logger());
 
+  //! Services
   if (!is_gazebo) {
     auto client = get_node()->create_client<franka_msgs::srv::SetFullCollisionBehavior>(
         "service_server/set_full_collision_behavior");
@@ -121,12 +92,85 @@ CallbackReturn JointVelocityController::on_configure(const rclcpp_lifecycle::Sta
     RCLCPP_INFO(get_node()->get_logger(), "Default collision behavior set.");
   }
 
+  //! Subscriber
+  joints_command_subscriber_ = get_node()->create_subscription<CmdType>(
+      "~/commands", rclcpp::SystemDefaultsQoS(),
+      [this](const CmdType::SharedPtr msg) { rt_command_ptr_.writeFromNonRT(msg); });
+
+  //! Initialize joint states
+  qd_goal_ << 0, 0, 0, 0, 0, 0, 0;
+  qd_filtered_.setZero();
+
+  RCLCPP_INFO(get_node()->get_logger(), "configure successful");
+
   return CallbackReturn::SUCCESS;
 }
 
 CallbackReturn JointVelocityController::on_activate(const rclcpp_lifecycle::State& /*previous_state*/) {
+  updateJointStates();
+
   elapsed_time_ = rclcpp::Duration(0, 0);
+  qd_filtered_ = qd_;
+
+  // reset command buffer if a command came through callback when controller was inactive
+  rt_command_ptr_ = realtime_tools::RealtimeBuffer<std::shared_ptr<CmdType>>(nullptr);
+
+  RCLCPP_INFO(get_node()->get_logger(), "activate successful");
   return CallbackReturn::SUCCESS;
+}
+
+controller_interface::return_type JointVelocityController::update(const rclcpp::Time&, const rclcpp::Duration& period) {
+  auto joint_commands = rt_command_ptr_.readFromRT();
+
+  // no command received yet
+  if (!joint_commands || !(*joint_commands)) {
+    return controller_interface::return_type::OK;
+  }
+
+  if ((*joint_commands)->data.size() != command_interfaces_.size()) {
+    RCLCPP_ERROR_THROTTLE(get_node()->get_logger(), *(get_node()->get_clock()), 1000,
+                          "command size (%zu) does not match number of interfaces (%zu)",
+                          (*joint_commands)->data.size(), command_interfaces_.size());
+    return controller_interface::return_type::ERROR;
+  }
+
+  for (int i = 0; i < 7; ++i) {
+    qd_goal_(i) = (*joint_commands)->data[i];
+  }
+
+  updateJointStates();
+  elapsed_time_ = elapsed_time_ + period;
+
+  // const double kAlpha = 0.99;
+  // qd_filtered_ = (1 - kAlpha) * qd_filtered_ + kAlpha * qd_;
+
+  for (int i = 0; i < 7; ++i) {
+    // Calculate max allowed velocity change
+    double delta_v = max_accel_ * period.seconds();
+
+    // Smooth towards desired velocity
+    qd_filtered_(i) = clamp(qd_goal_(i), qd_filtered_(i) - delta_v, qd_filtered_(i) + delta_v);
+
+    command_interfaces_[i].set_value(qd_filtered_(i));
+  }
+
+  RCLCPP_INFO(get_node()->get_logger(), "Joint %d: qd = %f \t qd_des = %f", 3, qd_(6), qd_filtered_(6));
+  // RCLCPP_INFO(get_node()->get_logger(), "period %f", 1, period.seconds());
+
+  return controller_interface::return_type::OK;
+}
+
+void JointVelocityController::updateJointStates() {
+  for (auto i = 0; i < num_joints; ++i) {
+    const auto& position_interface = state_interfaces_.at(2 * i);
+    const auto& velocity_interface = state_interfaces_.at(2 * i + 1);
+
+    assert(position_interface.get_interface_name() == "position");
+    assert(velocity_interface.get_interface_name() == "velocity");
+
+    q_(i) = position_interface.get_value();
+    qd_(i) = velocity_interface.get_value();
+  }
 }
 
 }  // namespace my_controllers

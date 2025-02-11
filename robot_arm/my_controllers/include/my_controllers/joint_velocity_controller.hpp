@@ -14,19 +14,26 @@
 
 #pragma once
 
+#include <Eigen/Eigen>
 #include <controller_interface/controller_interface.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <string>
 
+#include "realtime_tools/realtime_buffer.hpp"
+#include "std_msgs/msg/float64_multi_array.hpp"
+
 using CallbackReturn = rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn;
 
 namespace my_controllers {
+using CmdType = std_msgs::msg::Float64MultiArray;
 
 /**
- * The joint velocity example controller
+ * Joint velocity controller
  */
 class JointVelocityController : public controller_interface::ControllerInterface {
  public:
+  using Vector7d = Eigen::Matrix<double, 7, 1>;
+
   [[nodiscard]] auto command_interface_configuration() const -> controller_interface::InterfaceConfiguration override;
   [[nodiscard]] auto state_interface_configuration() const -> controller_interface::InterfaceConfiguration override;
   auto update(const rclcpp::Time& time, const rclcpp::Duration& period) -> controller_interface::return_type override;
@@ -37,9 +44,27 @@ class JointVelocityController : public controller_interface::ControllerInterface
  private:
   std::string arm_id_;
   std::string robot_description_;
-  bool is_gazebo{false};
   const int num_joints = 7;
+
+  bool is_gazebo{false};
   rclcpp::Duration elapsed_time_ = rclcpp::Duration(0, 0);
+
+  Vector7d q_;
+  Vector7d q_goal_;
+  Vector7d qd_;
+  Vector7d qd_filtered_;
+  Vector7d qd_goal_;
+  Vector7d k_gains_;
+  Vector7d d_gains_;
+  double max_accel_ = 1;
+
+  realtime_tools::RealtimeBuffer<std::shared_ptr<CmdType>> rt_command_ptr_;
+  rclcpp::Subscription<CmdType>::SharedPtr joints_command_subscriber_;
+
+  // std::vector<double> desired_velocities_;  // Raw desired velocities from topic
+  // std::vector<double> smoothed_velocities_; // Smoothed velocities sent to robot
+
+  void updateJointStates();
 };
 
 }  // namespace my_controllers

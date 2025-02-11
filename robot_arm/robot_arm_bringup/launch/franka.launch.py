@@ -211,7 +211,7 @@ def generate_launch_description():
     # Spawn the ros2_control controllers
     controllers_list = [
         "joint_state_broadcaster",
-        # "joint_trajectory_controller --inactive",
+        "joint_trajectory_controller --inactive",
         # "joint_velocity_controller",
         # "joint_velocity_example_controller",
         # "my_vel_controller",
@@ -273,7 +273,7 @@ def generate_launch_description():
             # franka_robot_state_broadcaster_spawner,
             rviz2_node,
             isaac_topics_remapper_node,
-            # delayed_franka_interface_node,
+            delayed_franka_interface_node,
         ]
         + ros_controllers_nodes
     )

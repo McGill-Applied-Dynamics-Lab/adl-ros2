@@ -13,7 +13,7 @@ class MinimalPublisher(Node):
 
     def __init__(self):
         super().__init__('joint_vel_test_publisher')
-        self.publisher_ = self.create_publisher(Float64MultiArray, '/joint_velocity_controller/commands', 10)
+        self.publisher_ = self.create_publisher(Float64MultiArray, '/my_vel_controller/commands', 10)
         # timer_period = 0.5  # seconds
         # self.timer = self.create_timer(timer_period, self.timer_callback)
         self.i = 0
@@ -38,19 +38,19 @@ class MinimalPublisher(Node):
         # if time > Duration(seconds=2) + self._start_time:
         #     self._joint_vels_cmd_msg.data = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.00]
 
-        vel_cmd = 0.0
+        vel_cmd = -0.5
 
-        dvel = np.abs(self.desired_vel - self._past_vel)
+        # dvel = np.abs(self.desired_vel - self._past_vel)
 
-        if dvel > self.vel_limit:
-            if self.desired_vel > self._past_vel:
-                vel_cmd = self._past_vel + self.vel_limit
-            else:
-                vel_cmd = self._past_vel - self.vel_limit
-        else:
-            vel_cmd = self.desired_vel
+        # if dvel > self.vel_limit:
+        #     if self.desired_vel > self._past_vel:
+        #         vel_cmd = self._past_vel + self.vel_limit
+        #     else:
+        #         vel_cmd = self._past_vel - self.vel_limit
+        # else:
+        #     vel_cmd = self.desired_vel
 
-        self._joint_vels_cmd_msg.data[6] = vel_cmd
+        self._joint_vels_cmd_msg.data[0] = vel_cmd
         
         self.publisher_.publish(self._joint_vels_cmd_msg)
         self.get_logger().info('Publishing: "%s"' % self._joint_vels_cmd_msg.data)

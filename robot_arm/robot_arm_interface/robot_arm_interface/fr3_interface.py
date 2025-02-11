@@ -165,7 +165,7 @@ class FeedbackControllerManager:
             self._node.get_logger().info("Setting Isaac Sim drive gains...")
             if controller_name == "joint_trajectory_controller":
                 await self._set_isaac_drive_gains("position")
-            elif controller_name == "joint_velocity_controller":
+            elif controller_name == "my_vel_controller":
                 await self._set_isaac_drive_gains("velocity")
 
         req = SwitchController.Request()
@@ -299,7 +299,7 @@ class FR3Interface(Node):
         # self.get_logger().info(f"{self._feedback_controller_manager._controllers}")
 
         # self._feedback_controller_manager.switch_controller("joint_trajectory_controller")
-        # self._feedback_controller_manager.switch_controller("joint_velocity_controller")
+        # self._feedback_controller_manager.switch_controller("my_vel_controller")
 
     def _init_publishers(self):
         self.get_logger().info("Initializing publishers...")
@@ -316,7 +316,7 @@ class FR3Interface(Node):
 
         # Command Publisher
         # --- velocity_controller ---
-        joint_vels_controller: str = "joint_velocity_controller"
+        joint_vels_controller: str = "my_vel_controller"
         joint_vels_controller_topic = f"/{joint_vels_controller}/commands"
         self._joint_vels_cmd_pub = self.create_publisher(Float64MultiArray, joint_vels_controller_topic, 10)
 
@@ -661,7 +661,7 @@ class FR3Interface(Node):
         self.get_logger().info("Received goal joint velocities goal")
 
         # Switch controller
-        await self._feedback_controller_manager.switch_controller("joint_velocity_controller")
+        await self._feedback_controller_manager.switch_controller("my_vel_controller")
 
         self._joint_vels_desired = np.array(goal_handle.request.joint_velocities)
         duration: rclpy.time.Duration = rclpy.time.Duration.from_msg(goal_handle.request.duration)
@@ -697,7 +697,7 @@ class FR3Interface(Node):
         self.get_logger().info("Received ee velocity goal")
 
         # Switch controller
-        await self._feedback_controller_manager.switch_controller("joint_velocity_controller")
+        await self._feedback_controller_manager.switch_controller("my_vel_controller")
 
         self._ee_vel_desired = np.array(goal_handle.request.ee_velocity)
         duration: rclpy.time.Duration = rclpy.time.Duration.from_msg(goal_handle.request.duration)
