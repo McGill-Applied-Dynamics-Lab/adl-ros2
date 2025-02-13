@@ -2,7 +2,7 @@ controller_manager:
   ros__parameters:
     update_rate: 1000  # Hz
 
-    # ros2_controllers
+    # my controllers
     joint_trajectory_controller:
       type: joint_trajectory_controller/JointTrajectoryController
 
@@ -10,12 +10,15 @@ controller_manager:
       type: velocity_controllers/JointGroupVelocityController
 
     test_controller:
-      type: my_controllers/TestController
+      type: fr3_controllers/TestController
 
     my_vel_controller:
-      type: my_controllers/JointVelocityController
+      type: fr3_controllers/JointVelocityController
 
-    # Franka Controllers
+    cartesian_pose_controller:
+      type: fr3_controllers/CartesianPoseController
+
+    # Example Controllers
     gravity_compensation_example_controller:
       type: franka_example_controllers/GravityCompensationExampleController
 
@@ -63,10 +66,12 @@ controller_manager:
     franka_robot_state_broadcaster:
       type: franka_robot_state_broadcaster/FrankaRobotStateBroadcaster
 
+# Broadcasters
 franka_robot_state_broadcaster:
   ros__parameters:
     arm_id: fr3
 
+# My Controllers
 joint_velocity_controller:
   ros__parameters:
     joints:
@@ -104,7 +109,25 @@ joint_trajectory_controller:
       fr3_joint5: { p: 250., d: 10., i: 0., i_clamp: 1. }
       fr3_joint6: { p: 150., d: 10., i: 0., i_clamp: 1. }
       fr3_joint7: { p: 50., d: 5., i: 0., i_clamp: 1. }
-  
+
+cartesian_pose_controller:
+  ros__parameters:
+    joints:
+      - fr3_joint1
+      - fr3_joint2
+      - fr3_joint3
+      - fr3_joint4
+      - fr3_joint5
+      - fr3_joint6
+      - fr3_joint7
+
+    command_interfaces:
+      - position
+
+    state_interfaces:
+      - position
+      - velocity
+
 # FRANKA CONTROLLERS
 joint_impedance_with_ik_example_controller:
   ros__parameters:

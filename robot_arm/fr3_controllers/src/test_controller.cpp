@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "my_controllers/test_controller.hpp"
+#include "fr3_controllers/test_controller.hpp"
 
 #include <stddef.h>
 
@@ -28,7 +28,7 @@
 
 using config_type = controller_interface::interface_configuration_type;
 
-namespace my_controllers {
+namespace fr3_controllers {
 TestController::TestController() : controller_interface::ControllerInterface() {}
 
 auto TestController::on_init() -> controller_interface::CallbackReturn {
@@ -176,8 +176,8 @@ auto TestController::on_shutdown(const rclcpp_lifecycle::State &) -> controller_
   return CallbackReturn::SUCCESS;
 }
 
-}  // namespace my_controllers
+}  // namespace fr3_controllers
 
 #include "pluginlib/class_list_macros.hpp"
 
-PLUGINLIB_EXPORT_CLASS(my_controllers::TestController, controller_interface::ControllerInterface)
+PLUGINLIB_EXPORT_CLASS(fr3_controllers::TestController, controller_interface::ControllerInterface)

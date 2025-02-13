@@ -215,7 +215,8 @@ def generate_launch_description():
         # "joint_velocity_controller",
         # "joint_velocity_example_controller",
         # "my_vel_controller",
-        "move_to_start_example_controller",
+        # "move_to_start_example_controller",
+        "cartesian_pose_controller"
     ]
 
     ros_controllers_nodes = []
@@ -273,7 +274,7 @@ def generate_launch_description():
             # franka_robot_state_broadcaster_spawner,
             rviz2_node,
             isaac_topics_remapper_node,
-            delayed_franka_interface_node,
+            # delayed_franka_interface_node,
         ]
         + ros_controllers_nodes
     )

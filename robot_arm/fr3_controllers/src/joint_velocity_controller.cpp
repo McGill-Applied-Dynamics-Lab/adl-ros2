@@ -12,18 +12,18 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "my_controllers/joint_velocity_controller.hpp"
+#include "fr3_controllers/joint_velocity_controller.hpp"
 
 #include <Eigen/Eigen>
 #include <cassert>
 #include <cmath>
 #include <exception>
-#include <my_controllers/default_robot_behavior_utils.hpp>
-#include <my_controllers/robot_utils.hpp>
+#include <fr3_controllers/default_robot_behavior_utils.hpp>
+#include <fr3_controllers/robot_utils.hpp>
 #include <string>
 
 double clamp(double desired, double lower, double upper) { return std::max(lower, std::min(desired, upper)); }
-namespace my_controllers {
+namespace fr3_controllers {
 
 CallbackReturn JointVelocityController::on_init() {
   try {
@@ -146,7 +146,7 @@ controller_interface::return_type JointVelocityController::update(const rclcpp::
 
   for (int i = 0; i < 7; ++i) {
     // Calculate max allowed velocity change
-    double delta_v = max_accel_ * period.seconds();
+    double delta_v = max_accel_ * 0.001;
 
     // Smooth towards desired velocity
     qd_filtered_(i) = clamp(qd_goal_(i), qd_filtered_(i) - delta_v, qd_filtered_(i) + delta_v);
@@ -154,7 +154,7 @@ controller_interface::return_type JointVelocityController::update(const rclcpp::
     command_interfaces_[i].set_value(qd_filtered_(i));
   }
 
-  RCLCPP_INFO(get_node()->get_logger(), "Joint %d: qd = %f \t qd_des = %f", 3, qd_(6), qd_filtered_(6));
+  // RCLCPP_INFO(get_node()->get_logger(), "Joint %d: qd = %f \t qd_des = %f", 3, qd_(6), qd_filtered_(6));
   // RCLCPP_INFO(get_node()->get_logger(), "period %f", 1, period.seconds());
 
   return controller_interface::return_type::OK;
@@ -173,8 +173,8 @@ void JointVelocityController::updateJointStates() {
   }
 }
 
-}  // namespace my_controllers
+}  // namespace fr3_controllers
 
 #include "pluginlib/class_list_macros.hpp"
 // NOLINTNEXTLINE
-PLUGINLIB_EXPORT_CLASS(my_controllers::JointVelocityController, controller_interface::ControllerInterface)
+PLUGINLIB_EXPORT_CLASS(fr3_controllers::JointVelocityController, controller_interface::ControllerInterface)

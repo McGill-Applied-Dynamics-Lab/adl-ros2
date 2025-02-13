@@ -1,27 +1,23 @@
 cmake_minimum_required(VERSION 3.8)
-project(my_controllers)
+project(fr3_controllers)
 
 if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   add_compile_options(-Wall -Wextra -Wpedantic)
 endif()
 
 # find dependencies
-set(HW_IF_INCLUDE_DEPENDS
+set(PROJECT_DEPENDS
+  rclcpp
   pluginlib
   rcpputils
   hardware_interface
-)
-set(REF_GEN_INCLUDE_DEPENDS
-  # kdl_parser
-  rclcpp
-  trajectory_msgs
-)
-set(CONTROLLER_INCLUDE_DEPENDS
-  pluginlib
-  rcpputils
   controller_interface
   realtime_tools
+  Eigen3
+  franka_semantic_components
   trajectory_msgs
+  franka_msgs
+  geometry_msgs
 )
 
 # # Specify the required version of ros2_control
@@ -35,17 +31,9 @@ set(CONTROLLER_INCLUDE_DEPENDS
 # find dependencies
 find_package(backward_ros REQUIRED)
 find_package(ament_cmake REQUIRED)
-foreach(Dependency IN ITEMS ${HW_IF_INCLUDE_DEPENDS})
+foreach(Dependency IN ITEMS ${PROJECT_DEPENDS})
   find_package(${Dependency} REQUIRED)
 endforeach()
-foreach(Dependency IN ITEMS ${REF_GEN_INCLUDE_DEPENDS})
-  find_package(${Dependency} REQUIRED)
-endforeach()
-foreach(Dependency IN ITEMS ${CONTROLLER_INCLUDE_DEPENDS})
-  find_package(${Dependency} REQUIRED)
-endforeach()
-find_package(Eigen3 REQUIRED)
-find_package(franka_msgs REQUIRED)
 
 # from franka_ros2_example
 # find_package(ament_index_cpp REQUIRED)
@@ -69,39 +57,44 @@ find_package(franka_msgs REQUIRED)
 # )
 
 add_library(
-  my_controllers
+  fr3_controllers
   SHARED
   src/test_controller.cpp
   src/joint_velocity_controller.cpp
+  src/cartesian_pose_controller.cpp
 )
 
-target_compile_features(my_controllers PUBLIC cxx_std_17)
-target_include_directories(my_controllers PUBLIC
-  # $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/hardware/include>
-  $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
-  $<INSTALL_INTERFACE:include/my_controllers>
+target_compile_features(fr3_controllers PUBLIC cxx_std_17)
+target_include_directories(fr3_controllers PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include/fr3_controllers>
   ${EIGEN3_INCLUDE_DIRS}
 )
 
+# target_include_directories(
+#         ${PROJECT_NAME}
+#         PUBLIC
+#         include
+#         ${EIGEN3_INCLUDE_DIRS}
+# )
+
 ament_target_dependencies(
-  my_controllers PUBLIC
-  ${HW_IF_INCLUDE_DEPENDS}
-  ${CONTROLLER_INCLUDE_DEPENDS}
-  franka_msgs
+  ${PROJECT_NAME}
+  ${PROJECT_DEPENDS}
 )
 
 # Export controller plugins
-pluginlib_export_plugin_description_file(controller_interface my_controllers.xml)
+pluginlib_export_plugin_description_file(controller_interface fr3_controllers.xml)
 
 
 # INSTALL
-# install(
-#   DIRECTORY hardware/include/
-#   DESTINATION include/my_controllers
-# )
+install(
+  DIRECTORY include/
+  DESTINATION include/fr3_controllers
+)
 # install(
 #   DIRECTORY description/launch description/ros2_control description/urdf
-#   DESTINATION share/my_controllers
+#   DESTINATION share/fr3_controllers
 # )
 # install(
 #   DIRECTORY bringup/launch bringup/config
@@ -112,16 +105,13 @@ pluginlib_export_plugin_description_file(controller_interface my_controllers.xml
 #     RUNTIME DESTINATION lib/ros2_control_demo_example_7
 # )
 
-install(TARGETS my_controllers
-  EXPORT export_my_controllers
+install(
+  TARGETS 
+  ${PROJECT_NAME}
+  EXPORT export_fr3_controllers
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib
   RUNTIME DESTINATION bin
-)
-
-install(
-        DIRECTORY include/
-        DESTINATION include
 )
 
 if(BUILD_TESTING)
@@ -144,10 +134,8 @@ ament_export_libraries(
         ${PROJECT_NAME}
 )
 
-ament_export_targets(export_my_controllers HAS_LIBRARY_TARGET)
+ament_export_targets(export_fr3_controllers HAS_LIBRARY_TARGET)
 ament_export_dependencies(
-  ${HW_IF_INCLUDE_DEPENDS} 
-  ${REF_GEN_INCLUDE_DEPENDS} 
-  ${CONTROLLER_INCLUDE_DEPENDS}
+  ${PROJECT_DEPENDS} 
 )
 ament_package()

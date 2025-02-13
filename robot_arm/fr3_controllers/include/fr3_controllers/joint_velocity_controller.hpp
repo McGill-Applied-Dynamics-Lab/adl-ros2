@@ -24,7 +24,7 @@
 
 using CallbackReturn = rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn;
 
-namespace my_controllers {
+namespace fr3_controllers {
 using CmdType = std_msgs::msg::Float64MultiArray;
 
 /**
@@ -56,7 +56,7 @@ class JointVelocityController : public controller_interface::ControllerInterface
   Vector7d qd_goal_;
   Vector7d k_gains_;
   Vector7d d_gains_;
-  double max_accel_ = 1;
+  double max_accel_ = 4;
 
   realtime_tools::RealtimeBuffer<std::shared_ptr<CmdType>> rt_command_ptr_;
   rclcpp::Subscription<CmdType>::SharedPtr joints_command_subscriber_;
@@ -67,4 +67,4 @@ class JointVelocityController : public controller_interface::ControllerInterface
   void updateJointStates();
 };
 
-}  // namespace my_controllers
+}  // namespace fr3_controllers

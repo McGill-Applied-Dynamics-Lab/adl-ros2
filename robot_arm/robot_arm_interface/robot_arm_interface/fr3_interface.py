@@ -282,6 +282,8 @@ class FR3Interface(Node):
         self._joint_vels_desired: None | np.ndarray = None
         self._ee_vel_desired: None | np.ndarray = None
 
+        self._start_time = self.get_clock().now()
+
         #! Subscribers
         joint_states_topic = "/joint_states"
         self._joint_state_sub = self.create_subscription(JointState, joint_states_topic, self._joint_state_callback, 10)
@@ -324,6 +326,25 @@ class FR3Interface(Node):
         self._joint_vels_cmd_msg.data = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
         self._joint_vels_cmd_freq = 100  # Hz
         self._joint_vels_cmd_pub_timer = self.create_timer(1 / self._joint_vels_cmd_freq, self._pub_joint_vels_cmd)
+
+        # --- cartesian_pose_controller ---
+        cartesian_pose_controller: str = "cartesian_pose_controller"
+        cartesian_pose_controller_topic = f"/{cartesian_pose_controller}/commands"
+        self._cartesian_pose_cmd_pub = self.create_publisher(PoseStamped, cartesian_pose_controller_topic, 10)
+
+        self._cartesian_pose_cmd_msg = PoseStamped()
+        self._cartesian_pose_cmd_msg.header.stamp = self.get_clock().now().to_msg()
+        self._cartesian_pose_cmd_msg.pose.position.x = 0.5
+        self._cartesian_pose_cmd_msg.pose.position.y = 0.0
+        self._cartesian_pose_cmd_msg.pose.position.z = 0.0
+        self._cartesian_pose_cmd_msg.pose.orientation.x = 0.0
+        self._cartesian_pose_cmd_msg.pose.orientation.y = 0.0
+        self._cartesian_pose_cmd_msg.pose.orientation.z = 0.0
+        self._cartesian_pose_cmd_msg.pose.orientation.w = 0.0
+
+        self._cartesian_pose_pub_active = True
+        self._cartesian_cmd_freq = 100  # Hz
+        self._cartesian_cmd_pub_timer = self.create_timer(1 / self._cartesian_cmd_freq, self._pub_cartesian_pose_cmd)
 
     def _init_actions(self):
         self.get_logger().info("Initializing action servers...")
@@ -473,6 +494,11 @@ class FR3Interface(Node):
 
         self._joint_vels_cmd_pub.publish(self._joint_vels_cmd_msg)
 
+    def _pub_cartesian_pose_cmd(self):
+        if self._cartesian_pose_pub_active:
+            self._cartesian_pose_cmd_pub.publish(self._cartesian_pose_cmd_msg)
+
+
     # ---- Actions
     async def _goto_joints_action(self, goal_handle):
         self.get_logger().info("Received goal joint position goal")
@@ -491,7 +517,7 @@ class FR3Interface(Node):
         self.get_logger().info(f"Goal joint positions: {np.rad2deg(goal)}")
         self.get_logger().info(f"Duration [s]: {duration_secs}")
 
-        traj_time_step = 0.01  # time between the trajectory points [s]
+        traj_time_step = 0.001  # time between the trajectory points [s]
 
         # Compute traj
         n_points = int(duration_secs / traj_time_step)
