@@ -92,13 +92,7 @@ CallbackReturn CartesianPoseController::on_configure(const rclcpp_lifecycle::Sta
     return cmd;
   }();
 
-  // CmdType empty_cmd;
-  // empty_cmd.data.resize(7, 0.0);
   received_command_msg_ptr_.set(std::make_shared<CmdType>(empty_cmd));
-
-  // last_command_msg_ = std::make_shared<CmdType>();
-  // received_command_msg_ptr_.set([this](std::shared_ptr<CmdType>& stored_value) { stored_value = last_command_msg_;
-  // });
 
   auto cmd_callback =
       [this](const std::shared_ptr<CmdType> msg) -> void  //{ input_joint_command_.writeFromNonRT(msg); };
@@ -117,21 +111,6 @@ CallbackReturn CartesianPoseController::on_configure(const rclcpp_lifecycle::Sta
     }
     received_command_msg_ptr_.set(std::move(msg));
   };
-
-  // [this](const std::shared_ptr<CmdType> msg) -> void {
-  //   if (!subscriber_is_active_) {
-  //     RCLCPP_WARN(get_node()->get_logger(), "Can't accept new commands. subscriber is inactive");
-  //     return;
-  //   }
-  //   // if ((msg->header.stamp.sec == 0) && (msg->header.stamp.nanosec == 0)) {
-  //   //   RCLCPP_WARN_ONCE(get_node()->get_logger(),
-  //   //                    "Received TwistStamped with zero timestamp, setting it to current "
-  //   //                    "time, this message will only be shown once");
-  //   //   msg->header.stamp = get_node()->get_clock()->now();
-  //   // }
-  //   received_command_msg_ptr_.set([msg](std::shared_ptr<CmdType>& stored_value) { stored_value =
-  //   std::move(msg); });
-  // }
 
   // initialize command subscriber
   command_subscriber_ =
@@ -165,9 +144,19 @@ controller_interface::return_type CartesianPoseController::update(const rclcpp::
   if (initialization_flag_)
   {
     // Get initial orientation and translation
-    std::tie(orientation_, position_) = franka_cartesian_pose_->getCurrentOrientationAndTranslation();
+    std::tie(start_orientation_, start_position_) = franka_cartesian_pose_->getCurrentOrientationAndTranslation();
     initial_robot_time_ = state_interfaces_.back().get_value();
     elapsed_time_ = 0.0;
+
+    CmdType start_pose;
+    start_pose.pose.position.x = start_position_(0);
+    start_pose.pose.position.y = start_position_(1);
+    start_pose.pose.position.z = start_position_(2);
+
+    RCLCPP_INFO(get_node()->get_logger(), "Start (x, y, z): (%f, %f, %f)", start_position_(0), start_position_(1),
+                start_position_(2));
+
+    received_command_msg_ptr_.set(std::make_shared<CmdType>(start_pose));
 
     initialization_flag_ = false;
   }
@@ -181,29 +170,48 @@ controller_interface::return_type CartesianPoseController::update(const rclcpp::
   std::shared_ptr<CmdType> last_command_msg;
   received_command_msg_ptr_.get(last_command_msg);
 
-  // double radius = 0.1;
-  // double angle = M_PI / 4 * (1 - std::cos(M_PI / 5.0 * elapsed_time_));
+  Eigen::Quaterniond commanded_orientation;
+  Eigen::Vector3d commanded_position;
 
-  // double delta_x = radius * std::sin(angle);
-  // double delta_z = radius * (std::cos(angle) - 1);
+  std::tie(commanded_orientation, commanded_position) = franka_cartesian_pose_->getCommandedOrientationAndTranslation();
 
   Eigen::Quaterniond new_orientation;
   Eigen::Vector3d new_position;
 
-  new_position = position_;
-  new_orientation = orientation_;
+  new_position = commanded_position;
+  new_orientation = commanded_orientation;
+
+  // //? Their example
+  // double radius = 0.2;
+  // double angle = M_PI / 4 * (1 - std::cos(M_PI / 3.0 * elapsed_time_));
+
+  // double delta_x = radius * std::sin(angle);
+  // double delta_z = radius * (std::cos(angle) - 1);
+
+  // new_position = start_position_;
+  // new_orientation = start_orientation_;
 
   // new_position(0) -= delta_x;
   // new_position(2) -= delta_z;
-  // if (elapsed_time_ > 2.0) {
-  //   new_position(0) += 0.2;
-  // }
 
+  //? From subscriber
   if (last_command_msg)
   {
-    auto pose = last_command_msg->pose;
-    RCLCPP_INFO(get_node()->get_logger(), "Received command: position (%f, %f, %f)", pose.position.x, pose.position.y,
-                pose.position.z);
+    auto desired_pose = last_command_msg->pose;
+
+    // auto dx = pose.position.x;
+    new_position(0) = desired_pose.position.x;
+    // new_position(1) = desired_pose.position.y;
+    // new_position(2) = desired_pose.position.z;
+
+    const double kAlpha = 0.5;
+    new_position(0) = kAlpha * (desired_pose.position.x) +
+                      (1 - kAlpha) * commanded_position(0);  // alpha*x_i + (1 - alpha) * y_{i - 1}
+
+    auto vel = (commanded_position(0) - new_position(0)) / 0.001;
+
+    RCLCPP_INFO(get_node()->get_logger(), "(x, x_c', x_c, v): (%f, %f, %f, %f)", start_position_(0),
+                commanded_position(0), new_position(0), vel);
   }
 
   if (franka_cartesian_pose_->setCommand(new_orientation, new_position))
@@ -225,6 +233,17 @@ CallbackReturn CartesianPoseController::on_activate(const rclcpp_lifecycle::Stat
   franka_cartesian_pose_->assign_loaned_state_interfaces(state_interfaces_);
 
   subscriber_is_active_ = true;
+
+  // motion_generator_ = std::make_unique<MotionGenerator>(0.2, q_, q_goal_);
+
+  // std::tie(start_orientation_, start_position_) = franka_cartesian_pose_->getCurrentOrientationAndTranslation();
+
+  // CmdType start_pose;
+  // start_pose.pose.position.x = start_position_(0);
+  // start_pose.pose.position.y = start_position_(1);
+  // start_pose.pose.position.z = start_position_(2);
+
+  // received_command_msg_ptr_.set(std::make_shared<CmdType>(start_pose));
 
   return CallbackReturn::SUCCESS;
 }

@@ -11,15 +11,16 @@ from rclpy.callback_groups import ReentrantCallbackGroup, MutuallyExclusiveCallb
 import rclpy.time
 from sensor_msgs.msg import JointState
 from std_msgs.msg import Float64MultiArray
-from geometry_msgs.msg import PoseStamped
-from geometry_msgs.msg import TransformStamped
-from tf2_ros import TransformListener, Buffer
-from control_msgs.action import FollowJointTrajectory
+from geometry_msgs.msg import PoseStamped, TransformStamped, TwistStamped, AccelStamped
+from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
+from franka_msgs.msg import FrankaRobotState 
 
+from control_msgs.action import FollowJointTrajectory
 from arm_interfaces.action import Empty, GotoJoints, GotoPose, GotoJointVelocities, GotoEEVelocity
 
+from tf2_ros import TransformListener, Buffer
+
 # from arm_interfaces.msg import Joints
-from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 
 # from builtin_interfaces.msg import Duration
 from controller_manager_msgs.srv import (
@@ -284,15 +285,18 @@ class FR3Interface(Node):
 
         self._start_time = self.get_clock().now()
 
-        #! Subscribers
-        joint_states_topic = "/joint_states"
-        self._joint_state_sub = self.create_subscription(JointState, joint_states_topic, self._joint_state_callback, 10)
+        self._prev_dx = 0
+        self._prev_ddx = 0
+        self._prev_ts = self._start_time
 
+        #! Subscribers
         self._init_publishers()
 
         self._init_actions()
 
         self._init_services()
+
+        self._init_subscribers()
 
         # Feedback Controller Manager
         self._feedback_controller_manager = FeedbackControllerManager(
@@ -311,10 +315,10 @@ class FR3Interface(Node):
         self._pose_msg = PoseStamped()
         self._pose_pub_timer = self.create_timer(0.1, self._publish_ee_pose)
 
-        # TF Publisher
-        self.tf_buffer = Buffer()
-        self.tf_listener = TransformListener(self.tf_buffer, self)
-        self.timer_tf = self.create_timer(0.25, self._tf_callback)  # Publish at 4 Hz
+        # # TF Publisher
+        # self.tf_buffer = Buffer()
+        # self.tf_listener = TransformListener(self.tf_buffer, self)
+        # self.timer_tf = self.create_timer(0.25, self._tf_callback)  # Publish at 4 Hz
 
         # Command Publisher
         # --- velocity_controller ---
@@ -330,11 +334,14 @@ class FR3Interface(Node):
         # --- cartesian_pose_controller ---
         cartesian_pose_controller: str = "cartesian_pose_controller"
         cartesian_pose_controller_topic = f"/{cartesian_pose_controller}/commands"
+        self._cartesian_pose_pub_active = True
+        self._start_pose = PoseStamped()
+
         self._cartesian_pose_cmd_pub = self.create_publisher(PoseStamped, cartesian_pose_controller_topic, 10)
 
         self._cartesian_pose_cmd_msg = PoseStamped()
         self._cartesian_pose_cmd_msg.header.stamp = self.get_clock().now().to_msg()
-        self._cartesian_pose_cmd_msg.pose.position.x = 0.5
+        self._cartesian_pose_cmd_msg.pose.position.x = 0.0
         self._cartesian_pose_cmd_msg.pose.position.y = 0.0
         self._cartesian_pose_cmd_msg.pose.position.z = 0.0
         self._cartesian_pose_cmd_msg.pose.orientation.x = 0.0
@@ -342,8 +349,7 @@ class FR3Interface(Node):
         self._cartesian_pose_cmd_msg.pose.orientation.z = 0.0
         self._cartesian_pose_cmd_msg.pose.orientation.w = 0.0
 
-        self._cartesian_pose_pub_active = True
-        self._cartesian_cmd_freq = 100  # Hz
+        self._cartesian_cmd_freq = 1000  # Hz
         self._cartesian_cmd_pub_timer = self.create_timer(1 / self._cartesian_cmd_freq, self._pub_cartesian_pose_cmd)
 
     def _init_actions(self):
@@ -397,13 +403,133 @@ class FR3Interface(Node):
 
         self.get_logger().info("Services initialized")
 
+    def _init_subscribers(self):
+        self.get_logger().info("Initializing subscribers...")
+
+        # --- joint states ---
+        joint_states_topic = "/joint_states"
+        self._joint_state_sub = self.create_subscription(JointState, joint_states_topic, self._joint_state_callback, 10)
+
+        # # --- current_pose --- [geometry_msgs/msg/PoseStamped]
+        # current_pose_topic = "/franka_robot_state_broadcaster/current_pose"
+        # self._current_pose_sub = self.create_subscription(..., current_pose_topic, ...)
+
+        # # --- desired_end_effector_twist --- [geometry_msgs/msg/TwistStamped]
+        # desired_end_effector_twist_topic = "/franka_robot_state_broadcaster/desired_end_effector_twist"
+        # self._desired_end_effector_twist_sub = self.create_subscription(..., desired_end_effector_twist_topic, ...)
+
+        # # --- desired_joint_states --- [sensor_msgs/msg/JointState]
+        # desired_joint_states_topic = "/franka_robot_state_broadcaster/desired_joint_states"
+        # self._desired_joint_states_sub = self.create_subscription(..., desired_joint_states_topic, ...)
+
+        # # --- external_joint_torques --- [sensor_msgs/msg/JointState]
+        # # external_joint_torques_topic = "/franka_robot_state_broadcaster/external_joint_torques"
+        # # self._external_joint_torques__sub = self.create_subscription(..., external_joint_torques_topic, ...)
+
+        # # --- external_wrench_in_base_frame --- [geometry_msgs/msg/WrenchStamped]
+        # external_wrench_in_base_frame_topic = "/franka_robot_state_broadcaster/external_wrench_in_base_frame"
+        # self._external_wrench_in_base_frame_sub= self.create_subscription(..., desired_end_effector_twist_topic, ...)
+
+        # # --- external_wrench_in_end_effector_frame --- [geometry_msgs/msg/WrenchStamped]
+        # # external_wrench_in_stiffness_frame_topic = "/franka_robot_state_broadcaster/external_wrench_in_stiffness_frame"
+        # # self._external_wrench_in_stiffness_frame__sub = self.create_subscription(..., external_wrench_in_stiffness_frame_topic, ...)
+
+        # # --- last_desired_pose --- [geometry_msgs/msg/PoseStamped]
+        # last_desired_pose_topic = "/franka_robot_state_broadcaster/last_desired_pose"
+        # self._last_desired_pose__sub = self.create_subscription(..., last_desired_pose_topic, ...)
+
+        # # --- measured_joint_states --- [sensor_msgs/msg/JointState]
+        # measured_joint_states_topic = "/franka_robot_state_broadcaster/measured_joint_states"
+        # self._measured_joint_states__sub = self.create_subscription(..., measured_joint_states_topic, ...)
+
+        # --- robot_state --- [franka_msgs/msg/FrankaRobotState]
+        robot_state_topic = "/franka_robot_state_broadcaster/robot_state"
+        self._robot_state__sub = self.create_subscription(FrankaRobotState, robot_state_topic, self._robot_state_callback, 10)
+
+        self.get_logger().info("Subscribers initialized")
+
     def destroy(self):
         self._goto_joint_as.destroy()
         self._goto_pose_as.destroy()
         self._goto_joint_vels_as.destroy()
         super().destroy_node()
 
-    # Callbacks
+    #! Callbacks
+    # Subscribers
+    def _robot_state_callback(self, robot_state_msg: FrankaRobotState):
+        """
+        Update the robot state with the robot state message from '/franka_robot_state_broadcaster/robot_state' topic
+        """
+        self.measured_joint_state: JointState = robot_state_msg.measured_joint_state
+        self.desired_joint_state: JointState = robot_state_msg.desired_joint_state
+
+        # The desired joint acceleration
+        self.desired_joint_accel: list = robot_state_msg.ddq_d
+
+        # The poses describing the transformations between different frames of the arm. Measured end-effector pose in base frame
+        self.o_t_ee: PoseStamped = robot_state_msg.o_t_ee
+
+        # Last desired end-effector pose of motion generation in base frame
+        self.o_t_ee_d: PoseStamped = robot_state_msg.o_t_ee_d
+
+        # Last commanded end-effector pose of motion generation in base frame
+        self.o_t_ee_c: PoseStamped = robot_state_msg.o_t_ee_c
+
+        # Desired end effector twist in base frame
+        self.o_dp_ee_d: TwistStamped = robot_state_msg.o_dp_ee_d
+
+        # Last commanded end effector twist in base frame
+        self.o_dp_ee_c: TwistStamped = robot_state_msg.o_dp_ee_c
+
+        # Last commanded end effector acceleration in base frame
+        self.o_ddp_ee_c: AccelStamped = robot_state_msg.o_ddp_ee_c
+
+        # Other infos...
+        # dtau_j # The derivative of the measured torque signal
+
+        # tau_ext_hat_filtered # Filtered external torque. The JointState consists out of effort (tau_ext_hat_filtered)
+
+        # The state of the elbow
+        # elbow
+
+        # The active wrenches acting on the stiffness frame expressed relative to stiffness frame
+        # k_f_ext_hat_k
+
+        # inertias...
+
+        # errors...
+        # commanded_position = self.o_t_ee_c.pose.position
+        _curr_ts = rclpy.time.Time.from_msg(self.o_dp_ee_c.header.stamp)
+        commanded_ee_vel = self.o_dp_ee_c.twist
+        commanded_ee_accel = self.o_ddp_ee_c.accel
+
+        commanded_ee_vel_x = commanded_ee_vel.linear.x
+        commanded_ee_accel_x = commanded_ee_accel.linear.x
+
+        accel = (commanded_ee_vel_x - self._prev_dx) / ((_curr_ts - self._prev_ts).nanoseconds/1e9)
+        jerk = (commanded_ee_accel_x - self._prev_ddx) / (_curr_ts - self._prev_ts).nanoseconds
+        print(f'accel, jerk: {accel}, {jerk}')
+
+        self._prev_ts = _curr_ts
+        self._prev_dx = commanded_ee_vel_x
+        self._prev_ddx = commanded_ee_accel_x
+
+        if not self._is_state_initialialized:
+            self._start_pose.pose.position.x = self.o_t_ee.pose.position.x
+            self._start_pose.pose.position.y = self.o_t_ee.pose.position.y
+            self._start_pose.pose.position.z = self.o_t_ee.pose.position.z
+
+            self._start_pose.pose.orientation.x = self.o_t_ee.pose.orientation.x
+            self._start_pose.pose.orientation.y = self.o_t_ee.pose.orientation.y
+            self._start_pose.pose.orientation.z = self.o_t_ee.pose.orientation.z
+            self._start_pose.pose.orientation.w = self.o_t_ee.pose.orientation.w
+
+            self._cartesian_pose_cmd_msg.pose = self._start_pose.pose
+            print(f'Start position (x, y, z): {self._start_pose.pose.position.x}, {self._start_pose.pose.position.y}, {self._start_pose.pose.position.z}')
+
+            self._start_pose.header.stamp = self.get_clock().now().to_msg()
+            self._is_state_initialialized = True
+
     def _joint_state_callback(self, joint_msg):
         """
         Update the robot state with the joint state message from '\joint_states' topic
@@ -412,23 +538,6 @@ class FR3Interface(Node):
         q = q[:7]  # Remove the fingers
         self._robot_arm.state.q = q
 
-        self._is_state_initialialized = True
-
-    def _publish_ee_pose(self):
-        ee_position = self._robot_arm.state.ee_position
-        ee_quaternion = self._robot_arm.state.ee_quaternion
-
-        self._pose_msg.pose.position.x = ee_position[0]
-        self._pose_msg.pose.position.y = ee_position[1]
-        self._pose_msg.pose.position.z = ee_position[2]
-
-        self._pose_msg.pose.orientation.x = ee_quaternion[0]
-        self._pose_msg.pose.orientation.y = ee_quaternion[1]
-        self._pose_msg.pose.orientation.z = ee_quaternion[2]
-        self._pose_msg.pose.orientation.w = ee_quaternion[3]
-
-        # self.get_logger().info(f"Publishing ee pose: {ee_position}")
-        self._pose_pub.publish(self._pose_msg)
 
     def _tf_callback(self):
         try:
@@ -473,6 +582,23 @@ class FR3Interface(Node):
         # self.get_logger().info(f"rviz: {rpy_rviz}\tpy: {rpy_py}")
         # self.get_logger().info(f"EE Orientation error: {rpy_rviz - rpy_py}")
 
+    # Publishers
+    def _publish_ee_pose(self):
+        ee_position = self._robot_arm.state.ee_position
+        ee_quaternion = self._robot_arm.state.ee_quaternion
+
+        self._pose_msg.pose.position.x = ee_position[0]
+        self._pose_msg.pose.position.y = ee_position[1]
+        self._pose_msg.pose.position.z = ee_position[2]
+
+        self._pose_msg.pose.orientation.x = ee_quaternion[0]
+        self._pose_msg.pose.orientation.y = ee_quaternion[1]
+        self._pose_msg.pose.orientation.z = ee_quaternion[2]
+        self._pose_msg.pose.orientation.w = ee_quaternion[3]
+
+        # self.get_logger().info(f"Publishing ee pose: {ee_position}")
+        self._pose_pub.publish(self._pose_msg)
+
     def _pub_joint_vels_cmd(self):
         """
         Publish joint velocities command at 100 Hz.
@@ -495,6 +621,35 @@ class FR3Interface(Node):
         self._joint_vels_cmd_pub.publish(self._joint_vels_cmd_msg)
 
     def _pub_cartesian_pose_cmd(self):
+        if not self._is_state_initialialized:
+            return
+
+        elapsed_time_ = (self.get_clock().now() - self._start_time).nanoseconds / 1e9
+
+        radius = 0.01  
+        angle = np.pi/ 4 * (1 - np.cos(np.pi / 5.0 * elapsed_time_/10))
+        # angle = np.pi/20*elapsed_time_
+
+        delta_x = radius * np.sin(angle)
+        delta_z = radius * (np.cos(angle) - 1)
+        # delta_x = 0.0000001
+
+        cmd_x = self._start_pose.pose.position.x + delta_x
+
+        # commanded_position = self.o_t_ee_c.pose.position
+        # commanded_ee_vel = self.o_dp_ee_c.twist
+        # commanded_ee_accel = self.o_ddp_ee_c.accel
+
+        # commanded_ee_vel_x = commanded_ee_vel.linear.x
+        # commanded_ee_accel_x = commanded_ee_accel.linear.x
+
+        # cmd_x = commanded_position.x + delta_x
+
+
+        self._cartesian_pose_cmd_msg.pose.position.x = cmd_x
+        # self._cartesian_pose_cmd_msg.pose.position.z = self._start_pose.pose.position.z - delta_z
+        # print(f'dx: {delta_x}')
+
         if self._cartesian_pose_pub_active:
             self._cartesian_pose_cmd_pub.publish(self._cartesian_pose_cmd_msg)
 

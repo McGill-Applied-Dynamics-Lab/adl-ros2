@@ -271,7 +271,7 @@ def generate_launch_description():
             robot_state_publisher,
             # gripper_launch_description,
             ros2_control_node,
-            # franka_robot_state_broadcaster_spawner,
+            franka_robot_state_broadcaster_spawner,
             rviz2_node,
             isaac_topics_remapper_node,
             # delayed_franka_interface_node,

@@ -22,6 +22,7 @@
 #include <string>
 
 #include "geometry_msgs/msg/pose_stamped.hpp"
+// #include "motion_generator.hpp"
 #include "realtime_tools/realtime_box.hpp"
 #include "std_msgs/msg/float64_multi_array.hpp"
 
@@ -48,8 +49,8 @@ class CartesianPoseController : public controller_interface::ControllerInterface
  private:
   std::unique_ptr<franka_semantic_components::FrankaCartesianPoseInterface> franka_cartesian_pose_;
 
-  Eigen::Quaterniond orientation_;
-  Eigen::Vector3d position_;
+  Eigen::Quaterniond start_orientation_;
+  Eigen::Vector3d start_position_;
 
   const bool k_elbow_activated_{false};
   bool initialization_flag_{true};
@@ -65,6 +66,8 @@ class CartesianPoseController : public controller_interface::ControllerInterface
 
   realtime_tools::RealtimeBox<std::shared_ptr<CmdType>> received_command_msg_ptr_{nullptr};
   std::shared_ptr<CmdType> last_command_msg_;
+
+  // std::unique_ptr<MotionGeneratorCartesian> motion_generator_;
 };
 
 }  // namespace fr3_controllers
