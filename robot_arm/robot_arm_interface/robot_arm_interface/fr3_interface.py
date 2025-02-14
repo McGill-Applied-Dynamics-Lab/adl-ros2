@@ -334,7 +334,7 @@ class FR3Interface(Node):
         # --- cartesian_pose_controller ---
         cartesian_pose_controller: str = "cartesian_pose_controller"
         cartesian_pose_controller_topic = f"/{cartesian_pose_controller}/commands"
-        self._cartesian_pose_pub_active = True
+        self._cartesian_pose_pub_active = False
         self._start_pose = PoseStamped()
 
         self._cartesian_pose_cmd_pub = self.create_publisher(PoseStamped, cartesian_pose_controller_topic, 10)
@@ -349,8 +349,28 @@ class FR3Interface(Node):
         self._cartesian_pose_cmd_msg.pose.orientation.z = 0.0
         self._cartesian_pose_cmd_msg.pose.orientation.w = 0.0
 
-        self._cartesian_cmd_freq = 1000  # Hz
+        self._cartesian_cmd_freq = 100  # Hz
         self._cartesian_cmd_pub_timer = self.create_timer(1 / self._cartesian_cmd_freq, self._pub_cartesian_pose_cmd)
+
+        # --- cartesian_vel_controller ---
+        controller_name: str = "cartesian_vel_controller"
+        topic = f"/{controller_name}/commands"
+        self._cartesian_vel_pub_active = True
+        self._start_vel = PoseStamped()
+
+        self._cartesian_vel_pub = self.create_publisher(TwistStamped, topic, 10)
+
+        self._cartesian_vel_cmd_msg = TwistStamped()
+        self._cartesian_vel_cmd_msg.header.stamp = self.get_clock().now().to_msg()
+        self._cartesian_vel_cmd_msg.twist.linear.x = 0.0
+        self._cartesian_vel_cmd_msg.twist.linear.y = 0.0
+        self._cartesian_vel_cmd_msg.twist.linear.z = 0.0
+        self._cartesian_vel_cmd_msg.twist.angular.x = 0.0
+        self._cartesian_vel_cmd_msg.twist.angular.y = 0.0
+        self._cartesian_vel_cmd_msg.twist.angular.z = 0.0
+
+        self._cartesian_vel_cmd_freq = 100  # Hz
+        self._cartesian_vel_cmd_pub_timer = self.create_timer(1 / self._cartesian_vel_cmd_freq, self._pub_cartesian_vel_cmd)
 
     def _init_actions(self):
         self.get_logger().info("Initializing action servers...")
@@ -452,6 +472,9 @@ class FR3Interface(Node):
         self._goto_joint_as.destroy()
         self._goto_pose_as.destroy()
         self._goto_joint_vels_as.destroy()
+
+
+
         super().destroy_node()
 
     #! Callbacks
@@ -621,7 +644,7 @@ class FR3Interface(Node):
         self._joint_vels_cmd_pub.publish(self._joint_vels_cmd_msg)
 
     def _pub_cartesian_pose_cmd(self):
-        if not self._is_state_initialialized:
+        if not self._is_state_initialialized or not self._cartesian_pose_pub_active:
             return
 
         elapsed_time_ = (self.get_clock().now() - self._start_time).nanoseconds / 1e9
@@ -632,7 +655,7 @@ class FR3Interface(Node):
 
         delta_x = radius * np.sin(angle)
         delta_z = radius * (np.cos(angle) - 1)
-        # delta_x = 0.0000001
+        delta_x = 0.0001
 
         cmd_x = self._start_pose.pose.position.x + delta_x
 
@@ -650,8 +673,40 @@ class FR3Interface(Node):
         # self._cartesian_pose_cmd_msg.pose.position.z = self._start_pose.pose.position.z - delta_z
         # print(f'dx: {delta_x}')
 
-        if self._cartesian_pose_pub_active:
-            self._cartesian_pose_cmd_pub.publish(self._cartesian_pose_cmd_msg)
+        self._cartesian_pose_cmd_pub.publish(self._cartesian_pose_cmd_msg)
+
+    def _pub_cartesian_vel_cmd(self):
+        if not self._is_state_initialialized or not self._cartesian_vel_pub_active:
+            return
+
+        elapsed_time_ = (self.get_clock().now() - self._start_time).nanoseconds / 1e9
+
+        # radius = 0.01  
+        # angle = np.pi/ 4 * (1 - np.cos(np.pi / 5.0 * elapsed_time_/10))
+        # # angle = np.pi/20*elapsed_time_
+
+        # delta_x = radius * np.sin(angle)
+        # delta_z = radius * (np.cos(angle) - 1)
+        if elapsed_time_ < 1:
+            vx = 0.5
+        else:
+            vx = 0.0
+
+        # commanded_position = self.o_t_ee_c.pose.position
+        # commanded_ee_vel = self.o_dp_ee_c.twist
+        # commanded_ee_accel = self.o_ddp_ee_c.accel
+
+        # commanded_ee_vel_x = commanded_ee_vel.linear.x
+        # commanded_ee_accel_x = commanded_ee_accel.linear.x
+
+        # cmd_x = commanded_position.x + delta_x
+
+
+        self._cartesian_vel_cmd_msg.twist.linear.x = vx
+        # self._cartesian_pose_cmd_msg.pose.position.z = self._start_pose.pose.position.z - delta_z
+        # print(f'dx: {delta_x}')
+
+        self._cartesian_vel_pub.publish(self._cartesian_vel_cmd_msg)
 
 
     # ---- Actions
@@ -930,6 +985,12 @@ class FR3Interface(Node):
 
         self._joint_vels_desired = self._robot_arm.diff_ikine(self._ee_vel_desired)
 
+    def stop_robot(self):
+        self._cartesian_vel_pub_active = False
+        self._cartesian_vel_cmd_msg.twist.linear.x = 0.0
+        self._cartesian_vel_cmd_msg.twist.linear.y = 0.0
+        self._cartesian_vel_cmd_msg.twist.linear.z = 0.0
+        self._cartesian_vel_pub.publish(self._cartesian_vel_cmd_msg)
 
 """
 Utilities
@@ -979,10 +1040,12 @@ def main(args=None):
         executor.spin()
 
     except KeyboardInterrupt:
+        node.stop_robot()
         node.get_logger().info("KeyboardInterrupt, shutting down.\n")
 
-    node.destroy_node()
-    rclpy.shutdown()
+    finally:
+        node.destroy_node()
+        # rclpy.shutdown()
 
     # try:
     #     rclpy.spin(node, executor=executor)

@@ -18,6 +18,9 @@ controller_manager:
     cartesian_pose_controller:
       type: fr3_controllers/CartesianPoseController
 
+    cartesian_vel_controller:
+      type: fr3_controllers/CartesianVelController
+
     # Example Controllers
     gravity_compensation_example_controller:
       type: franka_example_controllers/GravityCompensationExampleController
@@ -111,6 +114,24 @@ joint_trajectory_controller:
       fr3_joint7: { p: 50., d: 5., i: 0., i_clamp: 1. }
 
 cartesian_pose_controller:
+  ros__parameters:
+    joints:
+      - fr3_joint1
+      - fr3_joint2
+      - fr3_joint3
+      - fr3_joint4
+      - fr3_joint5
+      - fr3_joint6
+      - fr3_joint7
+
+    command_interfaces:
+      - position
+
+    state_interfaces:
+      - position
+      - velocity
+
+cartesian_vel_controller:
   ros__parameters:
     joints:
       - fr3_joint1

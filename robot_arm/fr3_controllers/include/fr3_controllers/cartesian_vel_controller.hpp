@@ -17,11 +17,11 @@
 #include <Eigen/Dense>
 #include <controller_interface/controller_interface.hpp>
 #include <fr3_controllers/robot_utils.hpp>
-#include <franka_semantic_components/franka_cartesian_pose_interface.hpp>
+#include <franka_semantic_components/franka_cartesian_velocity_interface.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <string>
 
-#include "geometry_msgs/msg/pose_stamped.hpp"
+#include "geometry_msgs/msg/twist_stamped.hpp"
 // #include "motion_generator.hpp"
 #include "realtime_tools/realtime_box.hpp"
 #include "std_msgs/msg/float64_multi_array.hpp"
@@ -30,13 +30,13 @@ using CallbackReturn = rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface
 
 namespace fr3_controllers
 {
-using CmdType = geometry_msgs::msg::PoseStamped;
+using CmdType = geometry_msgs::msg::TwistStamped;
 using Vector3d = Eigen::Matrix<double, 3, 1>;
 
 /**
  * The cartesian pose controller
  */
-class CartesianPoseController : public controller_interface::ControllerInterface
+class CartesianVelController : public controller_interface::ControllerInterface
 {
  public:
   [[nodiscard]] controller_interface::InterfaceConfiguration command_interface_configuration() const override;
@@ -52,8 +52,9 @@ class CartesianPoseController : public controller_interface::ControllerInterface
   void update_desired_command();
   void update_current_state(double dt);
   void print_robot_states();
+  Vector3d clamp(Vector3d value, Vector3d min_val, Vector3d max_val);
 
-  std::unique_ptr<franka_semantic_components::FrankaCartesianPoseInterface> franka_cartesian_pose_;
+  std::unique_ptr<franka_semantic_components::FrankaCartesianVelocityInterface> franka_cartesian_velocity_;
 
   const bool k_elbow_activated_{false};
   bool to_initialize_flag_{true};
@@ -65,7 +66,7 @@ class CartesianPoseController : public controller_interface::ControllerInterface
   std::string robot_description_;
   std::string arm_id_;
 
-  const double T_blend_ = 0.1; // e.g., 100 ms blending horizon
+  const double T_blend_ = 0.1;  // e.g., 100 ms blending horizon
 
   //! Robot states
   Vector3d x_ee_start_;  // Initial end-effector position
@@ -77,6 +78,7 @@ class CartesianPoseController : public controller_interface::ControllerInterface
   Vector3d x_ee_c_;       // Commanded end-effector position
   Vector3d x_ee_c_prev_;  // Prev commanded end-effector position
 
+  Vector3d dx_ee_des_;   // Desired end-effector velocity
   Vector3d dx_ee_;       // Current end-effector velocity
   Vector3d dx_ee_prev_;  // Current end-effector velocity
   Vector3d dx_ee_c_;     // Commanded end-effector velocity

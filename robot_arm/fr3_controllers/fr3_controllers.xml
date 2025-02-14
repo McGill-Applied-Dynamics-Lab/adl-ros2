@@ -23,5 +23,13 @@
         To control the cartesian pose.
     </description>
   </class>
+  <!-- Cartesian Vel Controller -->
+  <class name="fr3_controllers/CartesianVelController"
+          type="fr3_controllers::CartesianVelController"
+          base_class_type="controller_interface::ControllerInterface">
+    <description>
+        To control the cartesian vel.
+    </description>
+  </class>
 </library>
 

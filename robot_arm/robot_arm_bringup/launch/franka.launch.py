@@ -216,7 +216,8 @@ def generate_launch_description():
         # "joint_velocity_example_controller",
         # "my_vel_controller",
         # "move_to_start_example_controller",
-        "cartesian_pose_controller"
+        # "cartesian_pose_controller",
+        "cartesian_vel_controller"
     ]
 
     ros_controllers_nodes = []

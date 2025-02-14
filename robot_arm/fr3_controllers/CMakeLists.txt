@@ -62,6 +62,7 @@ add_library(
   src/test_controller.cpp
   src/joint_velocity_controller.cpp
   src/cartesian_pose_controller.cpp
+  src/cartesian_vel_controller.cpp
 )
 
 target_compile_features(fr3_controllers PUBLIC cxx_std_17)

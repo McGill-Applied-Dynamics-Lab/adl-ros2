@@ -214,38 +214,59 @@ controller_interface::return_type CartesianPoseController::update(const rclcpp::
   // new_position(2) -= delta_z;
 
   //? From subscriber
-  // TODO: all plane
-  Vector3d x_ee_err;
-  x_ee_err.setZero();
-  x_ee_err(0) = x_ee_des_(0) - x_ee_c_(0);
 
-  // 3. Compute a “desired” velocity to reduce the error.
-  // Here we use a simple proportional idea (but you must also clamp it)
-  Vector3d desired_vel = x_ee_err / dt;  // crude approximation
-  // RCLCPP_INFO(get_node()->get_logger(), "desired_vel: %f", desired_vel(0));
+  // //! Method 1 - Clamped Integration
+  // Vector3d x_ee_err;
+  // x_ee_err.setZero();
+  // x_ee_err(0) = x_ee_des_(0) - x_ee_c_(0);
+  //
+  // // 3. Compute a “desired” velocity to reduce the error.
+  // // Here we use a simple proportional idea (but you must also clamp it)
+  // Vector3d desired_vel = x_ee_err / dt;  // crude approximation
+  // // RCLCPP_INFO(get_node()->get_logger(), "desired_vel: %f", desired_vel(0));
+  //
+  // desired_vel = clamp(desired_vel, -dx_ee_max_, dx_ee_max_);
+  // // RCLCPP_INFO(get_node()->get_logger(), "desired_vel, clamped: %f", desired_vel(0));
+  //
+  // // 4. Compute the acceleration needed to reach desired_vel.
+  // Vector3d desired_acc = (desired_vel - dx_ee_c_) / dt;
+  // // RCLCPP_INFO(get_node()->get_logger(), "desired_acc: %f", desired_acc(0));
+  //
+  // desired_acc = clamp(desired_acc, -ddx_ee_max_, ddx_ee_max_);
+  // // RCLCPP_INFO(get_node()->get_logger(), "desired_acc, clamped: %f", desired_acc(0));
+  //
+  // // 5. Limit the jerk. Compute the change in acceleration and clamp it.
+  // Vector3d des_jerk = (desired_acc - ddx_ee_c_) / dt;
+  // // RCLCPP_INFO(get_node()->get_logger(), "acc_des, ddx_ee_c_, dt, des_jerk: %f, %f, %f, %f", desired_acc(0),
+  // //             ddx_ee_c_(0), dt, des_jerk(0));
+  //
+  // des_jerk = clamp(des_jerk, -dddx_ee_max_, dddx_ee_max_);
+  // // RCLCPP_INFO(get_node()->get_logger(), "desired_jerk, clamped: %f", des_jerk(0));
 
-  desired_vel = clamp(desired_vel, -dx_ee_max_, dx_ee_max_);
-  // RCLCPP_INFO(get_node()->get_logger(), "desired_vel, clamped: %f", desired_vel(0));
+  //! Method 2 - Blending traj
+  Vector3d x_ee_err = x_ee_des_ - x_ee_c_;
+  x_ee_err(1) = 0.0;  // TODO: Remove this line
+  x_ee_err(2) = 0.0;  // TODO: Remove this line
 
-  // 4. Compute the acceleration needed to reach desired_vel.
-  Vector3d desired_acc = (desired_vel - dx_ee_c_) / dt;
-  // RCLCPP_INFO(get_node()->get_logger(), "desired_acc: %f", desired_acc(0));
+  // Compute vel from error
+  Vector3d vel_from_err = x_ee_err / T_blend_;
 
-  desired_acc = clamp(desired_acc, -ddx_ee_max_, ddx_ee_max_);
-  // RCLCPP_INFO(get_node()->get_logger(), "desired_acc, clamped: %f", desired_acc(0));
+  // Now, blend from the current velocity toward that "ideal" velocity.
+  // This gives you a desired velocity that gradually tracks the target without snapping.
+  Eigen::Vector3d new_vel = dx_ee_c_ + (vel_from_err - dx_ee_c_) * (dt / T_blend_);
 
-  // TODO: Check JERK
-  // 5. Limit the jerk. Compute the change in acceleration and clamp it.
-  Vector3d des_jerk = (desired_acc - ddx_ee_c_) / dt;
-  // RCLCPP_INFO(get_node()->get_logger(), "acc_des, ddx_ee_c_, dt, des_jerk: %f, %f, %f, %f", desired_acc(0),
-  //             ddx_ee_c_(0), dt, des_jerk(0));
+  // Clamp
+  new_vel = clamp(new_vel, -dx_ee_max_, dx_ee_max_);
 
-  des_jerk = clamp(des_jerk, -dddx_ee_max_, dddx_ee_max_);
-  // RCLCPP_INFO(get_node()->get_logger(), "desired_jerk, clamped: %f", des_jerk(0));
+  Vector3d new_acc = (new_vel - dx_ee_c_) / dt;
+  new_acc = clamp(new_acc, -ddx_ee_max_, ddx_ee_max_);
+
+  Vector3d new_jerk = (new_acc - ddx_ee_c_) / dt;
+  new_jerk = clamp(new_jerk, -dddx_ee_max_, dddx_ee_max_);
 
   // 7. Integrate to update the velocity and then the position.
-  dddx_ee_c_ = des_jerk;
-  ddx_ee_c_ += des_jerk * dt;
+  dddx_ee_c_ = new_jerk;
+  ddx_ee_c_ += new_jerk * dt;
   dx_ee_c_ += ddx_ee_c_ * dt;
   x_ee_c_ += dx_ee_c_ * dt;
 
