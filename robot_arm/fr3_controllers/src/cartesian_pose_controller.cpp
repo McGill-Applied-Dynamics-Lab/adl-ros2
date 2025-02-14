@@ -30,7 +30,8 @@ constexpr auto DEFAULT_COMMAND_TOPIC = "~/commands";
 
 namespace fr3_controllers
 {
-double clamp(Vector3d value, Vector3d min_val, Vector3d max_val) {
+Vector3d clamp(Vector3d value, Vector3d min_val, Vector3d max_val)
+{
   return value.array().max(min_val.array()).min(max_val.array()).matrix();
 }
 
@@ -113,6 +114,7 @@ CallbackReturn CartesianPoseController::on_configure(const rclcpp_lifecycle::Sta
       msg->header.stamp = get_node()->get_clock()->now();
     }
     received_command_msg_ptr_.set(std::move(msg));
+    new_cmd_msg_ = true;
   };
 
   // initialize command subscriber
@@ -175,27 +177,28 @@ controller_interface::CallbackReturn CartesianPoseController::on_deactivate(
 }
 
 controller_interface::return_type CartesianPoseController::update(const rclcpp::Time& /*time*/,
-                                                                  const rclcpp::Duration& /*period*/)
+                                                                  const rclcpp::Duration& period)
 {
   if (to_initialize_flag_)
   {
     initialize_controller();
+    new_cmd_msg_ = true;  // To update the desired pose to current, even if no message
   }
   else
   {
     robot_time_ = state_interfaces_.back().get_value();
     elapsed_time_ = robot_time_ - initial_robot_time_;
-    doiuble dt = period->seconds();
-
-    update_desired_command();
-    update_current_state();
   }
+  double dt = period.seconds();
+
+  update_desired_command();
+  update_current_state(dt);
 
   Eigen::Quaterniond new_orientation;
   Eigen::Vector3d new_position;
 
-  new_position = commanded_position;
-  new_orientation = commanded_orientation;
+  // new_position = commanded_position;
+  new_orientation = start_orientation_;
 
   // //? Their example
   // double radius = 0.2;
@@ -211,58 +214,73 @@ controller_interface::return_type CartesianPoseController::update(const rclcpp::
   // new_position(2) -= delta_z;
 
   //? From subscriber
-  Vector3d x_ee_err = x_ee_des_ - x_ee_;
+  // TODO: all plane
+  Vector3d x_ee_err;
+  x_ee_err.setZero();
+  x_ee_err(0) = x_ee_des_(0) - x_ee_c_(0);
 
   // 3. Compute a “desired” velocity to reduce the error.
   // Here we use a simple proportional idea (but you must also clamp it)
-  Vector3d desired_vel = error / dt;  // crude approximation
-  desired_vel = clamp(desired_vel, -x_d_ee_max_, x_d_ee_max_);
+  Vector3d desired_vel = x_ee_err / dt;  // crude approximation
+  // RCLCPP_INFO(get_node()->get_logger(), "desired_vel: %f", desired_vel(0));
+
+  desired_vel = clamp(desired_vel, -dx_ee_max_, dx_ee_max_);
+  // RCLCPP_INFO(get_node()->get_logger(), "desired_vel, clamped: %f", desired_vel(0));
 
   // 4. Compute the acceleration needed to reach desired_vel.
-  Vector3d desired_acc = (desired_vel - x_dot) / dt;
-  desired_acc = clamp(desired_acc, -x_dd_ee_max_, x_dd_ee_max_);
+  Vector3d desired_acc = (desired_vel - dx_ee_c_) / dt;
+  // RCLCPP_INFO(get_node()->get_logger(), "desired_acc: %f", desired_acc(0));
 
-  //TODO: Check JERK
-  // // 5. Limit the jerk. Compute the change in acceleration and clamp it.
-  // double jerk = (desired_acc - x_ddot) / dt;
-  // jerk = clamp(jerk, -max_jerk, max_jerk);
+  desired_acc = clamp(desired_acc, -ddx_ee_max_, ddx_ee_max_);
+  // RCLCPP_INFO(get_node()->get_logger(), "desired_acc, clamped: %f", desired_acc(0));
+
+  // TODO: Check JERK
+  // 5. Limit the jerk. Compute the change in acceleration and clamp it.
+  Vector3d des_jerk = (desired_acc - ddx_ee_c_) / dt;
+  // RCLCPP_INFO(get_node()->get_logger(), "acc_des, ddx_ee_c_, dt, des_jerk: %f, %f, %f, %f", desired_acc(0),
+  //             ddx_ee_c_(0), dt, des_jerk(0));
+
+  des_jerk = clamp(des_jerk, -dddx_ee_max_, dddx_ee_max_);
+  // RCLCPP_INFO(get_node()->get_logger(), "desired_jerk, clamped: %f", des_jerk(0));
 
   // 7. Integrate to update the velocity and then the position.
-  x_dot += desired_acc * dt;
-  x_cmd += x_dot * dt;
-
-  new_position(0) = x_cmd(0);
-
+  dddx_ee_c_ = des_jerk;
+  ddx_ee_c_ += des_jerk * dt;
+  dx_ee_c_ += ddx_ee_c_ * dt;
+  x_ee_c_ += dx_ee_c_ * dt;
 
   //? OLD TRIES
   // auto dx = pose.position.x;
   // new_position(0) = desired_pose.position.x;
   // new_position(1) = desired_pose.position.y;
   // new_position(2) = desired_pose.position.z;
-  // 
+  //
   // const double kAlpha = 0.5;
   // new_position(0) = kAlpha * (desired_pose.position.x) +
   //                   (1 - kAlpha) * commanded_position(0);  // alpha*x_i + (1 - alpha) * y_{i - 1}
-  // 
+  //
   // auto vel = (commanded_position(0) - new_position(0)) / 0.001;
 
+  // RCLCPP_INFO(get_node()->get_logger(),
+  //             "(x_des, x, x_c', x_c, x_d, x_d_c, x_dd, x_dd_c): (%f, %f, %f, %f, %f, %f, %f, %f)", x_ee_des_(0),
+  //             x_ee_(0), x_ee_c_prev_(0), x_ee_c_(0), dx_ee_(0), desired_vel(0), ddx_ee_(0), desired_acc(0));
 
-  RCLCPP_INFO(get_node()->get_logger(), "(x_des, x, x_c', x_c, x_d, x_d_c, x_dd, x_dd_c): (%f, %f, %f, %f, %f, %f, %f, %f)", 
-  x_ee_des_(0),
-  x_ee_(0),
-  x_ee_c_prev_(0),
-  x_ee_c_(0),
-  x_ee_d_(0),
-  desired_vel(0),
-  x_ee_dd_(0),
-  desired_acc(0)
-  );
+  // RCLCPP_INFO(get_node()->get_logger(), "(x_des, x, err, x_c, x_d_c, x_dd_c): (%f, %f, %f, %f, %f, %f)",
+  // x_ee_des_(0),
+  //             x_ee_(0), x_ee_err(0), x_ee_c_(0), dx_ee_c_(0), desired_acc(0));
 
   // Update prev values
   x_ee_prev_ = x_ee_;
-  x_ee_d_prev_ = x_ee_d_;
-  x_ee_d_c_ = desired_vel;
-  x_ee_dd_c_ = desired_acc;
+  dx_ee_prev_ = dx_ee_;
+  // dx_ee_c_ = desired_vel;
+  // ddx_ee_c_ = desired_acc;
+
+  print_robot_states();
+
+  // Send
+  new_position(0) = x_ee_c_(0);
+  new_position(1) = x_ee_c_(1);
+  new_position(2) = x_ee_c_(2);
 
   if (franka_cartesian_pose_->setCommand(new_orientation, new_position))
   {
@@ -275,7 +293,8 @@ controller_interface::return_type CartesianPoseController::update(const rclcpp::
   }
 }
 
-void CartesianPoseController::initialize_controller(){
+void CartesianPoseController::initialize_controller()
+{
   // Get initial orientation and translation
   std::tie(start_orientation_, x_ee_start_) = franka_cartesian_pose_->getCurrentOrientationAndTranslation();
   initial_robot_time_ = state_interfaces_.back().get_value();
@@ -288,28 +307,33 @@ void CartesianPoseController::initialize_controller(){
   start_pose.pose.position.z = x_ee_start_(2);
 
   RCLCPP_INFO(get_node()->get_logger(), "Start (x, y, z): (%f, %f, %f)", x_ee_start_(0), x_ee_start_(1),
-  x_ee_start_(2));
+              x_ee_start_(2));
 
   received_command_msg_ptr_.set(std::make_shared<CmdType>(start_pose));
 
   // Init robot states
   x_ee_ = x_ee_start_;
-  x_ee_d_ = x_ee_start_;
+  dx_ee_ = x_ee_start_;
   x_ee_c_ = x_ee_start_;
 
-  x_ee_d_prev_.setZero();
-  x_ee_prev_.setZero();
+  x_ee_prev_ = x_ee_;
+  dx_ee_prev_.setZero();
 
-  x_ee_d_.setZero();
-  x_ee_d_c_.setZero();
-  x_ee_dd_.setZero();
-  x_ee_dd_c_.setZero();
-  x_ee_ddd_c_.setZero();
+  dx_ee_.setZero();
+  dx_ee_c_.setZero();
+  ddx_ee_.setZero();
+  ddx_ee_c_.setZero();
+  dddx_ee_c_.setZero();
 
   to_initialize_flag_ = false;
 }
 
-void CartesianPoseController::update_desired_command(){
+void CartesianPoseController::update_desired_command()
+{
+  if (!new_cmd_msg_)
+  {
+    return;
+  }
   //! Get last command
   std::shared_ptr<CmdType> last_command_msg;
   received_command_msg_ptr_.get(last_command_msg);
@@ -318,8 +342,8 @@ void CartesianPoseController::update_desired_command(){
   x_ee_des_(1) = last_command_msg->pose.position.y;
   x_ee_des_(2) = last_command_msg->pose.position.z;
 
-  //TODO: Check if this is needed
-  // I think this could be the same value I store from the prev call
+  // TODO: Check if this is needed
+  //  I think this could be the same value I store from the prev call
   Eigen::Quaterniond commanded_orientation;
   Eigen::Vector3d commanded_position;
 
@@ -328,11 +352,13 @@ void CartesianPoseController::update_desired_command(){
   x_ee_c_prev_(1) = commanded_position(1);
   x_ee_c_prev_(2) = commanded_position(2);
 
-  RCLCPP_INFO(get_node()->get_logger(), "Des ee (x, y, z): (%f, %f, %f)", x_ee_d_(0),
-                x_ee_d_(0), x_ee_d_(0));
+  new_cmd_msg_ = false;
+
+  RCLCPP_INFO(get_node()->get_logger(), "Des ee (x, y, z): (%f, %f, %f)", x_ee_des_(0), x_ee_des_(1), x_ee_des_(2));
 }
 
-void CartesianPoseControler::update_current_state(double dt){
+void CartesianPoseController::update_current_state(double dt)
+{
   Eigen::Quaterniond current_orientation;
   Eigen::Vector3d current_position;
 
@@ -341,12 +367,33 @@ void CartesianPoseControler::update_current_state(double dt){
   x_ee_(1) = current_position(1);
   x_ee_(2) = current_position(2);
 
-  x_ee_d_ = (x_ee_ - x_ee_prev_) / dt;
-  x_ee_dd_ = (x_ee_d_ - x_ee_d_prev_) / dt; 
+  dx_ee_ = (x_ee_ - x_ee_prev_) / dt;
+  ddx_ee_ = (dx_ee_ - dx_ee_prev_) / dt;
 
   // x_ee_c_ = x_ee_c_prev_;
-  // x_ee_d_c_ = x_ee_d_;
-  // x_ee_dd_c_ = x_ee_dd_;
+  // dx_ee_c_ = dx_ee_;
+  // ddx_ee_c_ = ddx_ee_;
+}
+
+void CartesianPoseController::print_robot_states()
+{
+  RCLCPP_INFO(get_node()->get_logger(), "Robot States:");
+  // RCLCPP_INFO(get_node()->get_logger(), "\t--- Measured ---");
+  // RCLCPP_INFO(get_node()->get_logger(), "\tx_ee_:     \t(%10.6f, %10.6f, %10.6f)", x_ee_(0), x_ee_(1), x_ee_(2));
+  // RCLCPP_INFO(get_node()->get_logger(), "\tdx_ee_:    \t(%10.6f, %10.6f, %10.6f)", dx_ee_(0), dx_ee_(1), dx_ee_(2));
+  // RCLCPP_INFO(get_node()->get_logger(), "\tddx_ee_:   \t(%10.6f, %10.6f, %10.6f)", ddx_ee_(0), ddx_ee_(1),
+  // ddx_ee_(2));
+
+  // RCLCPP_INFO(get_node()->get_logger(), "\t--- Command ---");
+  RCLCPP_INFO(get_node()->get_logger(), "\tx_ee_des:  \t(%10.6f, %10.6f, %10.6f)", x_ee_des_(0), x_ee_des_(1),
+              x_ee_des_(2));
+  RCLCPP_INFO(get_node()->get_logger(), "\tx_ee_c_:   \t(%10.6f, %10.6f, %10.6f)", x_ee_c_(0), x_ee_c_(1), x_ee_c_(2));
+  RCLCPP_INFO(get_node()->get_logger(), "\tdx_ee_c_:  \t(%10.6f, %10.6f, %10.6f)", dx_ee_c_(0), dx_ee_c_(1),
+              dx_ee_c_(2));
+  RCLCPP_INFO(get_node()->get_logger(), "\tddx_ee_c_: \t(%10.6f, %10.6f, %10.6f)", ddx_ee_c_(0), ddx_ee_c_(1),
+              ddx_ee_c_(2));
+  RCLCPP_INFO(get_node()->get_logger(), "\tdddx_ee_c_:\t(%10.6f, %10.6f, %10.6f)", dddx_ee_c_(0), dddx_ee_c_(1),
+              dddx_ee_c_(2));
 }
 
 }  // namespace fr3_controllers

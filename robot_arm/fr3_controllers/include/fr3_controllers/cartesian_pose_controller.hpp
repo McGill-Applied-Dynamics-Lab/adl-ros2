@@ -51,11 +51,13 @@ class CartesianPoseController : public controller_interface::ControllerInterface
   void initialize_controller();
   void update_desired_command();
   void update_current_state(double dt);
+  void print_robot_states();
 
   std::unique_ptr<franka_semantic_components::FrankaCartesianPoseInterface> franka_cartesian_pose_;
 
   const bool k_elbow_activated_{false};
   bool to_initialize_flag_{true};
+  bool new_cmd_msg_{false};
 
   double elapsed_time_{0.0};
   double initial_robot_time_{0.0};
@@ -64,23 +66,23 @@ class CartesianPoseController : public controller_interface::ControllerInterface
   std::string arm_id_;
 
   //! Robot states
-  Vector3d x_ee_start_; // Initial end-effector position
+  Vector3d x_ee_start_;  // Initial end-effector position
   Eigen::Quaterniond start_orientation_;
 
-  Vector3d x_ee_des_; // Desired end-effector position. From the command message
-  Vector3d x_ee_;   // Current end-effector position
-  Vector3d x_ee_prev_;   // Prev end-effector position
-  Vector3d x_ee_c_; // Commanded end-effector position
-  Vector3d x_ee_c_prev_; // Prev commanded end-effector position
+  Vector3d x_ee_des_;     // Desired end-effector position. From the command message
+  Vector3d x_ee_;         // Current end-effector position
+  Vector3d x_ee_prev_;    // Prev end-effector position
+  Vector3d x_ee_c_;       // Commanded end-effector position
+  Vector3d x_ee_c_prev_;  // Prev commanded end-effector position
 
-  Vector3d x_ee_d_;   // Current end-effector velocity
-  Vector3d x_ee_d_prev_;   // Current end-effector velocity
-  Vector3d x_ee_d_c_; // Commanded end-effector velocity
+  Vector3d dx_ee_;       // Current end-effector velocity
+  Vector3d dx_ee_prev_;  // Current end-effector velocity
+  Vector3d dx_ee_c_;     // Commanded end-effector velocity
 
-  Vector3d x_ee_dd_;   // Current end-effector acceleration
-  Vector3d x_ee_dd_c_; // Commanded end-effector acceleration
+  Vector3d ddx_ee_;    // Current end-effector acceleration
+  Vector3d ddx_ee_c_;  // Commanded end-effector acceleration
 
-  Vector3d x_ee_ddd_c_; // Commanded end-effector jerk
+  Vector3d dddx_ee_c_;  // Commanded end-effector jerk
 
   //! ROS Interfaces (sub, pub, ...)
   bool subscriber_is_active_ = false;
@@ -90,10 +92,10 @@ class CartesianPoseController : public controller_interface::ControllerInterface
   std::shared_ptr<CmdType> last_command_msg_;
 
   //! Limits (of end-effector)
-  //TODO: Update to real max values
-  Vector3d x_d_ee_max_ = (Vector3d() << 2.0, 2.0, 2.0).finished();         // in m/s
-  Vector3d x_dd_ee_max_ = (Vector3d() << 4.5, 4.5, 4.5).finished();  // in m/s^2
-  Vector3d x_ddd_ee_max_ = (Vector3d() << 1000, 1000, 1000).finished();  // in m/s^3
+  // TODO: Update to real max values
+  Vector3d dx_ee_max_ = (Vector3d() << 2.0, 2.0, 2.0).finished();       // in m/s
+  Vector3d ddx_ee_max_ = (Vector3d() << 4.5, 4.5, 4.5).finished();      // in m/s^2
+  Vector3d dddx_ee_max_ = (Vector3d() << 1000, 1000, 1000).finished();  // in m/s^3
 };
 
 }  // namespace fr3_controllers
