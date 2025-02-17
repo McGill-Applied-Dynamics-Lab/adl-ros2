@@ -1,4 +1,4 @@
-from typing import List, Literal
+from typing import List, Literal, Tuple
 import rclpy
 from rclpy.node import Node
 from rclpy.action import ActionClient
@@ -11,7 +11,7 @@ from rclpy.callback_groups import ReentrantCallbackGroup, MutuallyExclusiveCallb
 import rclpy.time
 from sensor_msgs.msg import JointState
 from std_msgs.msg import Float64MultiArray
-from geometry_msgs.msg import PoseStamped, TransformStamped, TwistStamped, AccelStamped
+from geometry_msgs.msg import Pose, PoseStamped, TransformStamped, Twist, TwistStamped, AccelStamped
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 from franka_msgs.msg import FrankaRobotState 
 
@@ -283,11 +283,18 @@ class FR3Interface(Node):
         self._joint_vels_desired: None | np.ndarray = None
         self._ee_vel_desired: None | np.ndarray = None
 
+        self._start_pose = PoseStamped()
         self._start_time = self.get_clock().now()
+
+        self._goal_pose = PoseStamped()
 
         self._prev_dx = 0
         self._prev_ddx = 0
         self._prev_ts = self._start_time
+
+        # Gains
+        self._kP = 1 * np.ones(3)
+        self._kD = 0.1 * np.ones(3)
 
         #! Subscribers
         self._init_publishers()
@@ -335,8 +342,6 @@ class FR3Interface(Node):
         cartesian_pose_controller: str = "cartesian_pose_controller"
         cartesian_pose_controller_topic = f"/{cartesian_pose_controller}/commands"
         self._cartesian_pose_pub_active = False
-        self._start_pose = PoseStamped()
-
         self._cartesian_pose_cmd_pub = self.create_publisher(PoseStamped, cartesian_pose_controller_topic, 10)
 
         self._cartesian_pose_cmd_msg = PoseStamped()
@@ -531,7 +536,7 @@ class FR3Interface(Node):
 
         accel = (commanded_ee_vel_x - self._prev_dx) / ((_curr_ts - self._prev_ts).nanoseconds/1e9)
         jerk = (commanded_ee_accel_x - self._prev_ddx) / (_curr_ts - self._prev_ts).nanoseconds
-        print(f'accel, jerk: {accel}, {jerk}')
+        # print(f'accel, jerk: {accel}, {jerk}')
 
         self._prev_ts = _curr_ts
         self._prev_dx = commanded_ee_vel_x
@@ -551,6 +556,14 @@ class FR3Interface(Node):
             print(f'Start position (x, y, z): {self._start_pose.pose.position.x}, {self._start_pose.pose.position.y}, {self._start_pose.pose.position.z}')
 
             self._start_pose.header.stamp = self.get_clock().now().to_msg()
+
+            # Set goal pose #TODO: Remove (get from topic)
+            self._goal_pose.header = self._start_pose.header
+            self._goal_pose.pose.position.x = self._start_pose.pose.position.x #- 0.2
+            self._goal_pose.pose.position.y = self._start_pose.pose.position.y # + 0.1
+            self._goal_pose.pose.position.z = self._start_pose.pose.position.z # -0.1
+            self._goal_pose.pose.orientation = self._start_pose.pose.orientation
+
             self._is_state_initialialized = True
 
     def _joint_state_callback(self, joint_msg):
@@ -687,22 +700,29 @@ class FR3Interface(Node):
 
         # delta_x = radius * np.sin(angle)
         # delta_z = radius * (np.cos(angle) - 1)
-        if elapsed_time_ < 1:
-            vx = 0.5
-        else:
-            vx = 0.0
 
-        # commanded_position = self.o_t_ee_c.pose.position
-        # commanded_ee_vel = self.o_dp_ee_c.twist
-        # commanded_ee_accel = self.o_ddp_ee_c.accel
+        # #! Constant Velo
+        # if elapsed_time_ < 1:
+        #     vx = 0.5
+        # else:
+        #     vx = 0.0
 
-        # commanded_ee_vel_x = commanded_ee_vel.linear.x
-        # commanded_ee_accel_x = commanded_ee_accel.linear.x
+        #! PD Control
+        x_ee_des, _ = self.pose_msg_to_array(self._goal_pose.pose)
+        x_ee, _ = self.pose_msg_to_array(self.o_t_ee.pose)
+        dx_ee, _ = self.twist_msg_to_array(self.o_dp_ee_d.twist)
 
-        # cmd_x = commanded_position.x + delta_x
+        error = x_ee_des - x_ee
+
+        desired_vel = self._kP * error - self._kD * dx_ee
+
+        print(f"x_ee_des: {x_ee_des[0]:<6.4f} x_ee: {x_ee[0]:<6.4f} dx_ee: {dx_ee[0]:<6.4f} error: {error[0]:<6.4f} desired_vel: {desired_vel[0]:<6.4f}")
 
 
-        self._cartesian_vel_cmd_msg.twist.linear.x = vx
+        self._cartesian_vel_cmd_msg.twist.linear.x = desired_vel[0]
+        self._cartesian_vel_cmd_msg.twist.linear.y = desired_vel[1]
+        self._cartesian_vel_cmd_msg.twist.linear.z = desired_vel[2]
+
         # self._cartesian_pose_cmd_msg.pose.position.z = self._start_pose.pose.position.z - delta_z
         # print(f'dx: {delta_x}')
 
@@ -992,6 +1012,41 @@ class FR3Interface(Node):
         self._cartesian_vel_cmd_msg.twist.linear.z = 0.0
         self._cartesian_vel_pub.publish(self._cartesian_vel_cmd_msg)
 
+    @staticmethod
+    def pose_msg_to_array(pose: Pose) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        TODO: Move to utils
+        Convert a Pose message to a numpy array.
+
+        Returns:
+            - position: np.ndarray
+            - orientation: np.ndarray
+        """
+        position = pose.position
+        orientation = pose.orientation
+
+        position_array = np.array([position.x, position.y, position.z])
+        orientation_array = np.array([orientation.x, orientation.y, orientation.z, orientation.w])
+
+        return position_array, orientation_array
+
+    @staticmethod
+    def twist_msg_to_array(twist: Twist) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        TODO: Move to utils
+        Convert a Twist message to a numpy array.
+
+        Returns:
+            - linear: np.ndarray
+            - angular: np.ndarray
+        """
+        linear = twist.linear
+        angular = twist.angular
+
+        linear_array = np.array([linear.x, linear.y, linear.z])
+        angular_array = np.array([angular.x, angular.y, angular.z])
+
+        return linear_array, angular_array
 """
 Utilities
 """
@@ -1040,7 +1095,7 @@ def main(args=None):
         executor.spin()
 
     except KeyboardInterrupt:
-        node.stop_robot()
+        # node.stop_robot()
         node.get_logger().info("KeyboardInterrupt, shutting down.\n")
 
     finally:

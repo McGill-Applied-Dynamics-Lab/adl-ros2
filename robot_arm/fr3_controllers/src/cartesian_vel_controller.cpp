@@ -193,8 +193,8 @@ controller_interface::return_type CartesianVelController::update(const rclcpp::T
 
   //! Method 2 - Blending traj
   Vector3d dx_ee_err = dx_ee_des_ - dx_ee_c_;
-  dx_ee_err(1) = 0.0;  // TODO: Remove this line
-  dx_ee_err(2) = 0.0;  // TODO: Remove this line
+  // dx_ee_err(1) = 0.0;  // TODO: Remove this line
+  // dx_ee_err(2) = 0.0;  // TODO: Remove this line
 
   // Compute vel from error
   Vector3d acc_from_err = dx_ee_err / T_blend_;
