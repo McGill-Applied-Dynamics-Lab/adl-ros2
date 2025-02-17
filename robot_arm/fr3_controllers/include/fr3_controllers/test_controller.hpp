@@ -1,5 +1,5 @@
-#ifndef MY_CONTROLLERS__TEST_CONTROLLER_HPP_
-#define MY_CONTROLLERS__TEST_CONTROLLER_HPP_
+#ifndef fr3_controllers__TEST_CONTROLLER_HPP_
+#define fr3_controllers__TEST_CONTROLLER_HPP_
 
 #include <chrono>
 #include <memory>
@@ -23,7 +23,7 @@
 #include "trajectory_msgs/msg/joint_trajectory.hpp"
 #include "trajectory_msgs/msg/joint_trajectory_point.hpp"
 
-namespace my_controllers
+namespace fr3_controllers
 {
 class TestController : public controller_interface::ControllerInterface
 {
@@ -81,6 +81,6 @@ protected:
       {"velocity", &joint_velocity_state_interface_}};
 };
 
-}  // namespace my_controllers
+}  // namespace fr3_controllers
 
-#endif  // MY_CONTROLLERS__TEST_CONTROLLER_HPP_
+#endif  // fr3_controllers__TEST_CONTROLLER_HPP_

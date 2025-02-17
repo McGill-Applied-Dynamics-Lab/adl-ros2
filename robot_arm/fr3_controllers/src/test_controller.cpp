@@ -12,9 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "my_controllers/test_controller.hpp"
+#include "fr3_controllers/test_controller.hpp"
 
 #include <stddef.h>
+
 #include <algorithm>
 #include <memory>
 #include <string>
@@ -27,12 +28,10 @@
 
 using config_type = controller_interface::interface_configuration_type;
 
-namespace my_controllers
-{
+namespace fr3_controllers {
 TestController::TestController() : controller_interface::ControllerInterface() {}
 
-controller_interface::CallbackReturn TestController::on_init()
-{
+auto TestController::on_init() -> controller_interface::CallbackReturn {
   // should have error handling
   joint_names_ = auto_declare<std::vector<std::string>>("joints", joint_names_);
   command_interface_types_ = auto_declare<std::vector<std::string>>("command_interfaces", command_interface_types_);
@@ -44,15 +43,12 @@ controller_interface::CallbackReturn TestController::on_init()
   return CallbackReturn::SUCCESS;
 }
 
-controller_interface::InterfaceConfiguration TestController::command_interface_configuration() const
-{
+auto TestController::command_interface_configuration() const -> controller_interface::InterfaceConfiguration {
   controller_interface::InterfaceConfiguration conf = {config_type::INDIVIDUAL, {}};
 
   conf.names.reserve(joint_names_.size() * command_interface_types_.size());
-  for (const auto & joint_name : joint_names_)
-  {
-    for (const auto & interface_type : command_interface_types_)
-    {
+  for (const auto &joint_name : joint_names_) {
+    for (const auto &interface_type : command_interface_types_) {
       conf.names.push_back(joint_name + "/" + interface_type);
     }
   }
@@ -60,15 +56,12 @@ controller_interface::InterfaceConfiguration TestController::command_interface_c
   return conf;
 }
 
-controller_interface::InterfaceConfiguration TestController::state_interface_configuration() const
-{
+auto TestController::state_interface_configuration() const -> controller_interface::InterfaceConfiguration {
   controller_interface::InterfaceConfiguration conf = {config_type::INDIVIDUAL, {}};
 
   conf.names.reserve(joint_names_.size() * state_interface_types_.size());
-  for (const auto & joint_name : joint_names_)
-  {
-    for (const auto & interface_type : state_interface_types_)
-    {
+  for (const auto &joint_name : joint_names_) {
+    for (const auto &interface_type : state_interface_types_) {
       conf.names.push_back(joint_name + "/" + interface_type);
     }
   }
@@ -76,24 +69,19 @@ controller_interface::InterfaceConfiguration TestController::state_interface_con
   return conf;
 }
 
-controller_interface::CallbackReturn TestController::on_configure(const rclcpp_lifecycle::State &)
-{
-  auto callback =
-    [this](const std::shared_ptr<trajectory_msgs::msg::JointTrajectory> traj_msg) -> void
-  {
+auto TestController::on_configure(const rclcpp_lifecycle::State &) -> controller_interface::CallbackReturn {
+  auto callback = [this](const std::shared_ptr<trajectory_msgs::msg::JointTrajectory> traj_msg) -> void {
     traj_msg_external_point_ptr_.writeFromNonRT(traj_msg);
     new_msg_ = true;
   };
 
-  joint_command_subscriber_ =
-    get_node()->create_subscription<trajectory_msgs::msg::JointTrajectory>(
+  joint_command_subscriber_ = get_node()->create_subscription<trajectory_msgs::msg::JointTrajectory>(
       "~/joint_trajectory", rclcpp::SystemDefaultsQoS(), callback);
 
   return CallbackReturn::SUCCESS;
 }
 
-controller_interface::CallbackReturn TestController::on_activate(const rclcpp_lifecycle::State &)
-{
+auto TestController::on_activate(const rclcpp_lifecycle::State &) -> controller_interface::CallbackReturn {
   // clear out vectors in case of restart
   joint_position_command_interface_.clear();
   joint_velocity_command_interface_.clear();
@@ -101,40 +89,32 @@ controller_interface::CallbackReturn TestController::on_activate(const rclcpp_li
   joint_velocity_state_interface_.clear();
 
   // assign command interfaces
-  for (auto & interface : command_interfaces_)
-  {
+  for (auto &interface : command_interfaces_) {
     command_interface_map_[interface.get_interface_name()]->push_back(interface);
   }
 
   // assign state interfaces
-  for (auto & interface : state_interfaces_)
-  {
+  for (auto &interface : state_interfaces_) {
     state_interface_map_[interface.get_interface_name()]->push_back(interface);
   }
 
   return CallbackReturn::SUCCESS;
 }
 
-void interpolate_point(
-  const trajectory_msgs::msg::JointTrajectoryPoint & point_1,
-  const trajectory_msgs::msg::JointTrajectoryPoint & point_2,
-  trajectory_msgs::msg::JointTrajectoryPoint & point_interp, double delta)
-{
-  for (size_t i = 0; i < point_1.positions.size(); i++)
-  {
+void interpolate_point(const trajectory_msgs::msg::JointTrajectoryPoint &point_1,
+                       const trajectory_msgs::msg::JointTrajectoryPoint &point_2,
+                       trajectory_msgs::msg::JointTrajectoryPoint &point_interp, double delta) {
+  for (size_t i = 0; i < point_1.positions.size(); i++) {
     point_interp.positions[i] = delta * point_2.positions[i] + (1.0 - delta) * point_2.positions[i];
   }
-  for (size_t i = 0; i < point_1.positions.size(); i++)
-  {
-    point_interp.velocities[i] =
-      delta * point_2.velocities[i] + (1.0 - delta) * point_2.velocities[i];
+  for (size_t i = 0; i < point_1.positions.size(); i++) {
+    point_interp.velocities[i] = delta * point_2.velocities[i] + (1.0 - delta) * point_2.velocities[i];
   }
 }
 
-void interpolate_trajectory_point(
-  const trajectory_msgs::msg::JointTrajectory & traj_msg, const rclcpp::Duration & cur_time,
-  trajectory_msgs::msg::JointTrajectoryPoint & point_interp)
-{
+void interpolate_trajectory_point(const trajectory_msgs::msg::JointTrajectory &traj_msg,
+                                  const rclcpp::Duration &cur_time,
+                                  trajectory_msgs::msg::JointTrajectoryPoint &point_interp) {
   double traj_len = traj_msg.points.size();
   auto last_time = traj_msg.points[traj_len - 1].time_from_start;
   double total_time = last_time.sec + last_time.nanosec * 1E-9;
@@ -145,67 +125,59 @@ void interpolate_trajectory_point(
   interpolate_point(traj_msg.points[ind], traj_msg.points[ind + 1], point_interp, delta);
 }
 
-controller_interface::return_type TestController::update(
-  const rclcpp::Time & time, const rclcpp::Duration & /*period*/)
-{
-//   if (new_msg_)
-//   {
-//     trajectory_msg_ = *traj_msg_external_point_ptr_.readFromRT();
-//     start_time_ = time;
-//     new_msg_ = false;
-//   }
+auto TestController::update(const rclcpp::Time &time, const rclcpp::Duration & /*period*/)
+    -> controller_interface::return_type {
+  //   if (new_msg_)
+  //   {
+  //     trajectory_msg_ = *traj_msg_external_point_ptr_.readFromRT();
+  //     start_time_ = time;
+  //     new_msg_ = false;
+  //   }
 
-//   if (trajectory_msg_ != nullptr)
-//   {
-//     interpolate_trajectory_point(*trajectory_msg_, time - start_time_, point_interp_);
-//     for (size_t i = 0; i < joint_position_command_interface_.size(); i++)
-//     {
-//       joint_position_command_interface_[i].get().set_value(point_interp_.positions[i]);
-//     }
-//     for (size_t i = 0; i < joint_velocity_command_interface_.size(); i++)
-//     {
-//       joint_velocity_command_interface_[i].get().set_value(point_interp_.velocities[i]);
-//     }
-//   }
+  //   if (trajectory_msg_ != nullptr)
+  //   {
+  //     interpolate_trajectory_point(*trajectory_msg_, time - start_time_, point_interp_);
+  //     for (size_t i = 0; i < joint_position_command_interface_.size(); i++)
+  //     {
+  //       joint_position_command_interface_[i].get().set_value(point_interp_.positions[i]);
+  //     }
+  //     for (size_t i = 0; i < joint_velocity_command_interface_.size(); i++)
+  //     {
+  //       joint_velocity_command_interface_[i].get().set_value(point_interp_.velocities[i]);
+  //     }
+  //   }
 
-    for (size_t i = 0; i < joint_velocity_command_interface_.size(); i++)
-    {
-        joint_velocity_command_interface_[i].get().set_value(0.5);
-    }
+  for (size_t i = 0; i < joint_velocity_command_interface_.size(); i++) {
+    joint_velocity_command_interface_[i].get().set_value(0.5);
+  }
 
-    for (size_t i = 0; i < joint_position_command_interface_.size(); i++)
-    {
-      joint_position_command_interface_[i].get().set_value(0.785);
-    }
+  for (size_t i = 0; i < joint_position_command_interface_.size(); i++) {
+    joint_position_command_interface_[i].get().set_value(0.785);
+  }
 
   return controller_interface::return_type::OK;
 }
 
-controller_interface::CallbackReturn TestController::on_deactivate(const rclcpp_lifecycle::State &)
-{
+auto TestController::on_deactivate(const rclcpp_lifecycle::State &) -> controller_interface::CallbackReturn {
   release_interfaces();
 
   return CallbackReturn::SUCCESS;
 }
 
-controller_interface::CallbackReturn TestController::on_cleanup(const rclcpp_lifecycle::State &)
-{
+auto TestController::on_cleanup(const rclcpp_lifecycle::State &) -> controller_interface::CallbackReturn {
   return CallbackReturn::SUCCESS;
 }
 
-controller_interface::CallbackReturn TestController::on_error(const rclcpp_lifecycle::State &)
-{
+auto TestController::on_error(const rclcpp_lifecycle::State &) -> controller_interface::CallbackReturn {
   return CallbackReturn::SUCCESS;
 }
 
-controller_interface::CallbackReturn TestController::on_shutdown(const rclcpp_lifecycle::State &)
-{
+auto TestController::on_shutdown(const rclcpp_lifecycle::State &) -> controller_interface::CallbackReturn {
   return CallbackReturn::SUCCESS;
 }
 
-}  // namespace ros2_control_demo_example_7
+}  // namespace fr3_controllers
 
 #include "pluginlib/class_list_macros.hpp"
 
-PLUGINLIB_EXPORT_CLASS(
-  my_controllers::TestController, controller_interface::ControllerInterface)
+PLUGINLIB_EXPORT_CLASS(fr3_controllers::TestController, controller_interface::ControllerInterface)

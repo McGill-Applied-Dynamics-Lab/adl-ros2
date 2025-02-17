@@ -193,13 +193,13 @@ def generate_launch_description():
         executable="ros2_control_node",
         parameters=[
             franka_controllers,
-            # {"robot_description": robot_description},
+            robot_description,
             {"arm_id": arm_id},
             {"load_gripper": load_gripper},
         ],
         remappings=[
             ("joint_states", "franka/joint_states"),
-            ("/controller_manager/robot_description", "/robot_description"),
+            # ("/controller_manager/robot_description", "/robot_description"),
         ],
         output={
             "stdout": "screen",
@@ -212,7 +212,12 @@ def generate_launch_description():
     controllers_list = [
         "joint_state_broadcaster",
         "joint_trajectory_controller --inactive",
-        "joint_velocity_controller --inactive",
+        # "joint_velocity_controller",
+        # "joint_velocity_example_controller",
+        # "my_vel_controller",
+        # "move_to_start_example_controller",
+        # "cartesian_pose_controller",
+        "cartesian_vel_controller"
     ]
 
     ros_controllers_nodes = []
@@ -225,12 +230,16 @@ def generate_launch_description():
             )
         ]
 
+    # Node to read Franka data and publish it (e.g. joint states, pose, ...)
     franka_robot_state_broadcaster_spawner = Node(
         package="controller_manager",
         executable="spawner",
         arguments=["franka_robot_state_broadcaster"],
         parameters=[{"arm_id": arm_id}],
         output="screen",
+        remappings=[
+            ("/controller_manager/robot_description", "/robot_description"),
+        ],
         condition=IfCondition(PythonExpression(["'", hw_type, "' == 'real'"])),
     )
 

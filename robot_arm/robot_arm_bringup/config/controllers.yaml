@@ -2,7 +2,7 @@ controller_manager:
   ros__parameters:
     update_rate: 1000  # Hz
 
-    # ros2_controllers
+    # my controllers
     joint_trajectory_controller:
       type: joint_trajectory_controller/JointTrajectoryController
 
@@ -10,7 +10,57 @@ controller_manager:
       type: velocity_controllers/JointGroupVelocityController
 
     test_controller:
-      type: my_controllers/TestController
+      type: fr3_controllers/TestController
+
+    my_vel_controller:
+      type: fr3_controllers/JointVelocityController
+
+    cartesian_pose_controller:
+      type: fr3_controllers/CartesianPoseController
+
+    cartesian_vel_controller:
+      type: fr3_controllers/CartesianVelController
+
+    # Example Controllers
+    gravity_compensation_example_controller:
+      type: franka_example_controllers/GravityCompensationExampleController
+
+    joint_impedance_example_controller:
+      type: franka_example_controllers/JointImpedanceExampleController
+
+    joint_velocity_example_controller:
+      type: franka_example_controllers/JointVelocityExampleController
+
+    joint_position_example_controller:
+      type: franka_example_controllers/JointPositionExampleController
+
+    cartesian_velocity_example_controller:
+      type: franka_example_controllers/CartesianVelocityExampleController
+    
+    cartesian_pose_example_controller:
+      type: franka_example_controllers/CartesianPoseExampleController
+
+    cartesian_pose_elbow_example_controller:
+      type: franka_example_controllers/CartesianElbowExampleController
+
+    joint_impedance_with_ik_example_controller:
+      type: franka_example_controllers/JointImpedanceWithIKExampleController
+
+    cartesian_orientation_example_controller:
+      type: franka_example_controllers/CartesianOrientationExampleController
+
+    elbow_example_controller:
+      type: franka_example_controllers/ElbowExampleController
+
+    move_to_start_example_controller:
+      type: franka_example_controllers/MoveToStartExampleController
+
+    model_example_controller:
+      type: franka_example_controllers/ModelExampleController
+
+    gripper_example_controller:
+      type: franka_example_controllers/GripperExampleController      
+
 
     # Broadcasters
     joint_state_broadcaster:
@@ -19,10 +69,12 @@ controller_manager:
     franka_robot_state_broadcaster:
       type: franka_robot_state_broadcaster/FrankaRobotStateBroadcaster
 
+# Broadcasters
 franka_robot_state_broadcaster:
   ros__parameters:
     arm_id: fr3
 
+# My Controllers
 joint_velocity_controller:
   ros__parameters:
     joints:
@@ -60,3 +112,98 @@ joint_trajectory_controller:
       fr3_joint5: { p: 250., d: 10., i: 0., i_clamp: 1. }
       fr3_joint6: { p: 150., d: 10., i: 0., i_clamp: 1. }
       fr3_joint7: { p: 50., d: 5., i: 0., i_clamp: 1. }
+
+cartesian_pose_controller:
+  ros__parameters:
+    joints:
+      - fr3_joint1
+      - fr3_joint2
+      - fr3_joint3
+      - fr3_joint4
+      - fr3_joint5
+      - fr3_joint6
+      - fr3_joint7
+
+    command_interfaces:
+      - position
+
+    state_interfaces:
+      - position
+      - velocity
+
+cartesian_vel_controller:
+  ros__parameters:
+    joints:
+      - fr3_joint1
+      - fr3_joint2
+      - fr3_joint3
+      - fr3_joint4
+      - fr3_joint5
+      - fr3_joint6
+      - fr3_joint7
+
+    command_interfaces:
+      - position
+
+    state_interfaces:
+      - position
+      - velocity
+
+# FRANKA CONTROLLERS
+joint_impedance_with_ik_example_controller:
+  ros__parameters:
+    k_gains:
+      - 600.0
+      - 600.0
+      - 600.0
+      - 600.0
+      - 250.0
+      - 150.0
+      - 50.0
+    d_gains:
+      - 30.0
+      - 30.0
+      - 30.0
+      - 30.0
+      - 10.0
+      - 10.0
+      - 5.
+
+joint_impedance_example_controller:
+  ros__parameters:
+    k_gains:
+      - 24.0
+      - 24.0
+      - 24.0
+      - 24.0
+      - 10.0
+      - 6.0
+      - 2.0
+    d_gains:
+      - 2.0
+      - 2.0
+      - 2.0
+      - 1.0
+      - 1.0
+      - 1.0
+      - 0.5
+
+move_to_start_example_controller:
+  ros__parameters:
+    k_gains:
+      - 600.0
+      - 600.0
+      - 600.0
+      - 600.0
+      - 250.0
+      - 150.0
+      - 50.0
+    d_gains:
+      - 30.0
+      - 30.0
+      - 30.0
+      - 30.0
+      - 10.0
+      - 10.0
+      - 5.
+

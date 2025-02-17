@@ -1,9 +1,0 @@
-<library path="my_controllers">
-  <class name="my_controllers/TestController"
-         type="my_controllers::TestController"
-         base_class_type="controller_interface::ControllerInterface">
-    <description>
-      Controller test.
-    </description>
-  </class>
-</library>
