@@ -1,0 +1,25 @@
+{
+  "configurations": [
+    {
+      "browse": {
+        "databaseFilename": "${default}",
+        "limitSymbolsToIncludedHeaders": false
+      },
+      "includePath": [
+        "/opt/ros/humble/include/**",
+        "/usr/include/eigen3",
+        "${workspaceFolder}/install/**",
+        "${workspaceFolder}/install/franka_msgs/include/**",
+        "${workspaceFolder}/install/franka_semantic_components/include/**",
+        "${workspaceFolder}/src/adg_ros2/robot_arm/fr3_controllers/include/**",
+        "${workspaceFolder}/install/fr3_controllers/include/**"
+      ],
+      "name": "ROS",
+      "intelliSenseMode": "gcc-x64",
+      "compilerPath": "/usr/bin/gcc",
+      "cStandard": "gnu11",
+      "cppStandard": "c++14"
+    }
+  ],
+  "version": 4
+}
