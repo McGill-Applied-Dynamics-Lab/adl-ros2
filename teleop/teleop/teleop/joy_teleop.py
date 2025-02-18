@@ -73,7 +73,7 @@ class JoyTeleop(Node):
         self._ee_center = np.zeros(3)  # Center position for the ee
         self._ee_des = np.zeros(3)  # Desired end effector position
         self._position_scale = 0.1  # Scale for the position of the joystick to the robot
-        self._vel_scale = 0.001  # Scale for the velocity of the joystick to the robot
+        self._vel_scale = 0.1  # Scale for the velocity of the joystick to the robot
 
         #! Init functions
         self._init_subscribers()

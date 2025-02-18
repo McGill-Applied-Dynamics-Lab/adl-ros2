@@ -117,6 +117,11 @@ RUN usermod -a -G realtime $USERNAME
 # COPY entrypoint.sh /entrypoint.sh
 # RUN chmod +x /entrypoint.sh
 # ENTRYPOINT ["/bin/bash", "/entrypoint.sh"]
+# Copy the requirements file
+COPY requirements.txt /tmp/requirements.txt
+
+# Install Python dependencies
+RUN pip install -r /tmp/requirements.txt
 
 #! Environment variables
 ENV PATH=/opt/openrobots/bin:$PATH \
