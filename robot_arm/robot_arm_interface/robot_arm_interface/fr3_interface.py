@@ -17,6 +17,7 @@ from franka_msgs.msg import FrankaRobotState
 
 from control_msgs.action import FollowJointTrajectory
 from arm_interfaces.action import Empty, GotoJoints, GotoPose, GotoJointVelocities, GotoEEVelocity
+from arm_interfaces.msg import Teleop
 
 from tf2_ros import TransformListener, Buffer
 
@@ -293,7 +294,7 @@ class FR3Interface(Node):
         self._prev_ts = self._start_time
 
         # Gains
-        self._kP = 1 * np.ones(3)
+        self._kP = 2 * np.ones(3)
         self._kD = 0.1 * np.ones(3)
 
         #! Subscribers
@@ -471,6 +472,10 @@ class FR3Interface(Node):
         robot_state_topic = "/franka_robot_state_broadcaster/robot_state"
         self._robot_state__sub = self.create_subscription(FrankaRobotState, robot_state_topic, self._robot_state_callback, 10)
 
+        # --- teleop ---
+        teleop_topic = "/teleop/ee_des"
+        self._teleop_sub = self.create_subscription(Teleop, teleop_topic, self._teleop_callback, 10)
+
         self.get_logger().info("Subscribers initialized")
 
     def destroy(self):
@@ -526,6 +531,11 @@ class FR3Interface(Node):
         # inertias...
 
         # errors...
+
+        # #! Print
+        # print(f"EE Pose: {self.o_t_ee.pose.position.x:<6.4f}, {self.o_t_ee.pose.position.y:<6.4f}, {self.o_t_ee.pose.position.z:<6.4f}")
+
+        #! Commands
         # commanded_position = self.o_t_ee_c.pose.position
         _curr_ts = rclpy.time.Time.from_msg(self.o_dp_ee_c.header.stamp)
         commanded_ee_vel = self.o_dp_ee_c.twist
@@ -542,6 +552,7 @@ class FR3Interface(Node):
         self._prev_dx = commanded_ee_vel_x
         self._prev_ddx = commanded_ee_accel_x
 
+        #! Initialize
         if not self._is_state_initialialized:
             self._start_pose.pose.position.x = self.o_t_ee.pose.position.x
             self._start_pose.pose.position.y = self.o_t_ee.pose.position.y
@@ -557,7 +568,7 @@ class FR3Interface(Node):
 
             self._start_pose.header.stamp = self.get_clock().now().to_msg()
 
-            # Set goal pose #TODO: Remove (get from topic)
+            # Set goal pose
             self._goal_pose.header = self._start_pose.header
             self._goal_pose.pose.position.x = self._start_pose.pose.position.x #- 0.2
             self._goal_pose.pose.position.y = self._start_pose.pose.position.y # + 0.1
@@ -573,7 +584,6 @@ class FR3Interface(Node):
         q = np.array(joint_msg.position)
         q = q[:7]  # Remove the fingers
         self._robot_arm.state.q = q
-
 
     def _tf_callback(self):
         try:
@@ -618,19 +628,23 @@ class FR3Interface(Node):
         # self.get_logger().info(f"rviz: {rpy_rviz}\tpy: {rpy_py}")
         # self.get_logger().info(f"EE Orientation error: {rpy_rviz - rpy_py}")
 
+    def _teleop_callback(self, teleop_msg: PoseStamped):
+        """Read the teleop message and update the goal pose
+
+        Args:
+            teleop_msg (PoseStamped): The teleop message
+        """
+        # Set goal pose
+        self._goal_pose.header = teleop_msg.header
+        self._goal_pose.pose = teleop_msg.pose
+
     # Publishers
     def _publish_ee_pose(self):
-        ee_position = self._robot_arm.state.ee_position
-        ee_quaternion = self._robot_arm.state.ee_quaternion
+        # ee_position = self._robot_arm.state.ee_position
+        # ee_quaternion = self._robot_arm.state.ee_quaternion
 
-        self._pose_msg.pose.position.x = ee_position[0]
-        self._pose_msg.pose.position.y = ee_position[1]
-        self._pose_msg.pose.position.z = ee_position[2]
-
-        self._pose_msg.pose.orientation.x = ee_quaternion[0]
-        self._pose_msg.pose.orientation.y = ee_quaternion[1]
-        self._pose_msg.pose.orientation.z = ee_quaternion[2]
-        self._pose_msg.pose.orientation.w = ee_quaternion[3]
+        self._pose_msg.header.stamp = self.get_clock().now().to_msg()
+        self._pose_msg.pose = self.o_t_ee.pose
 
         # self.get_logger().info(f"Publishing ee pose: {ee_position}")
         self._pose_pub.publish(self._pose_msg)
@@ -716,7 +730,7 @@ class FR3Interface(Node):
 
         desired_vel = self._kP * error - self._kD * dx_ee
 
-        print(f"x_ee_des: {x_ee_des[0]:<6.4f} x_ee: {x_ee[0]:<6.4f} dx_ee: {dx_ee[0]:<6.4f} error: {error[0]:<6.4f} desired_vel: {desired_vel[0]:<6.4f}")
+        # print(f"x_ee_des: {x_ee_des[0]:<6.4f} x_ee: {x_ee[0]:<6.4f} dx_ee: {dx_ee[0]:<6.4f} error: {error[0]:<6.4f} desired_vel: {desired_vel[0]:<6.4f}")
 
 
         self._cartesian_vel_cmd_msg.twist.linear.x = desired_vel[0]

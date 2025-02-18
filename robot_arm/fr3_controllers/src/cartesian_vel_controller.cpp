@@ -214,7 +214,7 @@ controller_interface::return_type CartesianVelController::update(const rclcpp::T
   ddx_ee_c_ += new_jerk * dt;
   dx_ee_c_ += ddx_ee_c_ * dt;
 
-  print_robot_states();
+  // print_robot_states();
 
   if (franka_cartesian_velocity_->setCommand(dx_ee_c_, new_ang_vel))
   {
