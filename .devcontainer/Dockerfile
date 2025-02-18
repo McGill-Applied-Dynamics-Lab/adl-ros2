@@ -47,27 +47,27 @@ RUN apt-get update && \
     # libignition-gazebo6-dev \
     libpoco-dev \
     # ros-humble-ackermann-msgs \
-    # ros-humble-ament-cmake \
-    # ros-humble-ament-cmake-clang-format \
-    # ros-humble-ament-cmake-clang-tidy \
-    # ros-humble-control-msgs \
-    # ros-humble-control-toolbox \
-    # ros-humble-controller-interface \
-    # ros-humble-controller-manager \
+    ros-humble-ament-cmake \
+    ros-humble-ament-cmake-clang-format \
+    ros-humble-ament-cmake-clang-tidy \
     # ros-humble-gazebo-ros \
     # ros-humble-generate-parameter-library \
-    # ros-humble-geometry-msgs \
-    # ros-humble-hardware-interface \
+    ros-humble-control-toolbox \
+    ros-humble-controller-interface \
+    ros-humble-control-msgs \
+    ros-humble-controller-manager \
+    ros-humble-geometry-msgs \
+    ros-humble-hardware-interface \
     # ros-humble-hardware-interface-testing \
     # ros-humble-joint-state-broadcaster \
     # ros-humble-joint-state-publisher-gui \
     # ros-humble-launch-testing \
     # ros-humble-moveit \
     # ros-humble-realtime-tools \
-    # ros-humble-ros2-control \
-    # ros-humble-ros2-control-test-assets \
-    # ros-humble-ros2-controllers \
-    # ros-humble-sensor-msgs \
+    ros-humble-ros2-control \
+    ros-humble-ros2-control-test-assets \
+    ros-humble-ros2-controllers \
+    ros-humble-sensor-msgs \
     # ros-humble-xacro \
     # ros-humble-ros-gz \
     # ros-humble-topic-based-ros2-control \

@@ -58,21 +58,12 @@ def force_restitution(center, radius, device_pos, stiffness):
         return force
 
 
-# helper function calculates the velocity to apply to the drone if the device is in the vel-ctrl region
 def velocity_applied(center, radius, device_pos, Kd):
-    distance = math.sqrt(sum([(device_pos[i] - center[i]) ** 2 for i in range(3)]))
+    # helper function calculates the velocity to apply to the drone if the device is in the vel-ctrl region
+    distance = np.sqrt(sum([(device_pos[i] - center[i]) ** 2 for i in range(3)]))
     direction = [(device_pos[i] - center[i]) / distance for i in range(3)]
     velocity = [direction[i] * ((distance - radius) ** 3) * Kd for i in range(3)]
     return velocity
-
-
-# # helper function checks if the end effector is within the pos-ctrl region
-# def pos_check(center, device_pos, r_pos):
-#     distance = math.sqrt(sum([(device_pos[i] - center[i]) ** 2 for i in range(3)]))
-#     if distance < r_pos:
-#         return True
-#     else:
-#         return False
 
 
 def np2ros(array: np.ndarray) -> Vector3:
@@ -252,29 +243,30 @@ class Inverse3(Node):
         # self._forces = [restitution_forces[i] + contact_forces[i] for i in range(3)]
         self._forces = restitution_forces + self._contact_forces
 
-        in_pos_ctl_region = close_to_point(self._workspace_center, self._raw_positions, self._R)
+        #! Velocity control region
+        # in_pos_ctl_region = close_to_point(self._workspace_center, self._raw_positions, self._R)
 
-        # vel-ctl region
-        if not in_pos_ctl_region:
-            # get the velocity of movement in vel-ctl region
-            Va = velocity_applied(self._workspace_center, self._R, self._raw_positions, 100)
+        # # vel-ctl region
+        # if not in_pos_ctl_region:
+        #     # get the velocity of movement in vel-ctl region
+        #     Va = velocity_applied(self._workspace_center, self._R, self._raw_positions, 100)
 
-            # magVa = math.sqrt(Va[0] * Va[0] + Va[1] * Va[1] + Va[2] * Va[2])
-            Va_norm = np.linalg.norm(Va)
+        #     # magVa = math.sqrt(Va[0] * Va[0] + Va[1] * Va[1] + Va[2] * Va[2])
+        #     Va_norm = np.linalg.norm(Va)
 
-            if Va_norm > self._maxVa:
-                # Va = [(self._maxVa / Va_norm) * Va[0], (self._maxVa / Va_norm) * Va[1], (self._maxVa / Va_norm) * Va[2]]
+        #     if Va_norm > self._maxVa:
+        #         # Va = [(self._maxVa / Va_norm) * Va[0], (self._maxVa / Va_norm) * Va[1], (self._maxVa / Va_norm) * Va[2]]
 
-                Va = self._maxVa / Va_norm * Va
+        #         Va = self._maxVa / Va_norm * Va
 
-            # self._velocity_ball_center = [(self._velocity_ball_center[i] + Va[i]) for i in range(3)]
-            self._velocity_ball_center += Va
+        #     # self._velocity_ball_center = [(self._velocity_ball_center[i] + Va[i]) for i in range(3)]
+        #     self._velocity_ball_center += Va
 
         #! Publish the Inverse3 state
         self._i3_state_msg.header.stamp = self.get_clock().now().to_msg()
 
         self._i3_state_msg.pose.position = np2ros(self._des_ee_position)
-        self._i3_state_msg.wrench.force = np2ros(self._forces)
+        self._i3_state_msg.twist.linear = np2ros(self._velocities)
 
         self._i3_state_pub.publish(self._i3_state_msg)
 
