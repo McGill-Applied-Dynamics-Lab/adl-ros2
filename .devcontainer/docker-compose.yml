@@ -31,3 +31,6 @@ services:
       rtprio: 99
       rttime: -1
       memlock: 8428281856
+    device_cgroup_rules:
+      - 'c *:* rmw'
+

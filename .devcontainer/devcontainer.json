@@ -30,26 +30,6 @@
             ]
         }
     },
-    // "extensions": [
-    //             // Python extensions
-    //     "ms-python.python",
-    //     "ms-python.debugpy",
-    //     "charliermarsh.ruff",
-    //     //
-    //     "ms-iot.vscode-ros",
-    //     "tamasfe.even-better-toml",
-    //     "ms-azuretools.vscode-docker",
-    //     "github.vscode-pull-request-github",
-    //     "mhutchie.git-graph",
-    //     // C++
-    //     "ms-vscode.cpptools",
-    //     "ms-vscode.cpptools-extension-pack",
-    //     "ms-vscode.cmake-tools",
-    //     "xaver.clang-format",
-    //     "josetr.cmake-language-support-vscode",
-    //     "twxs.cmake",
-    //     "cheshirekow.cmake-format",
-    // ],
     "containerEnv": {
         "ROS_AUTOMATIC_DISCOVERY_RANGE": "LOCALHOST",
         "ROS_DOMAIN_ID": "01"
@@ -58,5 +38,8 @@
         "source=/tmp/.X11-unix,target=/tmp/.X11-unix,type=bind,consistency=cached",
         "source=/dev/dri,target=/dev/dri,type=bind,consistency=cached"
     ],
+    "runArgs": [
+        "--device=/dev/input/js0", // Pass the joystick device
+      ],
     // "postCreateCommand": "pip install -e python/robotic_arm_controller"
 }

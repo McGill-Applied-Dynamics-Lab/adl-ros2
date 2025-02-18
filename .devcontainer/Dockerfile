@@ -6,9 +6,9 @@ ARG USER_UID=1000
 ARG USER_GID=1000
 ARG USERNAME=user
 
-ARG WS_FOLDER=ros2_ws
+ARG WS_FOLDER=/ros2_ws
 
-# Add User
+#! Add User
 RUN groupadd --gid $USER_GID $USERNAME \
     && useradd --uid $USER_UID --gid $USER_GID -m $USERNAME \
     && mkdir -p -m 0700 /run/$USERNAME/"${USER_UID}" \
@@ -22,7 +22,7 @@ RUN groupadd --gid $USER_GID $USERNAME \
     && echo $USERNAME ALL=\(root\) NOPASSWD:ALL > /etc/sudoers.d/$USERNAME \
     && chmod 0440 /etc/sudoers.d/$USERNAME
 
-# My packages
+#! My packages
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
@@ -34,8 +34,12 @@ RUN apt-get update && \
 	&& rm -rf /var/lib/apt/lists/*
 ENV DEBIAN_FRONTEND=
 
+# Setup jtest-gtk
+USER $USERNAME
+RUN mkdir -p /home/user/.config/jstest-gtk
+USER root
 
-# ROS Packages
+#! ROS Packages
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
@@ -67,18 +71,21 @@ RUN apt-get update && \
     # ros-humble-xacro \
     # ros-humble-ros-gz \
     # ros-humble-topic-based-ros2-control \
+    ros-humble-joy \
     && rm -rf /var/lib/apt/lists/*
 ENV DEBIAN_FRONTEND=
 
-# Piniocchio
-ENV DEBIAN_FRONTEND=noninteractive
-RUN apt-get update && \
-    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-    ros-humble-pinocchio \
-    && rm -rf /var/lib/apt/lists/*
-ENV DEBIAN_FRONTEND=
+#! Pinocchio
+RUN mkdir -p /etc/apt/keyrings && \
+    curl -fsSL http://robotpkg.openrobots.org/packages/debian/robotpkg.asc | tee /etc/apt/keyrings/robotpkg.asc && \
+    echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/robotpkg.asc] http://robotpkg.openrobots.org/packages/debian/pub $(lsb_release -cs) robotpkg" \
+    | tee /etc/apt/sources.list.d/robotpkg.list && \
+    apt-get update && \
+    apt-get install -y robotpkg-pinocchio && \
+    apt-get clean -y && \
+    rm -rf /var/lib/apt/lists/*
 
-# libfranka
+#! libfranka
 RUN mkdir /home/user/source_code
 RUN cd /home/user/source_code && git clone https://github.com/frankaemika/libfranka.git \
     && cd libfranka \
@@ -91,30 +98,46 @@ RUN cd /home/user/source_code && git clone https://github.com/frankaemika/libfra
     && cpack -G DEB \workspaces \
     && sudo dpkg -i libfranka*.deb
 
-# RUN addgroup realtime
-# RUN usermod -a -G realtime $USERNAME
+RUN addgroup realtime
+RUN usermod -a -G realtime $USERNAME
 
-# # Install of python
+# #! Dependencies
+# # Initialize rosdep
+# RUN rosdep init || echo "rosdep already initialized" && \
+#     rosdep update
+
+# # USER $USERNAMEs
+# # Install dependencies using rosdep
+# RUN rosdep install --from-paths /${WS_FOLDER}/src --ignore-src -y --skip-keys libfranka
+# USER root
+
+# #! Python
 # # RUN pip install -e python/robotic_arm_controller 
 # COPY entrypoint.sh /entrypoint.sh
 # RUN chmod +x /entrypoint.sh
 # ENTRYPOINT ["/bin/bash", "/entrypoint.sh"]
 
-# Setup jtest-gtk
-USER $USERNAME
-RUN mkdir -p /home/user/.config/jstest-gtk
+#! Environment variables
+ENV PATH=/opt/openrobots/bin:$PATH \
+    SHELL=/bin/bash \
+    XDG_RUNTIME_DIR=/run/user/"${USER_UID}"  \
+    WS_FOLDER=${WS_FOLDER}
+    # PKG_CONFIG_PATH=/opt/openrobots/lib/pkgconfig:$PKG_CONFIG_PATH \
+    # LD_LIBRARY_PATH=/opt/openrobots/lib:$LD_LIBRARY_PATH \
+    # PYTHONPATH=/opt/openrobots/lib/python3.10/site-packages:$PYTHONPATH \
+    # CMAKE_PREFIX_PATH=/opt/openrobots/lib/cmake:$CMAKE_PREFIX_PATH
 
-# Environment setup
-ENV SHELL "/bin/bash"
-ENV XDG_RUNTIME_DIR=/run/user/"${USER_UID}"
+#! Entrypoint script
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+# ENTRYPOINT ["/entrypoint.sh"]
+
+USER $USERNAME
+# RUN echo "export GZ_SIM_RESOURCE_PATH=${GZ_SIM_RESOURCE_PATH}:/ros2_ws/src/" >> ~/.bashrc
+RUN echo "source /opt/ros/humble/setup.bash" >> ~/.bashrc
+RUN echo "source ${WS_FOLDER}/install/setup.bash" >> ~/.bashrc
+
+# WORKDIR ${WS_FOLDER}
 
 # set the default user to the newly created user
-USER $USERNAME
 CMD ["/bin/bash"]
-
-# RUN echo "export GZ_SIM_RESOURCE_PATH=${GZ_SIM_RESOURCE_PATH}:/ros2_ws/src/" >> ~/.bashrc
-
-# RUN echo "source /opt/ros/humble/setup.bash" >> ~/.bashrc
-# RUN echo "source /ros2_ws/install/setup.bash" >> ~/.bashrc
-
-# WORKDIR /ros2_ws

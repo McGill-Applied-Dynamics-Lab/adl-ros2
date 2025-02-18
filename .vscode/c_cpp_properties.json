@@ -1,0 +1,50 @@
+{
+  "configurations": [
+    {
+      "browse": {
+        "databaseFilename": "${default}",
+        "limitSymbolsToIncludedHeaders": false
+      },
+      "includePath": [
+        "/workspaces/install/ros2_control_demo_example_9/include/**",
+        "/workspaces/install/ros2_control_demo_example_8/include/**",
+        "/workspaces/install/ros2_control_demo_example_7/include/**",
+        "/workspaces/install/ros2_control_demo_example_6/include/**",
+        "/workspaces/install/ros2_control_demo_example_5/include/**",
+        "/workspaces/install/ros2_control_demo_example_4/include/**",
+        "/workspaces/install/ros2_control_demo_example_3/include/**",
+        "/workspaces/install/ros2_control_demo_example_2/include/**",
+        "/workspaces/install/ros2_control_demo_example_14/include/**",
+        "/workspaces/install/ros2_control_demo_example_12/include/**",
+        "/workspaces/install/ros2_control_demo_example_11/include/**",
+        "/workspaces/install/ros2_control_demo_example_10/include/**",
+        "/workspaces/install/ros2_control_demo_example_1/include/**",
+        "/workspaces/install/joint_trajectory_controller/include/**",
+        "/workspaces/install/franka_robot_state_broadcaster/include/**",
+        "/workspaces/install/franka_example_controllers/include/**",
+        "/workspaces/install/franka_semantic_components/include/**",
+        "/workspaces/install/franka_ign_ros2_control/include/**",
+        "/workspaces/install/franka_hardware/include/**",
+        "/workspaces/install/franka_msgs/include/**",
+        "/workspaces/install/arm_interfaces/include/**",
+        "/opt/ros/humble/include/**",
+        "/workspaces/src/franka_ros2/franka_example_controllers/include/**",
+        "/workspaces/src/franka_ros2/franka_gazebo/franka_ign_ros2_control/include/**",
+        "/workspaces/src/franka_ros2/franka_gripper/include/**",
+        "/workspaces/src/franka_ros2/franka_hardware/include/**",
+        "/workspaces/src/franka_ros2/franka_robot_state_broadcaster/include/**",
+        "/workspaces/src/franka_ros2/franka_semantic_components/include/**",
+        "/workspaces/src/franka_ros2/joint_trajectory_controller/include/**",
+        "/workspaces/src/robot_arm_ros/arm_interfaces/include/**",
+        "/workspaces/src/robot_arm_ros/my_controllers/include/**",
+        "/usr/include/**"
+      ],
+      "name": "ROS",
+      "intelliSenseMode": "gcc-x64",
+      "compilerPath": "/usr/bin/gcc",
+      "cStandard": "gnu11",
+      "cppStandard": "c++14"
+    }
+  ],
+  "version": 4
+}

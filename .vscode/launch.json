@@ -1,0 +1,65 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Python: Current File",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${file}",
+            "console": "integratedTerminal",
+            // "console": "externalTerminal",
+            // "sudo": true
+        },
+        {
+            "name": "Python Debugger: Remote Attach",
+            "type": "debugpy",
+            "request": "attach",
+            "connect": {
+                "host": "localhost",
+                "port": 5678
+            },
+            "pathMappings": [
+                {
+                    "localRoot": "${workspaceFolder}",
+                    "remoteRoot": "."
+                }
+            ]
+        },
+        {
+            "name": "Python: robot_arm_test",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "src/adg_ros2/robot_arm/robot_arm_client/scripts/robot_arm_test.py",
+            "console": "integratedTerminal",
+        },
+        {
+            "name": "Node: fr3_interface",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "src/adg_ros2/robot_arm/robot_arm_interface/robot_arm_interface/fr3_interface.py",
+            "console": "integratedTerminal",
+        },
+        {
+            "name": "ROS2 Launch: franka.launch.py",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "/opt/ros/humble/bin/ros2",  // Path to the ros2 executable
+            "args": [
+              "launch",
+              "robot_arm_bringup",
+              "franka.launch.py",
+              "hw_type:=fake"
+            ],
+            "console": "integratedTerminal",
+            // "env": {
+            //   "PYTHONPATH": "${workspaceFolder}/install/my_package/lib/python3.8/site-packages:${env:PYTHONPATH}",
+            //   "ROS_DOMAIN_ID": "0"       // Optional: Set ROS_DOMAIN_ID if needed
+            // },
+            // "cwd": "${workspaceFolder}"  // Set the working directory
+        }
+
+    ]
+}
