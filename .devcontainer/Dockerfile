@@ -71,6 +71,7 @@ RUN apt-get update && \
     # ros-humble-xacro \
     # ros-humble-ros-gz \
     # ros-humble-topic-based-ros2-control \
+    ros-humble-pinocchio \
     ros-humble-joy \
     && rm -rf /var/lib/apt/lists/*
 ENV DEBIAN_FRONTEND=
