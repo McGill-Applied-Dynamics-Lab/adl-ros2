@@ -64,6 +64,7 @@ class I3Teleop(Node):
         # Joystick
         self._start_time = None
         self._is_calibrated = True  # TODO: Needed?
+        self._is_initialized = False
 
         self._i3_position = np.zeros(3)  # Position of the i3
         self._i3_velocities = np.zeros(3)  # Velocities of the i3
@@ -97,8 +98,10 @@ class I3Teleop(Node):
         self._robot_sub = self.create_subscription(PoseStamped, robot_topic, self._robot_topic_callback, 10)
 
         # --- contact forces ---
-        ...
-        # TODO: Add contact forces subscriber
+        contact_forces_topic = "/franka_robot_state_broadcaster/external_wrench_in_base_frame"
+        self._contact_forces_sub = self.create_subscription(
+            WrenchStamped, contact_forces_topic, self._contact_forces_topic_callback, 10
+        )
 
     def _init_publishers(self):
         self.get_logger().info("Initializing publishers...")
@@ -140,9 +143,22 @@ class I3Teleop(Node):
         self._ee_pose = np.array([msg.pose.position.x, msg.pose.position.y, msg.pose.position.z])
         # self.get_logger().info(f"Robot EE: {self._ee_des}")
 
-        # if self._calibrating:
-        #     self._ee_center += self._ee_pose
-        #     self._n_robot_cal_msgs += 1
+        if not self._is_initialized:
+            self._ee_center = self._ee_pose
+            # self._n_robot_cal_msgs += 1
+            self._is_initialized = True
+            self.get_logger().info(f"Robot center: {self._ee_center}")
+
+    def _contact_forces_topic_callback(self, msg: WrenchStamped):
+        """
+        Callback for the '/franka_broadcaster/...' topic.
+
+        Parameters
+        ----------
+        msg : WrenchStamped
+            Message received from the '/franka_broadcaster/...' topic.
+        """
+        self._i3_forces = ros2np(msg.wrench.force)
 
     def _pub_ee_des(self):
         """
@@ -200,7 +216,10 @@ class I3Teleop(Node):
             ee_des = self._compute_ee_des()
 
             self._ee_cmd_msg.control_mode = ControlModes.POSITION.value
-            self._ee_cmd_msg.ee_des.position = np2ros(ee_des)
+            # self._ee_cmd_msg.ee_des.position = np2ros(ee_des)
+            self._ee_cmd_msg.ee_des.position.x = ee_des[0]
+            self._ee_cmd_msg.ee_des.position.y = ee_des[1]
+            self._ee_cmd_msg.ee_des.position.z = ee_des[2]
 
             self._ee_cmd_msg.ee_vel_des = Twist()
 
@@ -272,11 +291,10 @@ def main(args=None):
     node = I3Teleop()
 
     try:
-        node.get_logger().info("i3_teleop launched, end with CTRL-C")
-        node.spin()
+        node.get_logger().info("joy_teleop launched, end with CTRL-C")
+        rclpy.spin(node)
 
     except KeyboardInterrupt:
-        node.stop_robot()
         node.get_logger().info("KeyboardInterrupt, shutting down.\n")
 
     finally:

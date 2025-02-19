@@ -1,7 +1,9 @@
+from typing import Literal
 import rclpy
 from rclpy.node import Node  # node class makes a ROS2 Node
+from rclpy.executors import MultiThreadedExecutor
 
-from geometry_msgs.msg import WrenchStamped, Vector3
+from geometry_msgs.msg import WrenchStamped, Vector3, Point
 from teleop_interfaces.msg import Inverse3State
 
 # libraries needed for Inverse3
@@ -12,7 +14,41 @@ import serial.tools.list_ports
 # import time
 # import math
 
+
 import numpy as np
+
+np.set_printoptions(precision=2)
+
+# TODO: Clean this, maybe in a function?
+#! Connect to the Inverse3 device
+print("CONNECTING TO INVERSE3 DEVICE...")
+ports = serial.tools.list_ports.comports()
+candidates = []
+for port, desc, hwid in sorted(ports):
+    print("{}: {} [{}]".format(port, desc, hwid))
+    if "USB Serial" in desc:
+        candidates.append(port)
+# ask the user for the port to use:
+if len(candidates) == 1:
+    port = candidates[0]
+elif len(candidates) == 0:
+    print("No USB Serial ports found.")
+    # raise ValueError("No USB Serial ports found.")
+else:
+    print("More than one USB Serial port found.")
+    port = input("Enter the port to use: ")
+
+try:
+    com = HaplyHardwareAPI.SerialStream(port)
+
+except ValueError:
+    print("Error opening port: {}".format(ValueError))
+
+I3 = HaplyHardwareAPI.Inverse3(com)
+response_dict = I3.device_wakeup_dict()
+print(response_dict["device_id"])
+print("Made handshake with device")
+print("Inverse3 initialized!")
 
 
 #! Inverse3 helper functions
@@ -66,7 +102,7 @@ def velocity_applied(center, radius, device_pos, Kd):
     return velocity
 
 
-def np2ros(array: np.ndarray) -> Vector3:
+def np2ros(array: np.ndarray, msg_type: Literal["Vector3", "Point"] = "Vector3") -> Vector3 | Point:
     """
     Converts a numpy array to a Vector 3 ROS message.
 
@@ -81,15 +117,23 @@ def np2ros(array: np.ndarray) -> Vector3:
     if not isinstance(array, np.ndarray):
         raise ValueError("Input must be a numpy array.")
 
-    msg = Vector3()
-    msg.x = array[0]
-    msg.y = array[1]
-    msg.z = array[2]
+    if msg_type == "Vector3":
+        msg = Vector3()
+        msg.x = array[0]
+        msg.y = array[1]
+        msg.z = array[2]
+    elif msg_type == "Point":
+        msg = Point()
+        msg.x = array[0]
+        msg.y = array[1]
+        msg.z = array[2]
+    else:
+        raise ValueError("msg_type must be 'Vector3' or 'Point'.")
 
     return msg
 
 
-def ros2np(msg: Vector3) -> np.ndarray:
+def ros2np(msg: Vector3 | Point) -> np.ndarray:
     """
     Converts a Vector 3 ROS message to a numpy array.
 
@@ -104,28 +148,29 @@ def ros2np(msg: Vector3) -> np.ndarray:
     return array
 
 
-class Inverse3(Node):
+class Inverse3Node(Node):
     def __init__(self):
         super().__init__("inverse3_node")
         self.get_logger().info("Initializing inverse3_node...")
 
         #! Attributes
         self._i3: HaplyHardwareAPI.Inverse3 = None
+        self._is_initialized = False
 
-        self._positions = np.zeros(3)
-        self._raw_positions = np.zeros(3)
-        self._velocities = np.zeros(3)
+        self._ws_position = np.zeros(3)  # position of the I3, in the ws
+        self._raw_position = np.zeros(3)  # raw position from the Inverse3 device
+
+        self._velocity = np.zeros(3)
+
         self._forces = np.zeros(3)
-
-        self._des_ee_position = np.zeros(3)
         self._contact_forces = np.zeros(3)  # contact forces, from the ROS topic
 
         # Parameters
-        self._R = 0.05  # radius of the pos-ctl region
+        self._workspace_center = np.array([0.04, -0.17, 0.16])  # center of the ws
+        self._pos_radius = 0.05  # radius of the pos-ctl region
         self._ks = 50  # stiffness for the restitution force
-        self._scale = 10  # scales the movement of the end effector
-        self._velocity_ball_center = [0, 0, 0]  # the center of velocity_ball
-        self._workspace_center = [0.04, -0.17, 0.16]  # center of the physical workspace
+        self._scale = 1  # scale between the i3 position and the published position
+        self._velocity_ball_center = np.array([0, 0, 0])  # the center of velocity_ball
         self._maxVa = 0.0005  # maximum velocity in the vel-ctl region
         self._force_cap = 1
 
@@ -139,46 +184,52 @@ class Inverse3(Node):
         """
         Initialize the Inverse3 device.
         """
-        #! Connect to the Inverse3 device
-        ports = serial.tools.list_ports.comports()
-        candidates = []
-        for port, desc, hwid in sorted(ports):
-            print("{}: {} [{}]".format(port, desc, hwid))
-            if "USB Serial" in desc:
-                candidates.append(port)
-        # ask the user for the port to use:
-        if len(candidates) == 1:
-            port = candidates[0]
-        elif len(candidates) == 0:
-            print("No USB Serial ports found.")
-            # raise ValueError("No USB Serial ports found.")
-        else:
-            print("More than one USB Serial port found.")
-            port = input("Enter the port to use: ")
+        # #! Connect to the Inverse3 device
+        # ports = serial.tools.list_ports.comports()
+        # candidates = []
+        # for port, desc, hwid in sorted(ports):
+        #     print("{}: {} [{}]".format(port, desc, hwid))
+        #     if "USB Serial" in desc:
+        #         candidates.append(port)
+        # # ask the user for the port to use:
+        # if len(candidates) == 1:
+        #     port = candidates[0]
+        # elif len(candidates) == 0:
+        #     print("No USB Serial ports found.")
+        #     # raise ValueError("No USB Serial ports found.")
+        # else:
+        #     print("More than one USB Serial port found.")
+        #     port = input("Enter the port to use: ")
 
-        try:
-            com = HaplyHardwareAPI.SerialStream(port)
+        # try:
+        #     com = HaplyHardwareAPI.SerialStream(port)
 
-        except ValueError:
-            print("Error opening port: {}".format(ValueError))
+        # except ValueError:
+        #     print("Error opening port: {}".format(ValueError))
 
-        Inverse3 = HaplyHardwareAPI.Inverse3(com)
-        Response = Inverse3.device_wakeup()
-        print(Response)
-        print("Made handshake with device")
+        # I3 = HaplyHardwareAPI.Inverse3(com)
+        # response_dict = I3.device_wakeup_dict()
+        # print(response_dict["device_id"])
+        # print("Made handshake with device")
 
         #! Move the device to the center of the pos-ctl region
         self.get_logger().info("Moving device to the center of the pos-ctl region...")
         # loop until the device end effector is close enough to the center of the pos-ctl region
-        i3_at_center = close_to_point(self._workspace_center, self._raw_positions, 0.03)
+        i3_at_center = close_to_point(self._workspace_center, self._raw_position, 0.03)
 
         while not i3_at_center:
-            self._raw_positions, self._velocities = Inverse3.end_effector_force(self._forces)
-            self._forces = force_restitution(self._workspace_center, 0.01, self._raw_positions, 10)
-            i3_at_center = close_to_point(self._workspace_center, self._raw_positions, 0.03)
+            self._raw_position, self._velocity = I3.end_effector_force(self._forces)
+            self._raw_position = np.array(self._raw_position)
+            self._velocity = np.array(self._velocity)
 
-            # rclpy.spin_once()  #TODO: Test w/ this
+            self._forces = force_restitution(self._workspace_center, 0.01, self._raw_position, 10)
+            i3_at_center = close_to_point(self._workspace_center, self._raw_position, 0.03)
+            # print(f"At center: {i3_at_center} \tP: {self._raw_positions} \tF: {self._forces}")
 
+            self._log_infos()
+            # rclpy.spin_once(self)  # TODO: Test w/ this
+
+        self._is_initialized = True
         self.get_logger().info("Inverse3 initialized!")
 
     def _init_subscribers(self):
@@ -198,8 +249,8 @@ class Inverse3(Node):
         self.get_logger().info("Initializing publishers...")
 
         # Inverse3 state publisher
-        self._i3_state_topic = "/inverse3/state"
-        self._i3_state_pub = self.create_publisher(Inverse3State, self._i3_state_topic, 10)
+        i3_state_topic = "/inverse3/state"
+        self._i3_state_pub = self.create_publisher(Inverse3State, i3_state_topic, 10)
         self._i3_state_msg = Inverse3State()
         self._ee_cmd_timer = self.create_timer(0.01, self._pub_i3_state)
 
@@ -211,36 +262,34 @@ class Inverse3(Node):
         self._contact_forces = ros2np(msg.wrench.force)
         self._contact_forces = np.clip(self._contact_forces, -self._force_cap, self._force_cap)
 
+        self.get_logger().info(f"Contact forces: {self._contact_forces}")
+
     def _pub_i3_state(self):
         """
         Publishes the state of the Inverse3.
         """
+        # self.get_logger().info("Publishing Inverse3 state...")
         #! Position
-        self._raw_positions, self._velocities = Inverse3.end_effector_force(self._forces)
+        self._raw_position, self._velocity = I3.end_effector_force(self._forces.tolist())
+        self._raw_position = np.array(self._raw_position)
+        self._velocity = np.array(self._velocity)
 
         # map of the workspace into the virtual space
         # positions = [self._scale * (self._raw_positions[i] - self._workspace_center[i]) for i in range(3)]
-        positions = self._scale * (self._raw_positions - self._workspace_center)
+        self._ws_position = self._scale * (self._raw_position - self._workspace_center)
 
         # position of the end effector relative to the velocity_ball
         # abs_positions = [positions[i] + self._velocity_ball_center[i] for i in range(3)]
-        self._des_ee_position = positions + self._velocity_ball_center
+        # self._des_ee_position = positions + self._velocity_ball_center
 
         #! Forces
         # Update the forces for the next iteration
 
         # set the force in the next iteration on the end effector to be the published forces from Vortex
         # (capped since contact forces generated in Vortex can be very large)
-        # restitution_forces = force_restitution(workspace_center, R, raw_positions, ks)
-        restitution_forces = [0, 0, 0]
-        # contact_forces = [
-        #     max(min(force_cap, pub_sub.fx), -force_cap),
-        #     max(min(force_cap, pub_sub.fy), -force_cap),
-        #     max(min(force_cap, pub_sub.fz), -force_cap),
-        # ]
+        restitution_forces = force_restitution(self._workspace_center, self._pos_radius, self._raw_position, self._ks)
 
         # total force on the end effector, applied next iteration
-        # self._forces = [restitution_forces[i] + contact_forces[i] for i in range(3)]
         self._forces = restitution_forces + self._contact_forces
 
         #! Velocity control region
@@ -265,27 +314,43 @@ class Inverse3(Node):
         #! Publish the Inverse3 state
         self._i3_state_msg.header.stamp = self.get_clock().now().to_msg()
 
-        self._i3_state_msg.pose.position = np2ros(self._des_ee_position)
-        self._i3_state_msg.twist.linear = np2ros(self._velocities)
+        self._i3_state_msg.pose.position = np2ros(self._ws_position, msg_type="Point")
+        self._i3_state_msg.twist.linear = np2ros(self._velocity, msg_type="Vector3")
 
         self._i3_state_pub.publish(self._i3_state_msg)
+        self._log_infos()
+
+    def _log_infos(self):
+        """
+        Log the information of the Inverse3.
+        """
+        self.get_logger().info(
+            f"Init: {self._is_initialized}\tPosition: [{self._ws_position[0]:<4.2f}, {self._ws_position[1]:<4.2f}, {self._ws_position[2]:<4.2f}] | Forces: [{self._forces[0]:<4.2f}, {self._forces[1]:<4.2f}, {self._forces[2]:<4.2f}]"
+        )
 
 
 def main(args=None):
     node_name = "inverse3_node"
 
     rclpy.init(args=args)
-    node = Inverse3()
+    node = Inverse3Node()
+
+    # executor = MultiThreadedExecutor()
+    # executor.add_node(node)
 
     try:
         node.get_logger().info(f"{node_name} launched, end with CTRL-C")
         rclpy.spin(node)
+        # executor.spin()
+        print("ALLO")
 
     except KeyboardInterrupt:
         node.get_logger().info("KeyboardInterrupt, shutting down.\n")
 
     finally:
         node.destroy_node()
+
+    print("Shutting down...")
 
 
 if __name__ == "__main__":

@@ -102,6 +102,10 @@ RUN cd /home/user/source_code && git clone https://github.com/frankaemika/libfra
 RUN addgroup realtime
 RUN usermod -a -G realtime $USERNAME
 
+#! Happly
+# Needed to read the device
+RUN usermod -a -G dialout $USERNAME
+
 # #! Dependencies
 # # Initialize rosdep
 # RUN rosdep init || echo "rosdep already initialized" && \
