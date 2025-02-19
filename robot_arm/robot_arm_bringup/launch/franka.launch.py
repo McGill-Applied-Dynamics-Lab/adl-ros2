@@ -252,7 +252,7 @@ def generate_launch_description():
     )
 
     delayed_franka_interface_node = TimerAction(
-        period=2.0,  # Delay in seconds
+        period=1.0,  # Delay in seconds
         actions=[franka_interface_node],
     )
 

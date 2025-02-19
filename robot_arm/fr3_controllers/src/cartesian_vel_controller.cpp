@@ -286,7 +286,7 @@ void CartesianVelController::update_desired_command()
 
   new_cmd_msg_ = false;
 
-  RCLCPP_INFO(get_node()->get_logger(), "Des ee (x, y, z): (%f, %f, %f)", dx_ee_des_(0), dx_ee_des_(1), dx_ee_des_(2));
+  // RCLCPP_INFO(get_node()->get_logger(), "Des ee (x, y, z): (%f, %f, %f)", dx_ee_des_(0), dx_ee_des_(1), dx_ee_des_(2));
 }
 
 void CartesianVelController::update_current_state(double dt)

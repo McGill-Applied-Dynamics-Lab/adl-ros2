@@ -1,3 +1,7 @@
+# Suppress the specific UserWarning about NumPy version
+import warnings
+warnings.filterwarnings("ignore", category=UserWarning, message="A NumPy version >=")
+
 from typing import List, Literal, Tuple
 import rclpy
 from rclpy.node import Node
@@ -48,6 +52,7 @@ import time
 from enum import Enum
 
 # import debugpy  # Import the debugpy module
+
 
 
 class ControllerStateEnum(Enum):
@@ -288,6 +293,7 @@ class FR3Interface(Node):
         self._start_time = self.get_clock().now()
 
         self._goal_pose = PoseStamped()
+        self._teleop_goal_msg = Teleop()
 
         self._prev_dx = 0
         self._prev_ddx = 0
@@ -473,7 +479,7 @@ class FR3Interface(Node):
         self._robot_state__sub = self.create_subscription(FrankaRobotState, robot_state_topic, self._robot_state_callback, 10)
 
         # --- teleop ---
-        teleop_topic = "/teleop/ee_des"
+        teleop_topic = "/teleop/ee_cmd"
         self._teleop_sub = self.create_subscription(Teleop, teleop_topic, self._teleop_callback, 10)
 
         self.get_logger().info("Subscribers initialized")
@@ -575,6 +581,8 @@ class FR3Interface(Node):
             self._goal_pose.pose.position.z = self._start_pose.pose.position.z # -0.1
             self._goal_pose.pose.orientation = self._start_pose.pose.orientation
 
+            self._teleop_goal_msg.ee_des = self._start_pose.pose
+
             self._is_state_initialialized = True
 
     def _joint_state_callback(self, joint_msg):
@@ -634,12 +642,18 @@ class FR3Interface(Node):
         Args:
             teleop_msg (PoseStamped): The teleop message
         """
-        # Set goal pose
-        self._goal_pose.header = teleop_msg.header
-        self._goal_pose.pose = teleop_msg.pose
+        # # Set goal pose
+        # self._goal_pose.header = teleop_msg.header
+        # self._goal_pose.pose = teleop_msg.pose
 
-    # Publishers
+        # 
+        self._teleop_goal_msg = teleop_msg
+
+    # Publieshers
     def _publish_ee_pose(self):
+        if not self._is_state_initialialized:
+            return
+        
         # ee_position = self._robot_arm.state.ee_position
         # ee_quaternion = self._robot_arm.state.ee_quaternion
 
@@ -721,24 +735,35 @@ class FR3Interface(Node):
         # else:
         #     vx = 0.0
 
-        #! PD Control
-        x_ee_des, _ = self.pose_msg_to_array(self._goal_pose.pose)
-        x_ee, _ = self.pose_msg_to_array(self.o_t_ee.pose)
-        dx_ee, _ = self.twist_msg_to_array(self.o_dp_ee_d.twist)
+        #! Teleop control
+        if self._teleop_goal_msg.control_mode == self._teleop_goal_msg.CONTROL_MODE_POSITION:
+            goal_pose: Pose = self._teleop_goal_msg.ee_des
 
-        error = x_ee_des - x_ee
+            # PD Control
+            x_ee_des, _ = self.pose_msg_to_array(goal_pose)
+            x_ee, _ = self.pose_msg_to_array(self.o_t_ee.pose)
+            dx_ee, _ = self.twist_msg_to_array(self.o_dp_ee_d.twist)
 
-        desired_vel = self._kP * error - self._kD * dx_ee
+            error = x_ee_des - x_ee
 
-        # print(f"x_ee_des: {x_ee_des[0]:<6.4f} x_ee: {x_ee[0]:<6.4f} dx_ee: {dx_ee[0]:<6.4f} error: {error[0]:<6.4f} desired_vel: {desired_vel[0]:<6.4f}")
+            desired_vel = self._kP * error - self._kD * dx_ee
+            
+            # print(f"x_ee_des: {x_ee_des[0]:<6.4f} x_ee: {x_ee[0]:<6.4f} error: {error[0]:<6.4f}")
+            # print(f"x_ee_des: {x_ee_des[0]:<6.4f} x_ee: {x_ee[0]:<6.4f} error: {error[0]:<6.4f} desired_vel: {desired_vel[0]:<6.4f} dx_ee: {dx_ee[0]:<6.4f} ")
 
+        elif self._teleop_goal_msg.control_mode == self._teleop_goal_msg.CONTROL_MODE_VEL:
+            goal_twist: Twist = self._teleop_goal_msg.ee_vel_des
 
+            lin_vel_des, ang_vel_des = self.twist_msg_to_array(goal_twist)
+            desired_vel = lin_vel_des.astype(float)
+
+        else:
+            raise ValueError(f"Invalid control mode received from teleop: {self._teleop_goal_msg.control_mode}")
+
+        # Send the desired ee vel
         self._cartesian_vel_cmd_msg.twist.linear.x = desired_vel[0]
         self._cartesian_vel_cmd_msg.twist.linear.y = desired_vel[1]
         self._cartesian_vel_cmd_msg.twist.linear.z = desired_vel[2]
-
-        # self._cartesian_pose_cmd_msg.pose.position.z = self._start_pose.pose.position.z - delta_z
-        # print(f'dx: {delta_x}')
 
         self._cartesian_vel_pub.publish(self._cartesian_vel_cmd_msg)
 
