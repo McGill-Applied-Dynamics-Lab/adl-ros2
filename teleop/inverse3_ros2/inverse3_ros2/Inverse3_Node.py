@@ -226,8 +226,9 @@ class Inverse3Node(Node):
             i3_at_center = close_to_point(self._workspace_center, self._raw_position, 0.03)
             # print(f"At center: {i3_at_center} \tP: {self._raw_positions} \tF: {self._forces}")
 
+            # ? Log
+            self._ws_position = self._scale * (self._raw_position - self._workspace_center)
             self._log_infos()
-            # rclpy.spin_once(self)  # TODO: Test w/ this
 
         self._is_initialized = True
         self.get_logger().info("Inverse3 initialized!")
@@ -262,7 +263,7 @@ class Inverse3Node(Node):
         self._contact_forces = ros2np(msg.wrench.force)
         self._contact_forces = np.clip(self._contact_forces, -self._force_cap, self._force_cap)
 
-        self.get_logger().info(f"Contact forces: {self._contact_forces}")
+        # self.get_logger().info(f"Contact forces: {self._contact_forces}")
 
     def _pub_i3_state(self):
         """

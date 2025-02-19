@@ -1,7 +1,8 @@
 # IDEs
 .idea
-.vscode
 .vs/
+.vscode/
+!**/adg_ros2/.vscode
 
 # Python
 *.pyc

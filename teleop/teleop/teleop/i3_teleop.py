@@ -1,10 +1,11 @@
 # ROS imports
+from typing import Literal
 import rclpy
 from rclpy.node import Node  # node class makes a ROS2 Node
 
 from arm_interfaces.msg import Teleop
 from teleop_interfaces.msg import Inverse3State
-from geometry_msgs.msg import PoseStamped, Pose, TwistStamped, Twist, WrenchStamped, Vector3
+from geometry_msgs.msg import PoseStamped, Pose, TwistStamped, Twist, WrenchStamped, Vector3, Point
 from sensor_msgs.msg import Joy
 
 # Other
@@ -17,7 +18,7 @@ class ControlModes(Enum):
     VELOCITY = 1
 
 
-def np2ros(array: np.ndarray) -> Vector3:
+def np2ros(array: np.ndarray, msg_type: Literal["Vector3", "Point"] = "Vector3") -> Vector3:
     """
     Converts a numpy array to a Vector 3 ROS message.
 
@@ -32,15 +33,23 @@ def np2ros(array: np.ndarray) -> Vector3:
     if not isinstance(array, np.ndarray):
         raise ValueError("Input must be a numpy array.")
 
-    msg = Vector3()
-    msg.x = array[0]
-    msg.y = array[1]
-    msg.z = array[2]
+    if msg_type == "Vector3":
+        msg = Vector3()
+        msg.x = array[0]
+        msg.y = array[1]
+        msg.z = array[2]
+    elif msg_type == "Point":
+        msg = Point()
+        msg.x = array[0]
+        msg.y = array[1]
+        msg.z = array[2]
+    else:
+        raise ValueError("Invalid message type.")
 
     return msg
 
 
-def ros2np(msg: Vector3) -> np.ndarray:
+def ros2np(msg: Vector3 | Point) -> np.ndarray:
     """
     Converts a Vector 3 ROS message to a numpy array.
 
@@ -68,7 +77,12 @@ class I3Teleop(Node):
 
         self._i3_position = np.zeros(3)  # Position of the i3
         self._i3_velocities = np.zeros(3)  # Velocities of the i3
-        self._i3_forces = np.zeros(3)  # Forces to apply to the i3
+        self._i3_forces_des = np.zeros(3)  # Forces to apply to the i3
+
+        # TODO: Move to ros params
+        self._i3_forces_scale = 0.1  # Scale for the forces applied to the i3
+        self._i3_position_scale = 1  # Scale for the position of the i3
+        self._pos_radius = 0.07  # Radius for the position control region
 
         # Robot
         self._control_mode = ControlModes.POSITION
@@ -77,8 +91,10 @@ class I3Teleop(Node):
         self._ee_center = np.zeros(3)  # Center position for the ee
         self._ee_des = np.zeros(3)  # Desired end effector position
 
-        self._position_scale = 0.1  # Scale for the position of the joystick to the robot
-        self._vel_scale = 0.1  # Scale for the velocity of the joystick to the robot
+        self._ee_forces = np.zeros(3)  # Forces applied to the end effector
+
+        self._position_scale = 1  # Scale for the position of the joystick to the robot
+        self._vel_scale = 1  # Scale for the velocity of the joystick to the robot
 
         #! Init functions
         self._init_subscribers()
@@ -128,8 +144,17 @@ class I3Teleop(Node):
         msg : Inverse3State
             Message received from the topic.
         """
-        self._i3_position = ros2np(msg.pose.position)
-        self._i3_velocities = ros2np(msg.twist.linear)
+        # Raw values
+        i3_position = ros2np(msg.pose.position)
+        i3_vel = ros2np(msg.twist.linear)
+
+        # Switch axis 0 and 1 of i3_position
+        i3_position[0], i3_position[1] = i3_position[1], -i3_position[0]
+        i3_vel[0], i3_vel[1] = i3_vel[1], -i3_vel[0]
+
+        # Convert axes
+        self._i3_position = i3_position
+        self._i3_velocities = i3_vel
 
     def _robot_topic_callback(self, msg: PoseStamped):
         """
@@ -140,7 +165,9 @@ class I3Teleop(Node):
         msg : PoseStamped
             Message received from the '/robot' topic.
         """
-        self._ee_pose = np.array([msg.pose.position.x, msg.pose.position.y, msg.pose.position.z])
+        # self._ee_pose = np.array([msg.pose.position.x, msg.pose.position.y, msg.pose.position.z])
+        self._ee_pose = ros2np(msg.pose.position)
+
         # self.get_logger().info(f"Robot EE: {self._ee_des}")
 
         if not self._is_initialized:
@@ -158,13 +185,13 @@ class I3Teleop(Node):
         msg : WrenchStamped
             Message received from the '/franka_broadcaster/...' topic.
         """
-        self._i3_forces = ros2np(msg.wrench.force)
+        self._ee_forces = ros2np(msg.wrench.force)
 
     def _pub_ee_des(self):
         """
         Publish the desired end effector position to the '/teleop/ee_des_pose' topic.
         """
-        if not self._is_calibrated:
+        if not self._is_initialized:
             return
 
         self._compute_ee_command()
@@ -175,10 +202,17 @@ class I3Teleop(Node):
         """
         Publish the desired forces to the i3 robot.
         """
-        self._i3_forces_msg.header.stamp = self.get_clock().now().to_msg()
-        self._i3_forces_msg.wrench.force = np2ros(self._i3_forces)
+        if not self._is_initialized:
+            return
 
-        self._i3_forces_pub.publish(self._i3_forces_msg)
+        # TODO: Remove the bias
+        # Transform the ee forces
+        self._i3_forces_des = self._i3_forces_scale * self._ee_forces
+
+        # Publish
+        self._i3_forces_msg.header.stamp = self.get_clock().now().to_msg()
+        self._i3_forces_msg.wrench.force = np2ros(self._i3_forces_des)
+        # self._i3_forces_pub.publish(self._i3_forces_msg)
 
     #! Methods
     def _update_control_mode(self):
@@ -188,13 +222,12 @@ class I3Teleop(Node):
         If RT is pressed, the control mode is changed to velocity.
         """
         dist = np.linalg.norm(self._i3_position)
-        thres = 0.05
 
-        if self._control_mode == ControlModes.POSITION and dist == thres:
+        if self._control_mode == ControlModes.POSITION and dist > self._pos_radius:
             self.get_logger().info("Control mode changed to VELOCITY.")
             self._control_mode = ControlModes.VELOCITY
 
-        elif self._control_mode == ControlModes.VELOCITY and dist <= thres:
+        elif self._control_mode == ControlModes.VELOCITY and dist <= self._pos_radius:
             self.get_logger().info("Control mode changed to POSITION.")
             self._control_mode = ControlModes.POSITION
 
@@ -208,7 +241,7 @@ class I3Teleop(Node):
         If RT is pressed, the control mode is changed to velocity.
         (called from `self._pub_ee_des`)
         """
-        self._update_control_mode()
+        # self._update_control_mode()
 
         self._ee_cmd_msg.header.stamp = self.get_clock().now().to_msg()
 
@@ -250,12 +283,12 @@ class I3Teleop(Node):
 
     def _compute_ee_vel(self) -> np.ndarray:
         """Compute the desired end effector velocity based on the inverse 3 position."""
-        radius = 0.05
         Kd = 100
 
+        # Compute the velocity to apply
         distance = np.linalg.norm(self._i3_position)
         direction = self._i3_position / distance
-        velocity = direction * ((distance - radius) ** 3) * Kd
+        velocity = direction * ((distance - self._pos_radius) ** 3) * Kd
 
         # distance = np.sqrt(sum([(device_pos[i] - center[i]) ** 2 for i in range(3)]))
         # direction = [(device_pos[i] - center[i]) / distance for i in range(3)]
@@ -263,16 +296,15 @@ class I3Teleop(Node):
 
         # get the velocity of movement in vel-ctl region
         # Va = velocity_applied(self._workspace_center, self._R, self._raw_positions, 100)
-        Va = velocity
 
         # magVa = math.sqrt(Va[0] * Va[0] + Va[1] * Va[1] + Va[2] * Va[2])
-        Va_norm = np.linalg.norm(Va)
+        vel_norm = np.linalg.norm(velocity)
 
         max_vel = 0.0005
-        if Va_norm > max_vel:
+        if vel_norm > max_vel:
             # Va = [(self._maxVa / Va_norm) * Va[0], (self._maxVa / Va_norm) * Va[1], (self._maxVa / Va_norm) * Va[2]]
 
-            Va = Va * max_vel / Va_norm
+            velocity = velocity * max_vel / vel_norm
 
         # self._velocity_ball_center = [(self._velocity_ball_center[i] + Va[i]) for i in range(3)]
         # self._velocity_ball_center += Va
@@ -281,7 +313,7 @@ class I3Teleop(Node):
         # js_axes = np.where(np.abs(js_axes) < self._js_deadzone_thres, 0, js_axes)
 
         # Compute the desired end effector position
-        ee_vel_des = self._vel_scale * Va
+        ee_vel_des = self._vel_scale * velocity
 
         return ee_vel_des.astype(float)
 
