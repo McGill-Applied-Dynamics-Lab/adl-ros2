@@ -74,6 +74,7 @@ class I3Teleop(Node):
         self._start_time = None
         self._is_calibrated = True  # TODO: Needed?
         self._is_initialized = False
+        self._cmd_pub_freq = 100  # Frequency to publish the commands
 
         self._i3_position = np.zeros(3)  # Position of the i3
         self._i3_velocities = np.zeros(3)  # Velocities of the i3
@@ -94,7 +95,7 @@ class I3Teleop(Node):
         self._ee_forces = np.zeros(3)  # Forces applied to the end effector
 
         self._position_scale = 1  # Scale for the position of the joystick to the robot
-        self._vel_scale = 1  # Scale for the velocity of the joystick to the robot
+        self._vel_scale = 500  # Scale for the velocity
 
         #! Init functions
         self._init_subscribers()
@@ -126,7 +127,7 @@ class I3Teleop(Node):
         self._ee_cmd_pub_topic = "/teleop/ee_cmd"
         self._ee_cmd_pub = self.create_publisher(Teleop, self._ee_cmd_pub_topic, 10)
         self._ee_cmd_msg = Teleop()
-        self._ee_cmd_timer = self.create_timer(0.01, self._pub_ee_des)
+        self._ee_cmd_timer = self.create_timer(1 / self._cmd_pub_freq, self._pub_ee_des)
 
         # Contact forces publisher
         self._i3_forces_pub_topic = "/inverse3/wrench_des"
@@ -232,7 +233,7 @@ class I3Teleop(Node):
             self._control_mode = ControlModes.POSITION
 
             # Update ee center
-            self._ee_center = self._ee_pose
+            # self._ee_center = self._ee_pose
 
     def _compute_ee_command(self):
         """
@@ -241,7 +242,7 @@ class I3Teleop(Node):
         If RT is pressed, the control mode is changed to velocity.
         (called from `self._pub_ee_des`)
         """
-        # self._update_control_mode()
+        self._update_control_mode()
 
         self._ee_cmd_msg.header.stamp = self.get_clock().now().to_msg()
 
@@ -283,12 +284,10 @@ class I3Teleop(Node):
 
     def _compute_ee_vel(self) -> np.ndarray:
         """Compute the desired end effector velocity based on the inverse 3 position."""
-        Kd = 100
-
         # Compute the velocity to apply
         distance = np.linalg.norm(self._i3_position)
         direction = self._i3_position / distance
-        velocity = direction * ((distance - self._pos_radius) ** 3) * Kd
+        velocity = direction * ((distance - self._pos_radius) ** 3) * self._vel_scale
 
         # distance = np.sqrt(sum([(device_pos[i] - center[i]) ** 2 for i in range(3)]))
         # direction = [(device_pos[i] - center[i]) / distance for i in range(3)]
@@ -300,10 +299,10 @@ class I3Teleop(Node):
         # magVa = math.sqrt(Va[0] * Va[0] + Va[1] * Va[1] + Va[2] * Va[2])
         vel_norm = np.linalg.norm(velocity)
 
-        max_vel = 0.0005
+        max_vel = 0.1
         if vel_norm > max_vel:
             # Va = [(self._maxVa / Va_norm) * Va[0], (self._maxVa / Va_norm) * Va[1], (self._maxVa / Va_norm) * Va[2]]
-
+            print("MAX VEL")
             velocity = velocity * max_vel / vel_norm
 
         # self._velocity_ball_center = [(self._velocity_ball_center[i] + Va[i]) for i in range(3)]
@@ -313,7 +312,12 @@ class I3Teleop(Node):
         # js_axes = np.where(np.abs(js_axes) < self._js_deadzone_thres, 0, js_axes)
 
         # Compute the desired end effector position
-        ee_vel_des = self._vel_scale * velocity
+        ee_vel_des = velocity
+
+        # Update ee_center
+        self._ee_center += ee_vel_des * 1 / self._cmd_pub_freq
+
+        print(f"EE vel des: {ee_vel_des} \t EE center: {self._ee_center}")
 
         return ee_vel_des.astype(float)
 
@@ -323,7 +327,7 @@ def main(args=None):
     node = I3Teleop()
 
     try:
-        node.get_logger().info("joy_teleop launched, end with CTRL-C")
+        node.get_logger().info("i3_teleop launched, end with CTRL-C")
         rclpy.spin(node)
 
     except KeyboardInterrupt:
