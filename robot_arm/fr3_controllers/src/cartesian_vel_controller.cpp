@@ -19,6 +19,8 @@
 #include <fr3_controllers/default_robot_behavior_utils.hpp>
 #include <string>
 
+#include <franka_msgs/srv/set_full_collision_behavior.hpp>
+
 namespace
 {
 constexpr auto DEFAULT_COMMAND_TOPIC = "~/commands";
@@ -30,6 +32,32 @@ constexpr auto DEFAULT_COMMAND_TOPIC = "~/commands";
 
 namespace fr3_controllers
 {
+inline franka_msgs::srv::SetFullCollisionBehavior::Request::SharedPtr
+getMyCollisionBehavior() {
+  auto request = std::make_shared<franka_msgs::srv::SetFullCollisionBehavior::Request>();
+
+  double max_ee_force = 100.0;
+
+  request->lower_torque_thresholds_nominal = {
+      25.0, 25.0, 22.0, 20.0, 19.0, 17.0, 14.0};  // NOLINT(cppcoreguidelines-avoid-magic-numbers)
+  request->upper_torque_thresholds_nominal = {
+      35.0, 35.0, 32.0, 30.0, 29.0, 27.0, 24.0};  // NOLINT(cppcoreguidelines-avoid-magic-numbers)
+  request->lower_torque_thresholds_acceleration = {
+      25.0, 25.0, 22.0, 20.0, 19.0, 17.0, 14.0};  // NOLINT(cppcoreguidelines-avoid-magic-numbers)
+  request->upper_torque_thresholds_acceleration = {
+      35.0, 35.0, 32.0, 30.0, 29.0, 27.0, 24.0};  // NOLINT(cppcoreguidelines-avoid-magic-numbers)
+  request->lower_force_thresholds_nominal = {
+      max_ee_force, max_ee_force, max_ee_force, max_ee_force, max_ee_force, max_ee_force};  // NOLINT(cppcoreguidelines-avoid-magic-numbers)
+  request->upper_force_thresholds_nominal = {
+      max_ee_force, max_ee_force, max_ee_force, max_ee_force, max_ee_force, max_ee_force};  // NOLINT(cppcoreguidelines-avoid-magic-numbers)
+  request->lower_force_thresholds_acceleration = {
+      max_ee_force, max_ee_force, max_ee_force, max_ee_force, max_ee_force, max_ee_force};  // NOLINT(cppcoreguidelines-avoid-magic-numbers)
+  request->upper_force_thresholds_acceleration = {
+      max_ee_force, max_ee_force, max_ee_force, max_ee_force, max_ee_force, max_ee_force};  // NOLINT(cppcoreguidelines-avoid-magic-numbers)
+
+  return request;
+}
+
 CallbackReturn CartesianVelController::on_init()
 {
   franka_cartesian_velocity_ = std::make_unique<franka_semantic_components::FrankaCartesianVelocityInterface>(
@@ -43,7 +71,8 @@ CallbackReturn CartesianVelController::on_configure(const rclcpp_lifecycle::Stat
   //! Set default collision behavior
   auto client = get_node()->create_client<franka_msgs::srv::SetFullCollisionBehavior>(
       "service_server/set_full_collision_behavior");
-  auto request = DefaultRobotBehavior::getDefaultCollisionBehaviorRequest();
+  // auto request = DefaultRobotBehavior::getDefaultCollisionBehaviorRequest();
+  auto request = getMyCollisionBehavior();
 
   auto future_result = client->async_send_request(request);
   future_result.wait_for(robot_utils::time_out);
