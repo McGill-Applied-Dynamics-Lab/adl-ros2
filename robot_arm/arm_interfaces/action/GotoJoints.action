@@ -1,6 +1,6 @@
 # Request
 float64[] joints_goal  # [rad]
-float64 duration  # [sec]  
+builtin_interfaces/Duration duration  # [sec]  
 ---
 # Result
 bool success

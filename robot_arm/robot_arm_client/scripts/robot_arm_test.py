@@ -12,21 +12,21 @@ def main(args=None):
     print("Starting robot")
     franka_arm = FrankaArm()
 
-    # # Move joints to a position
-    # joints_goal = np.deg2rad([0, 0, 0, -135, 0, 90, 45])
-    # franka_arm.goto_joints(joints_goal, 5.0)
-
     # # Move joints home
     # franka_arm.goto_home()
 
-    # Move to pose
-    pose_goal = SE3(0.5, 0.5, 0.5)
-    franka_arm.goto_pose(pose_goal, 5.0)
+    # # Move joints to a position
+    # joints_goal = np.deg2rad([0, 0, 0, -135, 0, 90, 45])
+    # franka_arm.goto_joints(joints_goal, Duration(seconds=10.0))
 
-    # # Joint velocities
-    # joint_vels = [40, 0, 0, 0, 0, 0, 0]
-    # duration = 5.0
-    # franka_arm.goto_joint_vels(joint_vels, unit="deg", duration=Duration(seconds=duration))
+    # # Move to pose
+    # pose_goal = SE3(0.5, 0.5, 0.5)
+    # franka_arm.goto_pose(pose_goal, 5.0)
+
+    # Joint velocities
+    joint_vels = [0, 0, 0, 0, 0, 0.0, 0.2]
+    duration = 4.0
+    franka_arm.goto_joint_vels(joint_vels, unit="rad", duration=Duration(seconds=duration))
 
     # # EE velocities
     # ee_vel = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]

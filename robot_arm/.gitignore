@@ -1,11 +1,19 @@
+# IDEs
 .idea
 .vscode
+.vs/
+
+# Python
 *.pyc
 **/__pycache/
+*.egg-info/
+robot_arm_interface/robot_arm_interface/__pycache__/fr3_interface.cpython-310.pyc
+
+
+# ROS2
 COLCON_IGNORE
 AMENT_IGNORE
 cmake-build-*/
 build/
 install/
 log/
-robot_arm_interface/robot_arm_interface/__pycache__/fr3_interface.cpython-310.pyc

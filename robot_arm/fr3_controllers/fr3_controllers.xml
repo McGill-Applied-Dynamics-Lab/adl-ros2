@@ -1,0 +1,35 @@
+<library path="fr3_controllers">
+  <!-- Test Controller #TODO: REMOVE -->
+  <class name="fr3_controllers/TestController"
+         type="fr3_controllers::TestController"
+         base_class_type="controller_interface::ControllerInterface">
+    <description>
+      Controller test.
+    </description>
+  </class>
+  <!-- Joint Velocity Controller -->
+  <class name="fr3_controllers/JointVelocityController"
+          type="fr3_controllers::JointVelocityController"
+          base_class_type="controller_interface::ControllerInterface">
+    <description>
+        To control the joint velocities.
+    </description>
+  </class>
+  <!-- Cartesian Pose Controller -->
+  <class name="fr3_controllers/CartesianPoseController"
+          type="fr3_controllers::CartesianPoseController"
+          base_class_type="controller_interface::ControllerInterface">
+    <description>
+        To control the cartesian pose.
+    </description>
+  </class>
+  <!-- Cartesian Vel Controller -->
+  <class name="fr3_controllers/CartesianVelController"
+          type="fr3_controllers::CartesianVelController"
+          base_class_type="controller_interface::ControllerInterface">
+    <description>
+        To control the cartesian vel.
+    </description>
+  </class>
+</library>
+
