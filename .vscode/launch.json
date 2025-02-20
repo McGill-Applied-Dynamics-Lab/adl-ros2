@@ -36,6 +36,20 @@
             "console": "integratedTerminal",
         },
         {
+            "name": "Node: i3_teleop",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "src/adg_ros2/teleop/teleop/teleop/i3_teleop.py",
+            "console": "integratedTerminal",
+        },
+        {
+            "name": "Node: inverse3_node",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "src/adg_ros2/teleop/inverse3_ros2/inverse3_ros2/Inverse3_Node.py",
+            "console": "integratedTerminal",
+        },
+        {
             "name": "Node: fr3_interface",
             "type": "debugpy",
             "request": "launch",

@@ -33,4 +33,6 @@ services:
       memlock: 8428281856
     device_cgroup_rules:
       - 'c *:* rmw'
+    devices:
+      - "/dev/ttyACM0:/dev/ttyACM0"
 
