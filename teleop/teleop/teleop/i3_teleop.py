@@ -6,11 +6,12 @@ from rclpy.node import Node  # node class makes a ROS2 Node
 from arm_interfaces.msg import Teleop
 from teleop_interfaces.msg import Inverse3State
 from geometry_msgs.msg import PoseStamped, Pose, TwistStamped, Twist, WrenchStamped, Vector3, Point
-from sensor_msgs.msg import Joy
 
 # Other
 import numpy as np
 from enum import Enum
+
+DEBUG = False
 
 
 class ControlModes(Enum):
@@ -72,18 +73,23 @@ class I3Teleop(Node):
         #! Attributes
         # Joystick
         self._start_time = None
-        self._is_calibrated = True  # TODO: Needed?
         self._is_initialized = False
         self._cmd_pub_freq = 100  # Frequency to publish the commands
+
+        self._force_calibrated = False
+        self._n_force_cal_msgs = 0
+        self._force_bias = np.zeros(3)  # Bias for the force sensor
+        self._force_deadzone = 5.0  # Deadzone for the force to apply
 
         self._i3_position = np.zeros(3)  # Position of the i3
         self._i3_velocities = np.zeros(3)  # Velocities of the i3
         self._i3_forces_des = np.zeros(3)  # Forces to apply to the i3
 
         # TODO: Move to ros params
-        self._i3_forces_scale = 0.1  # Scale for the forces applied to the i3
-        self._i3_position_scale = 1  # Scale for the position of the i3
-        self._pos_radius = 0.07  # Radius for the position control region
+        self._i3_forces_scale = 0.05  # Scale for the forces applied to the i3
+        self._i3_position_scale = 3  # Scale for the position of the i3
+        self._i3_vel_scale = 500  # Scale for the velocity
+        self._pos_radius = 0.060  # Radius for the position control region
 
         # Robot
         self._control_mode = ControlModes.POSITION
@@ -93,9 +99,7 @@ class I3Teleop(Node):
         self._ee_des = np.zeros(3)  # Desired end effector position
 
         self._ee_forces = np.zeros(3)  # Forces applied to the end effector
-
-        self._position_scale = 1  # Scale for the position of the joystick to the robot
-        self._vel_scale = 500  # Scale for the velocity
+        self._ee_vel = np.zeros(3)  # Velocities of the end effector. Desired one from control
 
         #! Init functions
         self._init_subscribers()
@@ -110,7 +114,7 @@ class I3Teleop(Node):
         i3_topic = "/inverse3/state"
         self._i3_sub = self.create_subscription(Inverse3State, i3_topic, self._i3_topic_callback, 10)
 
-        # --- robot ---
+        # --- ee pose ---
         robot_topic = "/fr3_pose"
         self._robot_sub = self.create_subscription(PoseStamped, robot_topic, self._robot_topic_callback, 10)
 
@@ -119,6 +123,10 @@ class I3Teleop(Node):
         self._contact_forces_sub = self.create_subscription(
             WrenchStamped, contact_forces_topic, self._contact_forces_topic_callback, 10
         )
+
+        # # --- ee vel ---
+        # ee_vel_topic = "/franka_robot_state_broadcaster/desired_end_effector_twist"
+        # self._ee_vel_sub = self.create_subscription(TwistStamped, ee_vel_topic, self._ee_vel_topic_callback, 10)
 
     def _init_publishers(self):
         self.get_logger().info("Initializing publishers...")
@@ -138,7 +146,7 @@ class I3Teleop(Node):
     #! Callbacks
     def _i3_topic_callback(self, msg: Inverse3State):
         """
-        Callback for the '/inverse3/state' topic.
+        Callback to get the state of the inverse 3 form the '/inverse3/state' topic.
 
         Parameters
         ----------
@@ -188,6 +196,40 @@ class I3Teleop(Node):
         """
         self._ee_forces = ros2np(msg.wrench.force)
 
+        # Switch axes and invert the values
+        self._ee_forces[0], self._ee_forces[1] = self._ee_forces[1], -self._ee_forces[0]
+        self._ee_forces[2] = -self._ee_forces[2]
+
+        if not self._force_calibrated:
+            self._force_bias += self._ee_forces
+            self._n_force_cal_msgs += 1
+
+            # For ~2 seconds
+            if self._n_force_cal_msgs >= 2000:
+                self._force_bias /= self._n_force_cal_msgs
+                self._force_calibrated = True
+                self.get_logger().info(f"Force bias: {self._force_bias}")
+
+        else:
+            self._ee_forces -= self._force_bias
+
+            if DEBUG:
+                print(f"F: {self._ee_forces[0]:>8.4f} | {self._ee_forces[1]:>8.4f} | {self._ee_forces[2]:>8.4f}")
+
+            # deadzone
+            self._ee_forces = np.where(np.abs(self._ee_forces) < self._force_deadzone, 0, self._ee_forces)
+
+    def _ee_vel_topic_callback(self, msg: TwistStamped):
+        """
+        Callback for the '/franka_broadcaster/...' topic.
+
+        Parameters
+        ----------
+        msg : TwistStamped
+            Message received from the '/franka_broadcaster/...' topic.
+        """
+        self._ee_vel = ros2np(msg.twist.linear)
+
     def _pub_ee_des(self):
         """
         Publish the desired end effector position to the '/teleop/ee_des_pose' topic.
@@ -203,17 +245,23 @@ class I3Teleop(Node):
         """
         Publish the desired forces to the i3 robot.
         """
-        if not self._is_initialized:
+        if not self._force_calibrated:
             return
 
-        # TODO: Remove the bias
         # Transform the ee forces
         self._i3_forces_des = self._i3_forces_scale * self._ee_forces
+
+        # Deadzone
+        # self._i3_forces_des = np.where(np.abs(self._i3_forces_des) < self._force_deadzone, 0, self._i3_forces_des)
+
+        # print(
+        #     f"F des: {self._i3_forces_des[0]:>8.4f} | {self._i3_forces_des[1]:>8.4f} | {self._i3_forces_des[2]:>8.4f}"
+        # )
 
         # Publish
         self._i3_forces_msg.header.stamp = self.get_clock().now().to_msg()
         self._i3_forces_msg.wrench.force = np2ros(self._i3_forces_des)
-        # self._i3_forces_pub.publish(self._i3_forces_msg)
+        self._i3_forces_pub.publish(self._i3_forces_msg)
 
     #! Methods
     def _update_control_mode(self):
@@ -224,16 +272,18 @@ class I3Teleop(Node):
         """
         dist = np.linalg.norm(self._i3_position)
 
+        # pos -> vel
         if self._control_mode == ControlModes.POSITION and dist > self._pos_radius:
             self.get_logger().info("Control mode changed to VELOCITY.")
             self._control_mode = ControlModes.VELOCITY
 
+        # vel -> pos
         elif self._control_mode == ControlModes.VELOCITY and dist <= self._pos_radius:
             self.get_logger().info("Control mode changed to POSITION.")
             self._control_mode = ControlModes.POSITION
 
             # Update ee center
-            # self._ee_center = self._ee_pose
+            self._ee_center = self._ee_pose - self._i3_position * self._i3_position_scale
 
     def _compute_ee_command(self):
         """
@@ -250,10 +300,7 @@ class I3Teleop(Node):
             ee_des = self._compute_ee_des()
 
             self._ee_cmd_msg.control_mode = ControlModes.POSITION.value
-            # self._ee_cmd_msg.ee_des.position = np2ros(ee_des)
-            self._ee_cmd_msg.ee_des.position.x = ee_des[0]
-            self._ee_cmd_msg.ee_des.position.y = ee_des[1]
-            self._ee_cmd_msg.ee_des.position.z = ee_des[2]
+            self._ee_cmd_msg.ee_des.position = np2ros(ee_des, msg_type="Point")
 
             self._ee_cmd_msg.ee_vel_des = Twist()
 
@@ -278,7 +325,7 @@ class I3Teleop(Node):
         # js_axes = np.where(np.abs(js_axes) < self._js_deadzone_thres, 0, js_axes)
 
         # Compute the desired end effector position
-        ee_des = self._ee_center + self._i3_position * self._position_scale
+        ee_des = self._ee_center + self._i3_position * self._i3_position_scale
 
         return ee_des
 
@@ -287,7 +334,7 @@ class I3Teleop(Node):
         # Compute the velocity to apply
         distance = np.linalg.norm(self._i3_position)
         direction = self._i3_position / distance
-        velocity = direction * ((distance - self._pos_radius) ** 3) * self._vel_scale
+        velocity = direction * ((distance - self._pos_radius) ** 3) * self._i3_vel_scale
 
         # distance = np.sqrt(sum([(device_pos[i] - center[i]) ** 2 for i in range(3)]))
         # direction = [(device_pos[i] - center[i]) / distance for i in range(3)]
@@ -314,10 +361,10 @@ class I3Teleop(Node):
         # Compute the desired end effector position
         ee_vel_des = velocity
 
-        # Update ee_center
-        self._ee_center += ee_vel_des * 1 / self._cmd_pub_freq
+        # # Update ee_center
+        # self._ee_center += self._ee_vel * 1 / self._cmd_pub_freq
 
-        print(f"EE vel des: {ee_vel_des} \t EE center: {self._ee_center}")
+        # print(f"EE vel des: {ee_vel_des} \t EE center: {self._ee_center}")
 
         return ee_vel_des.astype(float)
 

@@ -24,3 +24,8 @@ Takes the position of i3, contact forces of the robot and computes:
 
 This is where scaling is applied! And where we compute if we are in pos or vel control.
 
+## Launch Files
+Teleop with Inverse 3:
+```
+ros2 launch teleop i3_teleop.launch.py
+```

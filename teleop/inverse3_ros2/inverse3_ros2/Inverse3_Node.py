@@ -14,8 +14,12 @@ import serial.tools.list_ports
 # import time
 # import math
 
+# TODO: Clean the node. Remove velocity stuff
 
 import numpy as np
+
+APPLY_CONTACT_FORCES = True
+DEBUG = False
 
 np.set_printoptions(precision=2)
 
@@ -85,6 +89,7 @@ def force_restitution(center, radius, device_pos, stiffness):
 
     if distance < radius:
         return force
+
     else:
         direction = (device_pos - center) / distance
         force = direction * (distance - radius) * -stiffness
@@ -166,9 +171,11 @@ class Inverse3Node(Node):
         self._contact_forces = np.zeros(3)  # contact forces, from the ROS topic
 
         # Parameters
+        self._apply_contact_forces = APPLY_CONTACT_FORCES
+
         self._workspace_center = np.array([0.04, -0.17, 0.16])  # center of the ws
-        self._pos_radius = 0.05  # radius of the pos-ctl region
-        self._ks = 50  # stiffness for the restitution force
+        self._pos_radius = 0.04  # radius of the pos-ctl region. When to start "stretching" the spring
+        self._ks = 100  # stiffness for the restitution force
         self._scale = 1  # scale between the i3 position and the published position
         self._velocity_ball_center = np.array([0, 0, 0])  # the center of velocity_ball
         self._maxVa = 0.0005  # maximum velocity in the vel-ctl region
@@ -260,10 +267,15 @@ class Inverse3Node(Node):
         """
         Callback for the '/inverse3/wrench_des' topic.
         """
+        if not self._apply_contact_forces:
+            self._contact_forces = np.zeros(3)
+            return
+
         self._contact_forces = ros2np(msg.wrench.force)
         self._contact_forces = np.clip(self._contact_forces, -self._force_cap, self._force_cap)
 
         # self.get_logger().info(f"Contact forces: {self._contact_forces}")
+        ...
 
     def _pub_i3_state(self):
         """
@@ -319,14 +331,15 @@ class Inverse3Node(Node):
         self._i3_state_msg.twist.linear = np2ros(self._velocity, msg_type="Vector3")
 
         self._i3_state_pub.publish(self._i3_state_msg)
-        self._log_infos()
+        if DEBUG:
+            self._log_infos()
 
     def _log_infos(self):
         """
         Log the information of the Inverse3.
         """
         self.get_logger().info(
-            f"Init: {self._is_initialized}\tPosition: [{self._ws_position[0]:<4.2f}, {self._ws_position[1]:<4.2f}, {self._ws_position[2]:<4.2f}] | Forces: [{self._forces[0]:<4.2f}, {self._forces[1]:<4.2f}, {self._forces[2]:<4.2f}]"
+            f"Init: {self._is_initialized}  Position: [{self._ws_position[0]:<5.4f}, {self._ws_position[1]:<5.4f}, {self._ws_position[2]:<5.4f}] | Forces: [{self._forces[0]:<4.2f}, {self._forces[1]:<4.2f}, {self._forces[2]:<4.2f}]"
         )
 
 
@@ -343,7 +356,6 @@ def main(args=None):
         node.get_logger().info(f"{node_name} launched, end with CTRL-C")
         rclpy.spin(node)
         # executor.spin()
-        print("ALLO")
 
     except KeyboardInterrupt:
         node.get_logger().info("KeyboardInterrupt, shutting down.\n")
