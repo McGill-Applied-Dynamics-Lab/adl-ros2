@@ -69,6 +69,18 @@
             "console": "integratedTerminal",
         },
         {
+            "name": "ROS2 Launch: joy_teleop.launch.py",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "/opt/ros/humble/bin/ros2",  // Path to the ros2 executable
+            "args": [
+              "launch",
+              "teleop",
+              "joy_teleop.launch.py",
+            ],
+            "console": "integratedTerminal",
+        },
+        {
             "name": "ROS2 Launch: fr3.launch.py",
             "type": "debugpy",
             "request": "launch",

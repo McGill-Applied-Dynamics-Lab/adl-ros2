@@ -87,6 +87,7 @@ RUN apt-get update && \
 ENV DEBIAN_FRONTEND=
 
 #! Pinocchio
+#TODO UPDATE TO 3.4 from ros2-testing
 RUN mkdir -p /etc/apt/keyrings && \
     curl -fsSL http://robotpkg.openrobots.org/packages/debian/robotpkg.asc | tee /etc/apt/keyrings/robotpkg.asc && \
     echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/robotpkg.asc] http://robotpkg.openrobots.org/packages/debian/pub $(lsb_release -cs) robotpkg" \
