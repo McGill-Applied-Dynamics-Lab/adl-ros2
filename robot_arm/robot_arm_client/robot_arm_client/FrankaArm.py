@@ -4,13 +4,21 @@ from rclpy.node import Node
 from rclpy.duration import Duration
 
 from rclpy.action import ActionClient
-from arm_interfaces.action import GotoJoints, GotoPose, GotoJointVelocities, GotoEEVelocity
-# from geometry_msgs.msg import PoseStamped
+from arm_interfaces.action import (
+    GotoJoints,
+    GotoPose,
+    GotoJointVelocities,
+    GotoEEVelocity,
+    GripperHoming,
+    GripperToggle,
+)
+from geometry_msgs.msg import PoseStamped
 
 import numpy as np
 from typing import List, Literal
-from spatialmath.pose3d import SO3, SE3
-from robot_arm_interface.utils import SE32PoseStamped, PoseStamped2SE3
+
+# from robot_arm_interface.utils import SE32PoseStamped, PoseStamped2SE3, array2pose
+from robot_arm_interface.utils import array2pose
 
 
 class FrankaArm(Node):
@@ -20,7 +28,10 @@ class FrankaArm(Node):
 
         #! Action clients
         self._action_client_list = []
+        self._init_action_clients()
+        self._wait_for_action_servers()
 
+    def _init_action_clients(self):
         # goto_joints
         self._goto_joints_ac = ActionClient(self, GotoJoints, "goto_joints")
         self._action_client_list.append(self._goto_joints_ac)
@@ -37,7 +48,12 @@ class FrankaArm(Node):
         self._goto_ee_vel_ac = ActionClient(self, GotoEEVelocity, "goto_ee_vels")
         self._action_client_list.append(self._goto_ee_vel_ac)
 
-        self._wait_for_action_servers()
+        # gripper
+        self._gripper_homing_ac = ActionClient(self, GripperHoming, "gripper_homing")
+        self._action_client_list.append(self._gripper_homing_ac)
+
+        self._gripper_toggle_ac = ActionClient(self, GripperToggle, "gripper_toggle")
+        self._action_client_list.append(self._gripper_toggle_ac)
 
     def _wait_for_action_servers(self):
         self.get_logger().info("Waiting for action servers...")
@@ -113,10 +129,12 @@ class FrankaArm(Node):
         joint_home_position = np.deg2rad([0, -45, 0, -135, 0, 90, 45])
         self.goto_joints(joint_home_position, Duration(seconds=3))
 
-    def goto_pose(self, pose_goal: SE3, duration: Duration):
+    def goto_pose(self, pose_goal: np.ndarray, duration: Duration):
         self.get_logger().info(f"Moving to cartesian goal:\n {pose_goal}")
 
-        pose_goal_msg = SE32PoseStamped(pose_goal)
+        pose_goal_msg = PoseStamped()
+        pose_goal_msg.header.stamp = self.get_clock().now().to_msg()
+        pose_goal_msg.pose = array2pose(pose_goal)
 
         # T = PoseStamped2SE3(pose_goal_msg)
 
@@ -176,9 +194,17 @@ class FrankaArm(Node):
         future = self._goto_joint_vels_ac.send_goal_async(goal_msg)
         return self._wait_for_action(future)
 
-    def open_gripper(self): ...
+    def gripper_homing(self):
+        self.get_logger().info("Homing gripper")
+        goal_msg = GripperHoming.Goal()
+        future = self._gripper_homing_ac.send_goal_async(goal_msg)
+        return self._wait_for_action(future)
 
-    def close_gripper(self): ...
+    def gripper_toggle(self):
+        self.get_logger().info("Toggling gripper")
+        goal_msg = GripperToggle.Goal()
+        future = self._gripper_toggle_ac.send_goal_async(goal_msg)
+        return self._wait_for_action(future)
 
     #! Services
     def get_robot_state(self): ...

@@ -119,5 +119,10 @@
         "typeinfo": "cpp",
         "variant": "cpp",
         "core": "cpp"
-    }
+    },
+    "python.testing.pytestArgs": [
+        "src"
+    ],
+    "python.testing.unittestEnabled": false,
+    "python.testing.pytestEnabled": true
 }

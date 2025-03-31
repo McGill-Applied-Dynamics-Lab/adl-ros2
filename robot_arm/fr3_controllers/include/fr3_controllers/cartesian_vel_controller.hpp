@@ -80,13 +80,20 @@ class CartesianVelController : public controller_interface::ControllerInterface
 
   Vector3d dx_ee_des_;   // Desired end-effector velocity
   Vector3d dx_ee_;       // Current end-effector velocity
-  Vector3d dx_ee_prev_;  // Current end-effector velocity
+  Vector3d dx_ee_prev_;  // Prev end-effector velocity
   Vector3d dx_ee_c_;     // Commanded end-effector velocity
 
   Vector3d ddx_ee_;    // Current end-effector acceleration
   Vector3d ddx_ee_c_;  // Commanded end-effector acceleration
-
   Vector3d dddx_ee_c_;  // Commanded end-effector jerk
+
+  Vector3d omega_ee_des_;  // Desired end-effector angular velocity
+  Vector3d omega_ee_;      // Current end-effector angular velocity
+  Vector3d omega_ee_prev_;    // Prev end-effector angular velocity
+  Vector3d omega_ee_c_;       // Commanded end-effector angular velocity
+
+  Vector3d ddomega_ee_c_; // Commanded end-effector angular jerk
+  Vector3d domega_ee_c_; // Commanded end-effector angular acceleration
 
   //! ROS Interfaces (sub, pub, ...)
   bool subscriber_is_active_ = false;
@@ -100,6 +107,11 @@ class CartesianVelController : public controller_interface::ControllerInterface
   Vector3d dx_ee_max_ = (Vector3d() << 2.0, 2.0, 2.0).finished();       // in m/s
   Vector3d ddx_ee_max_ = (Vector3d() << 4.5, 4.5, 4.5).finished();      // in m/s^2
   Vector3d dddx_ee_max_ = (Vector3d() << 1000, 1000, 1000).finished();  // in m/s^3
+  
+  Vector3d omega_ee_max_ = (Vector3d() << 2.0, 2.0, 2.0).finished();       // in rad/s
+  Vector3d domega_ee_max_ = (Vector3d() << 10, 10, 10).finished();      // in rad/s^2
+  Vector3d ddomega_ee_max_ = (Vector3d() << 5000, 5000, 5000).finished();      // in rad/s^2
+
 };
 
 }  // namespace fr3_controllers

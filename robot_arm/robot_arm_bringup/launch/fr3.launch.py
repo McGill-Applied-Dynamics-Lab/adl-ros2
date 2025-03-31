@@ -19,7 +19,7 @@ from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import (
     DeclareLaunchArgument,
-    # IncludeLaunchDescription,
+    IncludeLaunchDescription,
     # OpaqueFunction,
     ExecuteProcess,
     Shutdown,
@@ -27,7 +27,7 @@ from launch.actions import (
 )
 from launch.conditions import IfCondition
 
-# from launch.launch_description_sources import PythonLaunchDescriptionSource
+from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import (
     LaunchConfiguration,
     PathJoinSubstitution,
@@ -151,24 +151,24 @@ def generate_launch_description():
     )
 
     # ** Gripper **
-    # gripper_launch_description = IncludeLaunchDescription(
-    #     PythonLaunchDescriptionSource(
-    #         [
-    #             PathJoinSubstitution(
-    #                 [
-    #                     FindPackageShare("franka_gripper"),
-    #                     "launch",
-    #                     "gripper.launch.py",
-    #                 ]
-    #             )
-    #         ]
-    #     ),
-    #     launch_arguments={
-    #         robot_ip_parameter_name: robot_ip,
-    #         use_fake_hardware_parameter_name: use_fake_hardware,
-    #     }.items(),
-    #     condition=IfCondition(load_gripper),
-    # )
+    gripper_launch_description = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            [
+                PathJoinSubstitution(
+                    [
+                        FindPackageShare("franka_gripper"),
+                        "launch",
+                        "gripper.launch.py",
+                    ]
+                )
+            ]
+        ),
+        launch_arguments={
+            robot_ip_parameter_name: robot_ip,
+            # use_fake_hardware_parameter_name: use_fake_hardware,
+        }.items(),
+        condition=IfCondition(load_gripper),
+    )
 
     # To remap the joints names
     isaac_topics_remapper_node = Node(
@@ -211,13 +211,7 @@ def generate_launch_description():
     # Spawn the ros2_control controllers
     controllers_list = [
         "joint_state_broadcaster",
-        "joint_trajectory_controller --inactive",
-        # "joint_velocity_controller",
-        # "joint_velocity_example_controller",
-        # "my_vel_controller",
-        # "move_to_start_example_controller",
-        # "cartesian_pose_controller",
-        "cartesian_vel_controller"
+        "cartesian_vel_controller",
     ]
 
     ros_controllers_nodes = []
@@ -236,7 +230,10 @@ def generate_launch_description():
         executable="spawner",
         arguments=["franka_robot_state_broadcaster"],
         parameters=[{"arm_id": arm_id}],
-        output="screen",
+        output={
+            "stdout": "log",
+            "stderr": "log",
+        },
         remappings=[
             ("/controller_manager/robot_description", "/robot_description"),
         ],
@@ -251,10 +248,17 @@ def generate_launch_description():
         # prefix=["gdbserver :3000"],
     )
 
-    delayed_franka_interface_node = TimerAction(
-        period=1.0,  # Delay in seconds
-        actions=[franka_interface_node],
-    )
+    # delayed_franka_interface_node = TimerAction(
+    #     period=1.0,  # Delay in seconds
+    #     actions=[franka_interface_node],
+    # )
+
+    # joy_node = Node(
+    #     package="joy",
+    #     executable="joy_node",
+    #     name="joy_node",
+    #     output="screen",
+    # )
 
     #! MARK: Launch Description
     launch_description = LaunchDescription(
@@ -270,12 +274,13 @@ def generate_launch_description():
             #! --- Nodes ---
             joint_state_publisher_node,
             robot_state_publisher,
-            # gripper_launch_description,
+            gripper_launch_description,
             ros2_control_node,
             franka_robot_state_broadcaster_spawner,
             rviz2_node,
             isaac_topics_remapper_node,
-            delayed_franka_interface_node,
+            # joy_node,
+            # delayed_franka_interface_node,
         ]
         + ros_controllers_nodes
     )

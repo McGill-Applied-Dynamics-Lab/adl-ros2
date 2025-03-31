@@ -30,6 +30,12 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "action/GotoPose.action"
   "action/GotoJointVelocities.action"
   "action/GotoEEVelocity.action"
+  "action/GripperHoming.action"
+  "action/GripperToggle.action"
+  "srv/GetControlMode.srv"
+  "srv/SetControlMode.srv"
+  "srv/GetGoalSource.srv"
+  "srv/SetGoalSource.srv"
   DEPENDENCIES 
   geometry_msgs
   builtin_interfaces

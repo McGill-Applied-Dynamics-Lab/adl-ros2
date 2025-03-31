@@ -1,0 +1,11 @@
+# Request
+uint8 CONTROL_MODE_PAUSE = 0
+uint8 CONTROL_MODE_CART_POSE = 1
+uint8 CONTROL_MODE_CART_VEL = 2
+uint8 CONTROL_MODE_JOINT_POSE = 3
+uint8 CONTROL_MODE_JOINT_VEL = 4
+uint8 control_mode
+---
+# Response
+bool success
+string message

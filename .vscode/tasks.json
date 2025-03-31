@@ -5,6 +5,7 @@
         "label": "colcon build",
         "type": "shell",
         "command": [
+          "source /opt/ros/humble/setup.zsh &&",
           "colcon build",
           "--symlink-install",
           "--cmake-args '-DCMAKE_BUILD_TYPE=Debug'"
@@ -20,19 +21,61 @@
         "type": "shell",
         "command": "colcon test && colcon test-result"
       },
-      {
-        "type": "npm",
-        "script": "watch",
-        "path": "python/robotic_arm_controller/.venv/lib/python3.10/site-packages/ipympl/labextension",
-        "group": "build",
-        "problemMatcher": [],
-        "label": "npm: watch - python/robotic_arm_controller/.venv/lib/python3.10/site-packages/ipympl/labextension",
-        "detail": "npm-run-all -p watch:*"
-      },
+      // {
+      //   "type": "npm",
+      //   "script": "watch",
+      //   "path": "python/robotic_arm_controller/.venv/lib/python3.10/site-packages/ipympl/labextension",
+      //   "group": "build",
+      //   "problemMatcher": [],
+      //   "label": "npm: watch - python/robotic_arm_controller/.venv/lib/python3.10/site-packages/ipympl/labextension",
+      //   "detail": "npm-run-all -p watch:*"
+      // },
       {
         "label": "Source ROS2 ws",
         "type": "shell",
         "command": "source ${workspaceFolder}/install/setup.bash && sleep 1",
       },
-    ]
+      {
+        "label": "ROS2 Test - robot_arm_testing",
+        "type": "shell",
+        "command": [
+          // source
+          "source ~/.zshrc && ",
+          // run colcon tests
+          "colcon test", 
+          "--event-handlers console_direct+",
+          "--packages-select robot_arm_testing",
+          // "--pytest-args \"--ros-args -p robot_ip:=${env:FR3_IP}\""],
+          // print results
+          // "&& colcon test-result --all --verbose",
+          // "&& xunit-viewer -r ${workspaceFolder}/build/robot_arm_testing/test_results -c",
+          "&& xunit-viewer -r ${workspaceFolder}/build/robot_arm_testing/test_results",
+        ],
+          
+        "group": {
+            "kind": "test",
+            "isDefault": true
+        },
+        "presentation": {
+            "reveal": "always",
+            "panel": "new"
+        },
+        "problemMatcher": []
+      },
+    ],
+    "inputs": [
+      {
+          "id": "robot_ip",
+          "type": "promptString",
+          "description": "Robot IP address",
+          "default": "dont-care"
+      },
+      {
+          "id": "hw_type",
+          "type": "pickString",
+          "description": "Hardware type",
+          "options": ["isaac", "fake", "real", "gazebo"],
+          "default": "real"
+      }
+  ]
   }

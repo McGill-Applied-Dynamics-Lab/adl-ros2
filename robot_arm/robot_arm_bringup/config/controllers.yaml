@@ -21,6 +21,9 @@ controller_manager:
     cartesian_vel_controller:
       type: fr3_controllers/CartesianVelController
 
+    move_to_start_controller:
+      type: fr3_controllers/MoveToStartController
+
     # Example Controllers
     gravity_compensation_example_controller:
       type: franka_example_controllers/GravityCompensationExampleController
@@ -148,6 +151,25 @@ cartesian_vel_controller:
     state_interfaces:
       - position
       - velocity
+
+move_to_start_controller:
+  ros__parameters:
+    k_gains:
+      - 600.0
+      - 600.0
+      - 600.0
+      - 600.0
+      - 250.0
+      - 150.0
+      - 50.0
+    d_gains:
+      - 30.0
+      - 30.0
+      - 30.0
+      - 30.0
+      - 10.0
+      - 10.0
+      - 5.
 
 # FRANKA CONTROLLERS
 joint_impedance_with_ik_example_controller:

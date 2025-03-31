@@ -7,6 +7,8 @@
   <maintainer email="charles.sirois@mail.mcgill.ca">user</maintainer>
   <license>Apache-2.0</license>
 
+  <depend>pinocchio</depend>
+
   <exec_depend>rclpy</exec_depend>
   <exec_depend>sensor_msgs</exec_depend>
   <exec_depend>std_msgs</exec_depend>

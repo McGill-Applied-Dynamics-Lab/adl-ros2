@@ -179,5 +179,4 @@ auto TestController::on_shutdown(const rclcpp_lifecycle::State &) -> controller_
 }  // namespace fr3_controllers
 
 #include "pluginlib/class_list_macros.hpp"
-
 PLUGINLIB_EXPORT_CLASS(fr3_controllers::TestController, controller_interface::ControllerInterface)

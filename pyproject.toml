@@ -26,6 +26,6 @@ exclude = [
 
 # Ignore specific rules
 ignore = [
+    "E402",  # Import not at the top of the file
     "E501",  # Line too long
-    "W503",  # Line break before binary operator
 ]

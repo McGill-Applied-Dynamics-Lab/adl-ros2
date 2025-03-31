@@ -57,14 +57,26 @@
             "console": "integratedTerminal",
         },
         {
-            "name": "ROS2 Launch: franka.launch.py",
+            "name": "ROS2 Launch: i3_teleop.launch.py",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "/opt/ros/humble/bin/ros2",  // Path to the ros2 executable
+            "args": [
+              "launch",
+              "teleop",
+              "i3_teleop.launch.py",
+            ],
+            "console": "integratedTerminal",
+        },
+        {
+            "name": "ROS2 Launch: fr3.launch.py",
             "type": "debugpy",
             "request": "launch",
             "program": "/opt/ros/humble/bin/ros2",  // Path to the ros2 executable
             "args": [
               "launch",
               "robot_arm_bringup",
-              "franka.launch.py",
+              "fr3.launch.py",
               "hw_type:=fake"
             ],
             "console": "integratedTerminal",
@@ -73,7 +85,6 @@
             //   "ROS_DOMAIN_ID": "0"       // Optional: Set ROS_DOMAIN_ID if needed
             // },
             // "cwd": "${workspaceFolder}"  // Set the working directory
-        }
-
+        },
     ]
 }

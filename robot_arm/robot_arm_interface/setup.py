@@ -1,3 +1,4 @@
+import os
 from setuptools import find_packages, setup
 
 package_name = "robot_arm_interface"
@@ -9,6 +10,7 @@ setup(
     data_files=[
         ("share/ament_index/resource_index/packages", ["resource/" + package_name]),
         ("share/" + package_name, ["package.xml"]),
+        # (os.path.join("share", package_name), ["test/fr3_interface_test_launch.py"]),
     ],
     install_requires=["setuptools"],
     zip_safe=True,
@@ -16,7 +18,7 @@ setup(
     maintainer_email="charles.sirois@mail.mcgill.ca",
     description="TODO: Package description",
     license="Apache-2.0",
-    tests_require=["pytest"],
+    tests_require=["pytest", "pytest-asyncio"],
     entry_points={
         "console_scripts": [
             "fr3_interface = robot_arm_interface.fr3_interface:main",

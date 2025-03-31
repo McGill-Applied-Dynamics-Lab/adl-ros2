@@ -217,35 +217,47 @@ controller_interface::return_type CartesianVelController::update(const rclcpp::T
   update_desired_command();
   // update_current_state(dt);
 
-  Vector3d new_ang_vel;
-  new_ang_vel.setZero();
+  // Vector3d new_omega;
+  // new_omega.setZero();
 
   //! Method 2 - Blending traj
   Vector3d dx_ee_err = dx_ee_des_ - dx_ee_c_;
-  // dx_ee_err(1) = 0.0;  // TODO: Remove this line
-  // dx_ee_err(2) = 0.0;  // TODO: Remove this line
+  Vector3d omega_ee_err = omega_ee_des_ - omega_ee_c_;
 
   // Compute vel from error
   Vector3d acc_from_err = dx_ee_err / T_blend_;
+  Vector3d domega_from_err = omega_ee_err / T_blend_;  // Angular acceleration from error
 
   // Now, blend from the current velocity toward that "ideal" velocity.
   // This gives you a desired velocity that gradually tracks the target without snapping.
   Vector3d new_acc = ddx_ee_c_ + (acc_from_err - ddx_ee_c_) * (dt / T_blend_);
+  Vector3d new_domega = domega_ee_c_ + (domega_from_err - domega_ee_c_) * (dt / T_blend_);
 
   // Clamp
   new_acc = clamp(new_acc, -ddx_ee_max_, ddx_ee_max_);
+  new_domega = clamp(new_domega, -domega_ee_max_, domega_ee_max_);
 
   Vector3d new_jerk = (new_acc - ddx_ee_c_) / dt;
   new_jerk = clamp(new_jerk, -dddx_ee_max_, dddx_ee_max_);
+
+  Vector3d new_ddomega = (new_domega - domega_ee_c_) / dt;  // New angular jerk
+  new_ddomega = clamp(new_ddomega, -ddomega_ee_max_, ddomega_ee_max_);
 
   // 7. Integrate to update the velocity and then the position.
   dddx_ee_c_ = new_jerk;
   ddx_ee_c_ += new_jerk * dt;
   dx_ee_c_ += ddx_ee_c_ * dt;
 
+  ddomega_ee_c_ = new_ddomega;
+  domega_ee_c_ += ddomega_ee_c_ * dt;
+  omega_ee_c_ += domega_ee_c_ * dt;
+
   // print_robot_states();
 
-  if (franka_cartesian_velocity_->setCommand(dx_ee_c_, new_ang_vel))
+  // RCLCPP_INFO(get_node()->get_logger(), "omega_command:  \t(%10.6f, %10.6f, %10.6f)", omega_ee_c_(0), omega_ee_c_(1),
+  //             omega_ee_c_(2));
+
+  if (franka_cartesian_velocity_->setCommand(dx_ee_c_, omega_ee_c_))
   {
     return controller_interface::return_type::OK;
   }
@@ -296,6 +308,12 @@ void CartesianVelController::initialize_controller()
   ddx_ee_c_.setZero();
   dddx_ee_c_.setZero();
 
+  omega_ee_des_.setZero();
+  omega_ee_.setZero();
+  ddomega_ee_c_.setZero();
+  domega_ee_c_.setZero();
+  omega_ee_c_.setZero();
+
   to_initialize_flag_ = false;
 }
 
@@ -313,8 +331,14 @@ void CartesianVelController::update_desired_command()
   dx_ee_des_(1) = last_command_msg->twist.linear.y;
   dx_ee_des_(2) = last_command_msg->twist.linear.z;
 
+  omega_ee_des_(0) = last_command_msg->twist.angular.x;
+  omega_ee_des_(1) = last_command_msg->twist.angular.y;
+  omega_ee_des_(2) = last_command_msg->twist.angular.z;
+
   new_cmd_msg_ = false;
 
+  // RCLCPP_INFO(get_node()->get_logger(), "omega_ee_des:  \t(%10.6f, %10.6f, %10.6f)", omega_ee_des_(0), omega_ee_des_(1),
+  //             omega_ee_des_(2));
   // RCLCPP_INFO(get_node()->get_logger(), "Des ee (x, y, z): (%f, %f, %f)", dx_ee_des_(0), dx_ee_des_(1), dx_ee_des_(2));
 }
 

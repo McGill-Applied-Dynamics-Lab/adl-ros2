@@ -18,6 +18,9 @@ setup(
     license="Apache-2.0",
     tests_require=["pytest"],
     entry_points={
-        "console_scripts": [],
+        "console_scripts": [
+            "franka_arm = robot_arm_client.FrankaArm:main",
+            "robot_teleop = robot_arm_client.teleop_node:main",
+        ],
     },
 )

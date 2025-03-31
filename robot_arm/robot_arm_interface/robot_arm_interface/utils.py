@@ -1,52 +1,74 @@
 import rclpy
 
-from geometry_msgs.msg import PoseStamped
+from geometry_msgs.msg import PoseStamped, Pose, Twist
 
 import numpy as np
-from spatialmath.pose3d import SO3, SE3
-from spatialmath.base.quaternions import q2r, r2q
-from spatialmath import UnitQuaternion
+import pinocchio as pin
 
 
-def SE32PoseStamped(se3: SE3) -> PoseStamped:
-    pose_stamped = PoseStamped()
+def array2pose(array: np.ndarray) -> Pose:
+    pose = Pose()
 
-    # pose_stamped.header.frame_id = "base_link"
-    pose_stamped.header.stamp = rclpy.time.Time().to_msg()
+    pose.position.x = array[0]
+    pose.position.y = array[1]
+    pose.position.z = array[2]
 
-    pose_stamped.pose.position.x = se3.t[0]
-    pose_stamped.pose.position.y = se3.t[1]
-    pose_stamped.pose.position.z = se3.t[2]
+    # pose_stamped.pose.orientation.x = array[3]
+    # pose_stamped.pose.orientation.y = array[4]
+    # pose_stamped.pose.orientation.z = array[5]
+    # pose_stamped.pose.orientation.w = array[6]
 
-    q = r2q(se3.R, order="sxyz")
-    pose_stamped.pose.orientation.x = q[1]
-    pose_stamped.pose.orientation.y = q[2]
-    pose_stamped.pose.orientation.z = q[3]
-    pose_stamped.pose.orientation.w = q[0]
-
-    return pose_stamped
+    return pose
 
 
-def PoseStamped2SE3(pose_stamped_msg: PoseStamped) -> SE3:
-    """
-    Convert a PoseStamped message to an SE3 object
-    """
-    t = np.array(
-        [
-            pose_stamped_msg.pose.position.x,
-            pose_stamped_msg.pose.position.y,
-            pose_stamped_msg.pose.position.z,
-        ]
-    )
+def motion2rostwist(motion: pin.Motion) -> Twist:
+    twist = Twist()
 
-    q = UnitQuaternion(
-        [
-            pose_stamped_msg.pose.orientation.w,
-            pose_stamped_msg.pose.orientation.x,
-            pose_stamped_msg.pose.orientation.y,
-            pose_stamped_msg.pose.orientation.z,
-        ]
-    )
-    T = SE3.Trans(t) * q.SE3()
+    lin = motion.linear
+    ang = motion.angular
 
-    return T
+    twist.linear.x = lin[0]
+    twist.linear.y = lin[1]
+    twist.linear.z = lin[2]
+
+    twist.angular.x = ang[0]
+    twist.angular.y = ang[1]
+    twist.angular.z = ang[2]
+
+    return twist
+
+
+def rostwist2motion(twist: Twist) -> pin.Motion:
+    lin = np.array([twist.linear.x, twist.linear.y, twist.linear.z])
+    ang = np.array([twist.angular.x, twist.angular.y, twist.angular.z])
+
+    motion = pin.Motion(lin, ang)
+
+    return motion
+
+
+def se32rospose(se3: pin.SE3) -> Pose:
+    pose = Pose()
+
+    pose.position.x = se3.translation[0]
+    pose.position.y = se3.translation[1]
+    pose.position.z = se3.translation[2]
+
+    q = pin.Quaternion(se3.rotation).coeffs()
+    pose.orientation.x = q[0]
+    pose.orientation.y = q[1]
+    pose.orientation.z = q[2]
+    pose.orientation.w = q[3]
+
+    return pose
+
+
+def rospose2se3(pose: Pose) -> pin.SE3:
+    t = np.array([pose.position.x, pose.position.y, pose.position.z])
+    q = np.array([pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w])
+
+    R = pin.Quaternion(q).matrix()
+
+    se3 = pin.SE3(R, t)
+
+    return se3

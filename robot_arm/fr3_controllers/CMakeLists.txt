@@ -34,6 +34,21 @@ find_package(ament_cmake REQUIRED)
 foreach(Dependency IN ITEMS ${PROJECT_DEPENDS})
   find_package(${Dependency} REQUIRED)
 endforeach()
+find_package(Eigen3 REQUIRED)
+find_package(franka_msgs REQUIRED)
+
+# from franka_ros2_example
+# find_package(ament_index_cpp REQUIRED)
+# find_package(controller_interface REQUIRED)
+# find_package(franka_semantic_components REQUIRED)
+# find_package(hardware_interface REQUIRED)
+# find_package(moveit_core REQUIRED)
+# find_package(moveit_msgs REQUIRED)
+# find_package(pinocchio REQUIRED)
+# find_package(pluginlib REQUIRED)
+# find_package(rclcpp REQUIRED)
+# find_package(rclcpp_lifecycle REQUIRED)
+# find_package(std_srvs REQUIRED)
 
 # from franka_ros2_example
 # find_package(ament_index_cpp REQUIRED)
@@ -63,6 +78,8 @@ add_library(
   src/joint_velocity_controller.cpp
   src/cartesian_pose_controller.cpp
   src/cartesian_vel_controller.cpp
+  src/move_to_start_controller.cpp
+  src/motion_generator.cpp
 )
 
 target_compile_features(fr3_controllers PUBLIC cxx_std_17)

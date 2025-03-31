@@ -32,6 +32,16 @@ RUN apt-get update && \
     jstest-gtk \ 
     python3-serial \
 	&& rm -rf /var/lib/apt/lists/*
+# RUN apt-get update && \
+#     apt-get install -y --no-install-recommends \
+#     nodejs \
+# 	npm \
+# 	&& rm -rf /var/lib/apt/lists/*
+# # npm packages
+# RUN apt-get update && \
+#     npm install -g \
+# 	xunit-viewer \
+# 	&& rm -rf /var/lib/apt/lists/*
 ENV DEBIAN_FRONTEND=
 
 # Setup jtest-gtk

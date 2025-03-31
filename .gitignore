@@ -1,14 +1,14 @@
 # IDEs
 .idea
 .vs/
-.vscode/
-!**/adg_ros2/.vscode
+# .vscode/
+# !**/adg_ros2/.vscode/
 
 # Python
 *.pyc
 **/__pycache/
 *.egg-info/
-robot_arm_interface/robot_arm_interface/__pycache__/fr3_interface.cpython-310.pyc
+# robot_arm_interface/robot_arm_interface/__pycache__/fr3_interface.cpython-310.pyc
 
 
 # ROS2

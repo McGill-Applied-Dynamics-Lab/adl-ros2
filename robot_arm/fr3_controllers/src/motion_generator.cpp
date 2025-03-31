@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include <franka_example_controllers/motion_generator.hpp>
+#include <fr3_controllers/motion_generator.hpp>
 
 #include <algorithm>
 #include <array>
