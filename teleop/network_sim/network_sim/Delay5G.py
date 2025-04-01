@@ -1,9 +1,11 @@
 import rclpy
 from rclpy.node import Node
-from std_msgs.msg import String
 import heapq
 import threading
 from rclpy.clock import Clock
+
+from geometry_msgs.msg import PoseStamped
+from std_msgs.msg import String
 
 
 class DelayedMessage:
@@ -18,6 +20,7 @@ class DelayedMessage:
 class Delay5G(Node):
     def __init__(self):
         super().__init__("network_sim_5g")
+        self.get_logger().info("Delay5G node started")
 
         #! Declare parameters
         self.declare_parameter("delay", 0.1)  # default 100ms
@@ -31,8 +34,8 @@ class Delay5G(Node):
 
         #! Publishers and subscribers
         # Create publishers and subscribers
-        self.publisher = self.create_publisher(String, self._output_topic, 10)
-        self.subscription = self.create_subscription(String, self._input_topic, self._input_callback, 10)
+        self.publisher = self.create_publisher(PoseStamped, self._output_topic, 10)
+        self.subscription = self.create_subscription(PoseStamped, self._input_topic, self._input_callback, 10)
 
         #! Attributes
         # Create message queue and lock
@@ -73,9 +76,18 @@ def main(args=None):
         rclpy.spin(node)
     except KeyboardInterrupt:
         pass
+
     finally:
-        node.destroy_node()
-        rclpy.shutdown()
+        if "node" in locals() and node is not None:
+            node.destroy_node()
+        try:
+            rclpy.shutdown()
+
+        except Exception as e:
+            # This will catch the "rcl_shutdown already called" error
+            print(f"Note: ROS context already shut down: {e}")
+            # Just continue execution - error can be safely ignored
+            pass
 
 
 if __name__ == "__main__":

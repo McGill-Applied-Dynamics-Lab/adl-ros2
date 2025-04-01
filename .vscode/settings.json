@@ -121,9 +121,11 @@
         "core": "cpp"
     },
     "python.testing.pytestArgs": [
-        "src"
+        // "src/adg_ros2/",  // Specific package test folder
+        "src/adg_ros2/teleop/network_sim/test",  // Specific package test folder
+        "--import-mode=importlib"  // Helps with import conflicts
     ],
     "python.testing.unittestEnabled": false,
     "python.testing.pytestEnabled": true,
-    "python.testing.pytestPath": "/usr/bin/pytest-3"
+    // "python.testing.pytestPath": "/usr/bin/pytest-3"
 }
