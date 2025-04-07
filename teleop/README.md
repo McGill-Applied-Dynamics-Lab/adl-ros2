@@ -5,6 +5,7 @@ Packages:
 - **teleop**: Main package - Transform inputs from external devices to robot command
 - **inverse3_ros2**: Interface w/ inverse3.
 - **teleop_interfaces**: Interfaces (msgs) for the other packages
+- **delays**: To simulate 5G delays
 
 
 ## Nodes

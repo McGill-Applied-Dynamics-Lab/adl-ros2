@@ -11,6 +11,8 @@ from arm_interfaces.action import (
     GotoEEVelocity,
     GripperHoming,
     GripperToggle,
+    GripperOpen,
+    GripperClose,
 )
 from geometry_msgs.msg import PoseStamped
 
@@ -54,6 +56,12 @@ class FrankaArm(Node):
 
         self._gripper_toggle_ac = ActionClient(self, GripperToggle, "gripper_toggle")
         self._action_client_list.append(self._gripper_toggle_ac)
+
+        self._gripper_open_ac = ActionClient(self, GripperOpen, "gripper_open")
+        self._action_client_list.append(self._gripper_open_ac)
+
+        self._gripper_close_ac = ActionClient(self, GripperClose, "gripper_close")
+        self._action_client_list.append(self._gripper_close_ac)
 
     def _wait_for_action_servers(self):
         self.get_logger().info("Waiting for action servers...")
@@ -204,6 +212,18 @@ class FrankaArm(Node):
         self.get_logger().info("Toggling gripper")
         goal_msg = GripperToggle.Goal()
         future = self._gripper_toggle_ac.send_goal_async(goal_msg)
+        return self._wait_for_action(future)
+
+    def gripper_open(self):
+        self.get_logger().info("Opening gripper")
+        goal_msg = GripperOpen.Goal()
+        future = self._gripper_open_ac.send_goal_async(goal_msg)
+        return self._wait_for_action(future)
+
+    def gripper_close(self):
+        self.get_logger().info("Closing gripper")
+        goal_msg = GripperClose.Goal()
+        future = self._gripper_close_ac.send_goal_async(goal_msg)
         return self._wait_for_action(future)
 
     #! Services

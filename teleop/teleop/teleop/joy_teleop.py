@@ -248,7 +248,7 @@ class JoyTeleop(Node):
         If RT is pressed, the control mode is changed to velocity.
         """
         # print(f"RT: {self._axes_values[JoyAxisMap.RT.value]}")
-        trigger_thres = -1.0
+        trigger_thres = 1.0
         if self._control_mode == ControlModes.POSITION and self._axes_values[JoyAxisMap.RT.value] == trigger_thres:
             self.get_logger().info("Control mode changed to VELOCITY.")
             self._control_mode = ControlModes.VELOCITY
