@@ -37,19 +37,20 @@ def main(args=None):
     # # Move joints home
     # franka_arm.goto_home()
 
-    # Move to pick
+    #! Pick up peg
     if not PEG_IN_HAND:
         print("Picking up peg...")
-        franka_arm.goto_pose(X_P_start, Duration(seconds=5.0))
+        # franka_arm.goto_pose(X_P_start, Duration(seconds=5.0))
 
-        # Close gripper
+        # # Close gripper
+        # franka_arm.gripper_close()
         franka_arm.gripper_close()
 
-    # Moving to Start pose
-    print("Moving to start pose...")
-    gripper_start_pose = np.array([0.30, -0.20, 0.40])
-    X_G_start = pin.SE3(pin.rpy.rpyToMatrix(np.array([0, 0, 0])), gripper_start_pose)
-    franka_arm.goto_pose(X_G_start, Duration(seconds=5.0))
+    # # Moving to Start pose
+    # print("Moving to start pose...")
+    # gripper_start_pose = np.array([0.30, -0.20, 0.40])
+    # X_G_start = pin.SE3(pin.rpy.rpyToMatrix(np.array([0, 0, 0])), gripper_start_pose)
+    # franka_arm.goto_pose(X_G_start, Duration(seconds=5.0))
 
     # Start a trial!
     print("\nStarting a trial!")

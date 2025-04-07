@@ -127,5 +127,6 @@
     ],
     "python.testing.unittestEnabled": false,
     "python.testing.pytestEnabled": true,
+    "ros.distro": "humble",
     // "python.testing.pytestPath": "/usr/bin/pytest-3"
 }

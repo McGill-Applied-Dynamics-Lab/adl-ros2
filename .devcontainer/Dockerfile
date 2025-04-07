@@ -44,15 +44,15 @@ RUN apt-get update && \
 # 	&& rm -rf /var/lib/apt/lists/*
 ENV DEBIAN_FRONTEND=
 
-# Setup jtest-gtk
+# #! Setup jtest-gtk
 USER $USERNAME
 RUN mkdir -p /home/user/.config/jstest-gtk
 USER root
 
 #! ROS Packages
 ENV DEBIAN_FRONTEND=noninteractive
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
+RUN apt update && \
+    apt install -y --no-install-recommends \
     libeigen3-dev \
     # libignition-gazebo6-dev \
     libpoco-dev \
@@ -86,30 +86,20 @@ RUN apt-get update && \
     && rm -rf /var/lib/apt/lists/*
 ENV DEBIAN_FRONTEND=
 
-#! Pinocchio
-#TODO UPDATE TO 3.4 from ros2-testing
-RUN mkdir -p /etc/apt/keyrings && \
-    curl -fsSL http://robotpkg.openrobots.org/packages/debian/robotpkg.asc | tee /etc/apt/keyrings/robotpkg.asc && \
-    echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/robotpkg.asc] http://robotpkg.openrobots.org/packages/debian/pub $(lsb_release -cs) robotpkg" \
-    | tee /etc/apt/sources.list.d/robotpkg.list && \
-    apt-get update && \
-    apt-get install -y robotpkg-pinocchio && \
-    apt-get clean -y && \
-    rm -rf /var/lib/apt/lists/*
-
 #! libfranka
-RUN mkdir /home/user/source_code
-RUN cd /home/user/source_code && git clone https://github.com/frankaemika/libfranka.git \
+USER $USERNAME
+RUN mkdir -p /home/user/source_code
+RUN cd /home/user/source_code && git clone --recurse-submodules https://github.com/frankaemika/libfranka.git \
     && cd libfranka \
     && git checkout 0.15.0 \
-    && git submodule init \
     && git submodule update \
     && mkdir build && cd build \
-    && cmake -DBUILD_EXAMPLES=OFF -DBUILD_TESTS=OFF -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH=/opt/openrobots/lib/cmake .. \
+    && cmake -DBUILD_EXAMPLES=OFF -DBUILD_TESTS=OFF -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH=/opt/ros/humble .. \
     && make franka -j$(nproc) \
-    && cpack -G DEB \workspaces \
+    && cpack -G DEB \
     && sudo dpkg -i libfranka*.deb
 
+USER root
 RUN addgroup realtime
 RUN usermod -a -G realtime $USERNAME
 
@@ -117,25 +107,22 @@ RUN usermod -a -G realtime $USERNAME
 # Needed to read the device
 RUN usermod -a -G dialout $USERNAME
 
-# #! Dependencies
-# # Initialize rosdep
-# RUN rosdep init || echo "rosdep already initialized" && \
-#     rosdep update
+#! Dependencies
+# Initialize rosdep
+RUN rosdep init || echo "rosdep already initialized" && \
+    rosdep update
 
-# # USER $USERNAMEs
-# # Install dependencies using rosdep
-# RUN rosdep install --from-paths /${WS_FOLDER}/src --ignore-src -y --skip-keys libfranka
-# USER root
+# Create workspace structure
+WORKDIR ${WS_FOLDER}
+RUN mkdir -p src
+
+USER root
 
 # #! Python
-# # RUN pip install -e python/robotic_arm_controller 
-# COPY entrypoint.sh /entrypoint.sh
-# RUN chmod +x /entrypoint.sh
-# ENTRYPOINT ["/bin/bash", "/entrypoint.sh"]
-# Copy the requirements file
-COPY requirements.txt /tmp/requirements.txt
+# RUN pip install -e python/robotic_arm_controller 
 
 # Install Python dependencies
+COPY requirements.txt /tmp/requirements.txt
 RUN pip install -r /tmp/requirements.txt
 
 #! Environment variables
@@ -151,7 +138,7 @@ ENV PATH=/opt/openrobots/bin:$PATH \
 #! Entrypoint script
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
-# ENTRYPOINT ["/entrypoint.sh"]
+ENTRYPOINT ["/entrypoint.sh"]
 
 USER $USERNAME
 # RUN echo "export GZ_SIM_RESOURCE_PATH=${GZ_SIM_RESOURCE_PATH}:/ros2_ws/src/" >> ~/.bashrc
