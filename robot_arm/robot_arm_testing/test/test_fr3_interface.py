@@ -105,7 +105,7 @@ def generate_test_description():
 
 
 # Active tests
-@unittest.skip("Skipping FR3 interface initialization tests")
+# @unittest.skip("Skipping FR3 interface initialization tests")
 class TestFR3InterfaceInit(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -269,7 +269,7 @@ class TestFR3InterfaceInit(unittest.TestCase):
         response = future.result()
 
         # Check if the control mode was set
-        assert response.success, f"Failed to set goal source to TELEOP: {response.message}"
+        assert response.success, f"Failed to set goal source to TOPIC: {response.message}"
 
         #! Get goal source
         srv = self.node.create_client(GetGoalSource, "/fr3_interface/get_goal_source")
@@ -280,10 +280,10 @@ class TestFR3InterfaceInit(unittest.TestCase):
         response: GetGoalSource.Response = future.result()
 
         # Check if the control mode was set
-        assert response.goal_source == GoalSource.TOPIC.value, "Goal source is not TELEOP"
+        assert response.goal_source == GoalSource.TOPIC.value, "Goal source is not TOPIC"
 
 
-@unittest.skip("Skipping FR3 interface initialization tests")
+# @unittest.skip("Skipping FR3 interface initialization tests")
 class TestFR3InterfaceGripper(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

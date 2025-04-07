@@ -602,32 +602,6 @@ class FR3Interface(Node):
 
         self._joint_vels_cmd_pub.publish(self._joint_vels_cmd_msg)
 
-    # def _pub_cartesian_vel_cmd(self):
-    #     """Publishes self._V_G to `/cartesian_vel_controller/commands` topic
-
-    #     Raises:
-    #         ValueError: _description_
-    #     """
-
-    #     if not self._is_state_initialized or not self._cartesian_vel_pub_active:
-    #         return
-
-    #     # elapsed_time_ = (self.get_clock().now() - self._start_time).nanoseconds / 1e9
-
-    #     if self.goal_source == GoalSource.TELEOP:
-    #         desired_vel = self._compute_teleop_cmd()
-    #     elif self.goal_source == GoalSource.GO_TO:
-    #         desired_vel = self._compute_goto_cmd()
-    #     else:
-    #         raise ValueError(f"Invalid control mode: {self.control_mode}")
-
-    #     # Send the desired ee vel
-    #     self._cartesian_vel_cmd_msg.twist.linear.x = desired_vel[0]
-    #     self._cartesian_vel_cmd_msg.twist.linear.y = desired_vel[1]
-    #     self._cartesian_vel_cmd_msg.twist.linear.z = desired_vel[2]
-
-    #     self._cartesian_vel_pub.publish(self._cartesian_vel_cmd_msg)
-
     # ---- MARK: Actions
     async def _goto_joints_action(self, goal_handle):
         """Go to joints"""
@@ -1078,7 +1052,7 @@ class FR3Interface(Node):
         self.get_logger().info("Closing gripper...")
         self._gripper_state = GripperState.CLOSED
 
-        self.gripper_grasp(0.049, 0.1, 100)
+        self.gripper_grasp(0.0, 0.1, 50)
 
     def gripper_homing(self):
         self.get_logger().info("Homming gripper...")
@@ -1134,6 +1108,10 @@ class FR3Interface(Node):
         goal_msg.width = float(width)
         goal_msg.speed = float(speed)
         goal_msg.force = float(force)
+
+        grasp_epsilon = 0.1
+        goal_msg.epsilon.inner = grasp_epsilon
+        goal_msg.epsilon.outer = grasp_epsilon
 
         self._send_gripper_action_goal(GripperActionType.GRASP, goal_msg)
 
@@ -1267,6 +1245,18 @@ class FR3Interface(Node):
 
     @goal_source.setter
     def goal_source(self, value: GoalSource):
+        """Possible values
+
+        - TELEOP: Reads goal_source from teleop topic
+        - ACTION: goal_source set by the action callback
+        - TOPIC: Reads goal_source from a topic (not implemented yet)
+
+        Args:
+            value (GoalSource): _description_
+
+        Raises:
+            NotImplementedError: _description_
+        """
         if self._goal_source == value:
             return
 
@@ -1280,6 +1270,32 @@ class FR3Interface(Node):
         self._goal_source = GoalSource(value)
 
     #! Old Async functions
+    # def _pub_cartesian_vel_cmd(self):
+    #     """Publishes self._V_G to `/cartesian_vel_controller/commands` topic
+
+    #     Raises:
+    #         ValueError: _description_
+    #     """
+
+    #     if not self._is_state_initialized or not self._cartesian_vel_pub_active:
+    #         return
+
+    #     # elapsed_time_ = (self.get_clock().now() - self._start_time).nanoseconds / 1e9
+
+    #     if self.goal_source == GoalSource.TELEOP:
+    #         desired_vel = self._compute_teleop_cmd()
+    #     elif self.goal_source == GoalSource.GO_TO:
+    #         desired_vel = self._compute_goto_cmd()
+    #     else:
+    #         raise ValueError(f"Invalid control mode: {self.control_mode}")
+
+    #     # Send the desired ee vel
+    #     self._cartesian_vel_cmd_msg.twist.linear.x = desired_vel[0]
+    #     self._cartesian_vel_cmd_msg.twist.linear.y = desired_vel[1]
+    #     self._cartesian_vel_cmd_msg.twist.linear.z = desired_vel[2]
+
+    #     self._cartesian_vel_pub.publish(self._cartesian_vel_cmd_msg)
+
     # def _pub_cartesian_pose_cmd(self):
     #     if not self._is_state_initialized or not self._cartesian_pose_pub_active:
     #         return
