@@ -26,12 +26,14 @@ from sensor_msgs.msg import JointState
 from geometry_msgs.msg import PoseStamped, TwistStamped, Twist  # Example message types
 from franka_msgs.msg import FrankaRobotState  # TODO: Update when processed in the interface
 
+from robot_arm_interface.fr3_interface import GoalSource, ControlMode
 from robot_arm_interface.utils import motion2rostwist, rostwist2motion, rospose2se3, se32rospose
+from arm_interfaces.srv import SetControlMode, GetControlMode, SetGoalSource, GetGoalSource
 
 # Action and services
 from std_srvs.srv import Trigger
 
-SOCKET_POSE = np.array([0.5, 0.0, 0.10])
+SOCKET_POSE = np.array([0.6, 0.0, 0.0])
 
 
 def _process_cfg(cfg: dict) -> dict:
@@ -144,7 +146,7 @@ class RlAgentNode(Node):
 
         agent_path = self.get_parameter("agent_checkpoint_path").get_parameter_value().string_value
         control_frequency = self.get_parameter("control_frequency").get_parameter_value().double_value
-        self.action_scale = self.get_parameter("action_scale").get_parameter_value().double_value
+        self.action_scale = self.get_parameter("action_scale").get_parameter_value().double_value / 10
 
         #! --- Configs ---
         pkg_dir = Path(__file__).parent.parent
@@ -203,6 +205,7 @@ class RlAgentNode(Node):
         #! --- ROS 2 Communication ---
         self._init_subscribers()
         self._init_publishers()
+        self._init_services()
 
         #! --- State Storage ---
         self.default_joint_poses = [
@@ -222,7 +225,7 @@ class RlAgentNode(Node):
 
         # Poses and twistpin.Motion
         self.X_GP: pin.SE3 = pin.SE3(
-            pin.rpy.rpyToMatrix(np.array([0, 0, 0])), np.array([0, 0, 0.107])
+            pin.rpy.rpyToMatrix(np.array([0, 0, 0])), np.array([0, 0, 0.04])
         )  # Gripper to peg transform
         self.V_G: pin.Motion = None  # Gripper velocity
         self.V_G_des: pin.Motion = None  # Desired gripper velocity
@@ -230,23 +233,21 @@ class RlAgentNode(Node):
         self.X_S: pin.SE3 = pin.SE3(
             pin.rpy.rpyToMatrix(np.array([0, 0, 0])), SOCKET_POSE
         )  # Socket position # TODO: Update from topic (camera)
-        self.X_P: pin.SE3 = None  # Peg position
+        self.X_P: pin.SE3 = None  # Peg position #TODO: Read from a topic
+        self.X_G: pin.SE3 = None  # Gripper pose
 
         self._last_action: np.array = np.zeros(self._action_dim, dtype=np.float32)
 
         # ** RPL Params **
-        des_ee_speed = env_cfg["actions"]["arm_action"]["des_ee_speed"]
+        self.des_ee_speed = env_cfg["actions"]["arm_action"]["des_ee_speed"] / 10
+        # self.des_ee_speed = 0.0
         self.V_WG_ctrl: pin.Motion = pin.Motion(
-            np.array([0, 0, des_ee_speed]), np.zeros(3)
+            np.array([0, 0, self.des_ee_speed]), np.zeros(3)
         )  # Gripper velocity in world frame
 
         # **** Control Loop State ****
-        self.is_active = True  # Flag to control if the agent loop runs
-
-        # **** Service Servers for Start/Stop ****
-        self._start_service = self.create_service(Trigger, "start_rl_agent", self._start_control_callback)
-        self._stop_service = self.create_service(Trigger, "stop_rl_agent", self._stop_control_callback)
-        self.get_logger().info("Offering services: 'start_rl_agent' and 'stop_rl_agent'")
+        self._is_active = False  # Flag to control if the agent loop runs
+        self.is_active = True  # Initially inactive
 
         # --- Control Loop Timer ---
         self.timer_period = 1.0 / control_frequency
@@ -278,12 +279,35 @@ class RlAgentNode(Node):
         """
         self.get_logger().info("Initializing publishers...")
 
-        robot_cmd_topic = "/robot_cmd"
+        robot_cmd_topic = "/robot_arm/gripper_vel_command"
         self._robot_cmd_pub = self.create_publisher(
             TwistStamped,
             robot_cmd_topic,  # Topic for controller commands
             10,
         )
+
+    def _init_services(self):
+        """
+        Init services clients and servers
+        """
+
+        # **** Service Servers for Start/Stop ****
+        self._start_service = self.create_service(Trigger, "start_rl_agent", self._start_control_callback)
+        self._stop_service = self.create_service(Trigger, "stop_rl_agent", self._stop_control_callback)
+        self.get_logger().info("Offering services: 'start_rl_agent' and 'stop_rl_agent'")
+
+        # **** Service client ****
+        self._fr3_int_set_goal_src = self.create_client(SetGoalSource, "/fr3_interface/set_goal_source")
+        self._fr3_int_set_ctrl_mode = self.create_client(SetControlMode, "/fr3_interface/set_control_mode")
+
+        # Check if the control mode service is available (non-blocking)
+        while not self._fr3_int_set_goal_src.wait_for_service(timeout_sec=1.0):
+            self.get_logger().warn("Service '/fr3_interface/set_goal_source' not available, waiting...")
+
+        while not self._fr3_int_set_ctrl_mode.wait_for_service(timeout_sec=1.0):
+            self.get_logger().warn("Service '/fr3_interface/set_control_mode' not available, waiting...")
+
+        self.get_logger().info("Connected to services.")
 
     #! --- MARK: RL Methods ---
     @torch.inference_mode()
@@ -317,7 +341,9 @@ class RlAgentNode(Node):
         joint_vel_rel = np.concatenate([joint_vel_rel, np.array([0.0, 0.0])])  # Add fingers #TODO: From real msg
 
         self.X_P = self.X_G * self.X_GP
-        peg_pos_rel = self.X_P.translation - self.X_S.translation
+        self.peg_error = self.X_P.translation - self.X_S.translation
+        peg_pos_rel = self.peg_error
+        print(f"Peg pose: {self.X_P.translation[2]}\t\t{peg_pos_rel[2]}")
 
         last_action = self._last_action
 
@@ -348,29 +374,47 @@ class RlAgentNode(Node):
 
     #! --- MARK: Control Loop ---
     def control_loop_callback(self):
-        if not self.is_active:
+        if not self.is_active or self.X_G is None:
             return
 
-        # 1. Get observations
+        # -- Get observations
         self.latest_observation: torch.tensor = self._get_observation()
 
-        # 2. Get Action from Agent
+        # -- Check if success/failure
+        success, failure = self.check_insertion_status()
+        if success:
+            self.get_logger().info("Insertion success!")
+            self.is_active = False
+            self.des_ee_speed = 0.0
+            # return
+
+        if failure:
+            self.get_logger().info("Insertion failed!")
+            self.is_active = False
+            self.des_ee_speed = 0.0
+            # return
+
+        # -- Get Action from Agent
         action_tensor: torch.tensor = self._get_action()
         action = action_tensor.cpu().numpy()  # Convert to numpy array for processing
 
-        # 3. Postprocess Action
+        # -- Postprocess Action
         # Scale actions if necessary (e.g., if agent outputs [-1, 1] but robot needs rad/s)
         # Clip actions to robot limits (SAFETY!)
         processed_action = action * self.action_scale
         # processed_action = self.clip_action(processed_action)  # Implement clipping function
 
-        # 4. Combine w/ ctrl action
+        # -- Combine w/ ctrl action
         self.V_G_agt = pin.Motion(
             np.array([processed_action[0], 0.0, processed_action[1]]),
             np.array([0.0, processed_action[2], 0.0]),
         )
 
-        self.V_G_des = self.V_WG_ctrl + self.V_G_agt
+        self.V_WG_ctrl: pin.Motion = pin.Motion(
+            np.array([0, 0, self.des_ee_speed]), np.zeros(3)
+        )  # Gripper velocity in world frame
+
+        self.V_G_des = self.V_WG_ctrl  # + self.V_G_agt
 
         # 4. Send Action to Robot
         self.send_robot_command()
@@ -396,6 +440,93 @@ class RlAgentNode(Node):
 
         self._robot_cmd_pub.publish(msg)
         # self.get_logger().info(f"Published command: {gripper_twist}")
+
+    def check_insertion_status(self):
+        """
+        Check if insertion is successful or failed.
+        """
+        success = False
+        failure = False
+        z_thres = 0.01  # 1cm
+        xy_thres = 0.03  # 3cm
+
+        # Peg z reached the bottom
+        if self.X_P.translation[2] < z_thres:
+            # Check if x in range
+            xy_err = np.linalg.norm(self.peg_error[:2])
+            if xy_err < xy_thres:
+                success = True
+                failure = False
+
+            else:
+                success = False
+                failure = True
+
+        return success, failure
+
+    @property
+    def is_active(self):
+        """
+        Property to check if the control loop is active.
+        """
+        return self._is_active
+
+    @is_active.setter
+    def is_active(self, value: bool):
+        """
+        Setter for the control loop active state.
+        """
+        if self._is_active:
+            # Control loop already active
+
+            if not value:
+                # active -> inactive
+                self.get_logger().info("Deactivating control loop.")
+
+                # --- Safety: Send a zero command immediately upon stopping ---
+                # self.get_logger().info("Sending zero command due to stop request.")
+
+                # self.V_G_des = pin.Motion()
+                # self.send_robot_command()  # Send command to stop motion
+
+                # Set fr3_interface control mode to pause
+                # ctrl_mode_request = SetControlMode.Request()
+                # ctrl_mode_request.control_mode = ControlMode.PAUSE.value
+
+                # future = self._fr3_int_set_ctrl_mode.call_async(ctrl_mode_request)
+                # future.add_done_callback(self._set_ctrl_mode_done_callback)
+
+            if value:
+                # active -> active
+                ...
+
+        else:
+            # Control loop not active
+            if value:
+                # inactive -> active
+                self.get_logger().info("Activating control loop.")
+
+                # Set fr3_interface control mode to cart vel
+                ctrl_mode_request = SetControlMode.Request()
+                ctrl_mode_request.control_mode = ControlMode.CART_VEL.value
+
+                future = self._fr3_int_set_ctrl_mode.call_async(ctrl_mode_request)
+                future.add_done_callback(self._set_ctrl_mode_done_callback)
+
+                # Set fr3_interface goal source mode to TOPIC
+                goal_src_request = SetGoalSource.Request()
+                goal_src_request.goal_source = GoalSource.TOPIC.value
+
+                future = self._fr3_int_set_goal_src.call_async(goal_src_request)
+                future.add_done_callback(self._set_goal_src_done_callback)
+
+            else:
+                # inactive -> inactive
+                # self.get_logger().info("Control loop already inactive.")
+                ...
+
+        self._is_active = value
+        self.get_logger().info(f"Control loop active state set to: {value}")
 
     # --- Service Callbacks ---
     def _start_control_callback(self, request: Trigger.Request, response: Trigger.Response):
@@ -428,17 +559,60 @@ class RlAgentNode(Node):
         else:
             self.is_active = False
 
-            # --- Safety: Send a zero command immediately upon stopping ---
-            self.get_logger().info("Sending zero command due to stop request.")
-            self.V_G_des = pin.Motion()
-            self.send_robot_command()  # Send command to stop motion
-
             # -------------------------------------------------------------
             response.success = True
             response.message = "Control loop stopped."
             self.get_logger().info("Control loop deactivated via service call.")
 
         return response
+
+    def _set_ctrl_mode_done_callback(self, future):
+        # This runs when the control_mode_client call finishes
+        try:
+            mode_response: SetControlMode.Response = future.result()  # Get the result from the service call
+
+            # Check if the SetControlMode service succeeded
+            if mode_response.success:
+                self.get_logger().info("Control mode successfully set to 'cartesian vel'.")
+
+            else:
+                # Optional Lock if using MultiThreadedExecutor:
+                # with self.state_lock:
+                self.is_active = False  # Ensure not active
+                # self.start_pending = False
+                self.get_logger().error(
+                    "Failed to set control mode to 'cartesian vel'. Service call reported failure. Agent remains INACTIVE."
+                )
+
+        except Exception as e:
+            # Optional Lock if using MultiThreadedExecutor:
+            # with self.state_lock:
+            self.is_active = False  # Ensure not active
+            self.get_logger().error(f"Exception while calling set_control_mode service: {e}")
+
+    def _set_goal_src_done_callback(self, future):
+        # This runs when the control_mode_client call finishes
+        try:
+            mode_response: SetGoalSource.Response = future.result()  # Get the result from the service call
+
+            # Check if the SetControlMode service succeeded
+            if mode_response.success:
+                self.get_logger().info("Goal source successfully set to 'topic'.")
+
+            else:
+                # Optional Lock if using MultiThreadedExecutor:
+                # with self.state_lock:
+                self.is_active = False  # Ensure not active
+                # self.start_pending = False
+                self.get_logger().error(
+                    "Failed to set goal source to 'topic'. Service call reported failure. Agent remains INACTIVE."
+                )
+
+        except Exception as e:
+            # Optional Lock if using MultiThreadedExecutor:
+            # with self.state_lock:
+            self.is_active = False  # Ensure not active
+            self.get_logger().error(f"Exception while calling set_control_mode service: {e}")
 
 
 def main(args=None):
@@ -448,9 +622,23 @@ def main(args=None):
         rclpy.spin(node)
     except KeyboardInterrupt:
         node.get_logger().info("Keyboard interrupt detected, shutting down.")
+    except Exception as e:
+        node.get_logger().error(f"Unexpected error: {e}")
     finally:
+        # Ensure resources are properly cleaned up
+        node.get_logger().info("Cleaning up node resources...")
+
+        # Explicitly stop the control loop before destroying the node
+        if hasattr(node, "is_active") and node.is_active:
+            node.is_active = False
+
+        # Properly destroy the node
         node.destroy_node()
-        # rclpy.shutdown()
+
+        # We don't need to call rclpy.shutdown() here as it may be called
+        # automatically when Python exits or when an exception occurs
+        # This avoids the "shutdown already called" error
+        node.get_logger().info("Node shutdown complete.")
 
 
 if __name__ == "__main__":

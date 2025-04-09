@@ -17,10 +17,15 @@ peg_start_pose = np.array([0.40, 0.20, 0.050])
 peg_start_rpy = np.array([PI, 0.0, 0.0])
 X_P_start = pin.SE3(pin.rpy.rpyToMatrix(peg_start_rpy), peg_start_pose)
 
+
 # Socket
-socket_start_pose = np.array([0.5, 0.0, 0.10])
+socket_start_pose = np.array([0.6, 0.0, 0.0])
 socket_start_rpy = np.array([0.0, 0.0, 0.0])
 X_S = pin.SE3(pin.rpy.rpyToMatrix(socket_start_rpy), socket_start_pose)
+
+peg_offset = np.array([0.0, 0.0, -0.04])  # Gripper to peg offset
+socket_height = np.array([0.0, 0.0, 0.03])  # Height of the top of socket, from table
+peg_socket_offset = 0.01  # Distance between tip of peg and top of socket [cm]
 
 # Agent Params
 agent_name = "insert_db2.pt"
@@ -41,7 +46,7 @@ def main(args=None):
 
     print("----- Starting peg insert task -----")
     franka_arm = FrankaArm()
-    franka_arm.home()
+    # franka_arm.home()
 
     # # Run with full teleop (joystick) capabilities
     # teleop_node = TeleopNode(franka_arm)
@@ -60,7 +65,7 @@ def main(args=None):
 
     # Moving to Start pose
     print("Moving to start pose...")
-    gripper_start_pose_t = np.array([0.5, 0.0, 0.10])
+    gripper_start_pose_t = socket_start_pose - peg_offset + socket_height + np.array([0.0, 0.0, peg_socket_offset])
     gripper_start_pose_rpy = np.array([PI, 0, 0])
     X_G_start = pin.SE3(pin.rpy.rpyToMatrix(gripper_start_pose_rpy), gripper_start_pose_t)
     franka_arm.goto_pose(X_G_start, Duration(seconds=10.0))
