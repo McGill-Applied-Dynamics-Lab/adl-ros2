@@ -22,8 +22,8 @@ To view container building log `docker logs franka_ros2`
 ## TODO
 - [ ] Fix torch installation in the Dockerfile
 
-- [ ] Load my agent
-- [ ] Subscribe to topics needed
+- [x] Load my agent
+- [x] Subscribe to topics needed
 - [ ] Subscribe to services
 - [ ] Trigger services
 - [ ] Process observations and send actions

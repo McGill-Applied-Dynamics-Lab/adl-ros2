@@ -7,6 +7,12 @@
   <maintainer email="charles.sirois@mail.mcgill.ca">user</maintainer>
   <license>Apache-2.0</license>
 
+  <depend>rclpy</depend>
+  <depend>robot_arm_interface</depend>
+  <depend>franka_msgs</depend>
+  <depend>geometry_msgs</depend>
+  
+  <!-- tests -->
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>
   <test_depend>ament_pep257</test_depend>
