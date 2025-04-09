@@ -39,6 +39,8 @@ from arm_interfaces.action import (
     GotoEEVelocity,
     GripperHoming,
     GripperToggle,
+    GripperClose,
+    GripperOpen,
 )
 from arm_interfaces.msg import Teleop
 from arm_interfaces.srv import SetControlMode, GetControlMode, SetGoalSource, GetGoalSource
@@ -312,6 +314,12 @@ class FR3Interface(Node):
         teleop_topic = "/teleop/ee_cmd"
         self._teleop_sub = self.create_subscription(Teleop, teleop_topic, self._teleop_callback, 10)
 
+        # --- desired gripper vel ---
+        desired_vel_topic = "/robot_arm/gripper_vel_command"
+        self._desired_gripper_vel_sub = self.create_subscription(
+            TwistStamped, desired_vel_topic, self._desired_gripper_vel_callback, 10
+        )
+
         self.get_logger().info("Subscribers initialized")
 
     def _init_action_servers(self):
@@ -372,6 +380,24 @@ class FR3Interface(Node):
             GripperToggle,
             "gripper_toggle",
             execute_callback=self._action_gripper_toggle,
+            callback_group=self._as_cb_group,
+        )
+
+        # * Gripper open
+        self._as_gripper_open = ActionServer(
+            self,
+            GripperOpen,
+            "gripper_open",
+            execute_callback=self._action_gripper_open,
+            callback_group=self._as_cb_group,
+        )
+
+        # * Gripper toggle
+        self._as_gripper_close = ActionServer(
+            self,
+            GripperClose,
+            "gripper_close",
+            execute_callback=self._action_gripper_close,
             callback_group=self._as_cb_group,
         )
 
@@ -566,6 +592,12 @@ class FR3Interface(Node):
         else:
             raise ValueError(f"Invalid control mode received from teleop: {self._teleop_goal_msg.control_mode}")
 
+    def _desired_gripper_vel_callback(self, twist_msg: TwistStamped):
+        # Only update goal if the goal source is topic and the control mode is cartesian velocity
+        if self.goal_source != GoalSource.TOPIC or self.control_mode != ControlMode.CART_VEL:
+            return
+        self.V_WG_goal = rostwist2motion(twist_msg.twist)
+
     # --- MARK: Publishers
     def _publish_ee_pose(self):
         if not self._is_state_initialized:
@@ -729,12 +761,14 @@ class FR3Interface(Node):
         self.get_logger().info(f"Duration [s]: {duration_secs}")
 
         start_time = self.get_clock().now()
-        # self._goal_pose.pose = goal_msg.pose
 
         while (self.get_clock().now() - start_time) < duration:
             if goal_handle.is_cancel_requested:
-                goal_handle.canceled()
                 self.get_logger().info("Goal canceled by client.")
+                self.control_mode = ControlMode.PAUSE
+
+                goal_handle.canceled()
+
                 return GotoPose.Result()
 
             error = self.X_WG_goal.translation - self.X_WG.translation
@@ -752,6 +786,7 @@ class FR3Interface(Node):
         end_time = self.get_clock().now()
         duration = (end_time - start_time).nanoseconds / 1e9
         self.get_logger().info(f"Goal reached in {duration:.2f} seconds.")
+        self.get_logger().info(f"Final cartesian pose: {self.X_WG.translation}")
 
         goal_handle.succeed()
         result = GotoPose.Result()
@@ -759,8 +794,10 @@ class FR3Interface(Node):
 
         # end_pose = self.X_WG
         # result.final_pose = se32rospose(end_pose)  #TODO: Implement
+        self.get_logger().info(f"Goal reached: {self._goal_reached}")
 
-        self.get_logger().info("Goal succeeded.")
+        self.control_mode = ControlMode.PAUSE
+
         return result
 
     async def _goto_joint_vels_action(self, goal_handle):
@@ -902,6 +939,64 @@ class FR3Interface(Node):
         self.get_logger().info("(Action: Gripper toggle) Goal succeeded.")
         return result
 
+    def _action_gripper_open(self, goal_handle):
+        self.get_logger().info("(Action: Gripper open) Received goal")
+
+        start_time = self.get_clock().now()
+        max_duration = Duration(seconds=10)
+
+        self.gripper_open()
+
+        while self._gripper_in_action:
+            if goal_handle.is_cancel_requested:
+                goal_handle.canceled()
+                self.get_logger().info("(Action: Gripper open) Goal canceled by client.")
+                return GripperOpen.Result()
+
+            if (self.get_clock().now() - start_time) > max_duration:
+                self.get_logger().info("(Action: Gripper open) Gripper open timed out.")
+                goal_handle.abort()
+                return GripperOpen.Result()
+
+            else:
+                time.sleep(0.01)
+
+        #! Return results
+        goal_handle.succeed()
+        result = GripperOpen.Result()
+        result.success = True
+        self.get_logger().info("(Action: Gripper open) Goal succeeded.")
+        return result
+
+    def _action_gripper_close(self, goal_handle):
+        self.get_logger().info("(Action: Gripper close) Received goal")
+
+        start_time = self.get_clock().now()
+        max_duration = Duration(seconds=10)
+
+        self.gripper_close()
+
+        while self._gripper_in_action:
+            if goal_handle.is_cancel_requested:
+                goal_handle.canceled()
+                self.get_logger().info("(Action: Gripper close) Goal canceled by client.")
+                return GripperClose.Result()
+
+            if (self.get_clock().now() - start_time) > max_duration:
+                self.get_logger().info("(Action: Gripper close) Gripper open timed out.")
+                goal_handle.abort()
+                return GripperClose.Result()
+
+            else:
+                time.sleep(0.01)
+
+        #! Return results
+        goal_handle.succeed()
+        result = GripperClose.Result()
+        result.success = True
+        self.get_logger().info("(Action: Gripper close) Goal succeeded.")
+        return result
+
     # --- MARK: Services, clients
     def _get_control_mode_srv_cb(self, request, response: GetControlMode.Response):
         self.get_logger().info("Service request to get control mode")
@@ -910,7 +1005,7 @@ class FR3Interface(Node):
         return response
 
     def _set_control_mode_srv_cb(self, request: SetControlMode.Request, response: SetControlMode.Response):
-        self.get_logger().info(f"Service request to set control mode to: {request.control_mode}")
+        self.get_logger().info(f"Service request to set control mode to: {ControlMode(request.control_mode)}")
         try:
             self.control_mode = ControlMode(request.control_mode)
             self.get_logger().info(f"Control mode set to: {self.control_mode}")
@@ -930,28 +1025,32 @@ class FR3Interface(Node):
         return response
 
     def _set_goal_source_srv_cb(self, request: SetGoalSource.Request, response: SetGoalSource.Response):
-        self.get_logger().info(f"Service request to set goal source to: {request.goal_source}")
+        self.get_logger().info(f"Service request to set goal source to: {GoalSource(request.goal_source)}")
 
         try:
             self.goal_source = GoalSource(request.goal_source)
+            self.get_logger().info(f"Goal source set to: {self.goal_source}")
+
             response.success = True
             response.message = f"Goal source set to {self.goal_source}"
 
         except (ValueError, NotImplementedError) as e:
+            self.get_logger().error(f"Error setting goal source: {e}")
             response.success = False
             response.message = str(e)
 
         return response
 
-    # --- MARK: Functions
-    #! Arm
+    # ---  Functions
+    #! MARK: Arm
     def _compute_ctrl_cmd(self):
         """Compute the control command based on the current control mode and publish it"""
         if not self._is_state_initialized:
             return
 
         if self.control_mode == ControlMode.PAUSE:
-            return
+            self.V_WG_goal = pin.Motion.Zero()
+            self._compute_cart_vel_cmd()
 
         elif self.control_mode == ControlMode.CART_VEL:
             self._compute_cart_vel_cmd()
@@ -964,6 +1063,7 @@ class FR3Interface(Node):
 
     def _compute_cart_vel_cmd(self):
         """Publishes self.V_WG_goal to `/cartesian_vel_controller/commands` topic"""
+        # self.get_logger().info("Compute cartesian velocity command...")
 
         # TODO: Add limiters
         ...
@@ -981,12 +1081,14 @@ class FR3Interface(Node):
         """
         Compute gripper velocity to reach the target goal pose using position based servoing
         """
+        # self.get_logger().info("Compute cartesian pose command...")
+
         # goal_pose: Pose = self._teleop_goal_msg.ee_des
         goal_t = self.X_WG_goal.translation
         current_t = self.X_WG.translation
 
         # Linear
-        K = 1
+        K = 0.5
         gains = np.array([K, K, K])
 
         error = goal_t - current_t
@@ -998,8 +1100,7 @@ class FR3Interface(Node):
         #     f"RPY: {pin.rpy.matrixToRpy(self.X_WG.rotation)} \t\tRPY_g: {pin.rpy.matrixToRpy(self.X_WG_goal.rotation)}"
         # )
 
-        K_ome = 1
-
+        K_ome = 0.5
         R_error = self.X_WG_goal.rotation.dot(self.X_WG.rotation.T)
         S = 1 / 2 * (R_error - R_error.T)
         omega = np.array([S[2, 1], S[0, 2], S[1, 0]])
@@ -1022,25 +1123,6 @@ class FR3Interface(Node):
         command_msg.twist = motion2rostwist(desired_motion)
 
         self._cartesian_vel_pub.publish(command_msg)
-
-    def _compute_goto_cmd(self):
-        """Probably not needed"""
-        goal_t, _ = self.pose_msg_to_array(self._goal_pose.pose)
-        # current_t, _ = self.pose_msg_to_array(self.o_t_ee.pose)
-        current_t = self.X_WG.translation
-        # self.get_logger().info(f"Goal pose: {goal_t}")
-
-        K = 1
-        gains = np.array([K, K, K])
-
-        error = goal_t - current_t
-
-        desired_vel = np.diag(gains) @ error
-
-        if np.linalg.norm(error) < self._goto_goal_epsilon:
-            self._goal_reached = True
-
-        return desired_vel
 
     #! --- MARK: Gripper
     def gripper_open(self):
@@ -1239,6 +1321,10 @@ class FR3Interface(Node):
         self.get_logger().info(f"Setting control mode to: {value}")
         self._control_mode = ControlMode(value)
 
+        # if value == ControlMode.PAUSE:
+        #     self.V_WG_goal = pin.Motion()
+        #     # self._compute_cart_vel_cmd()
+
     @property
     def goal_source(self) -> GoalSource:
         return self._goal_source
@@ -1264,12 +1350,32 @@ class FR3Interface(Node):
             self.control_mode = ControlMode.CART_VEL
 
         if value == GoalSource.TOPIC:
-            raise NotImplementedError("TOPIC goal source not yet implemented")
+            # self.go
+            ...
 
         self.get_logger().info(f"Setting goal source to: {value}")
         self._goal_source = GoalSource(value)
 
     #! Old Async functions
+    # def _compute_goto_cmd(self):
+    #     """Probably not needed"""
+    #     goal_t, _ = self.pose_msg_to_array(self._goal_pose.pose)
+    #     # current_t, _ = self.pose_msg_to_array(self.o_t_ee.pose)
+    #     current_t = self.X_WG.translation
+    #     # self.get_logger().info(f"Goal pose: {goal_t}")
+
+    #     K = 1
+    #     gains = np.array([K, K, K])
+
+    #     error = goal_t - current_t
+
+    #     desired_vel = np.diag(gains) @ error
+
+    #     if np.linalg.norm(error) < self._goto_goal_epsilon:
+    #         self._goal_reached = True
+
+    #     return desired_vel
+
     # def _pub_cartesian_vel_cmd(self):
     #     """Publishes self._V_G to `/cartesian_vel_controller/commands` topic
 

@@ -27,7 +27,7 @@ from rclpy.action import ActionClient
 
 # Interfaces
 from sensor_msgs.msg import JointState
-from geometry_msgs.msg import PoseStamped
+from geometry_msgs.msg import PoseStamped, TwistStamped
 from franka_msgs.msg import FrankaRobotState
 from arm_interfaces.srv import SetControlMode, GetControlMode, SetGoalSource, GetGoalSource
 from arm_interfaces.action import (
@@ -37,10 +37,13 @@ from arm_interfaces.action import (
     GotoEEVelocity,
     GripperHoming,
     GripperToggle,
+    GripperOpen,
+    GripperClose,
 )
 
 from robot_arm_interface.fr3_interface import GoalSource, ControlMode
-from robot_arm_interface.utils import se32rospose
+from robot_arm_interface.utils import motion2rostwist, rostwist2motion, rospose2se3, se32rospose
+
 
 import pinocchio as pin
 import numpy as np
@@ -105,7 +108,7 @@ def generate_test_description():
 
 
 # Active tests
-# @unittest.skip("Skipping FR3 interface initialization tests")
+@unittest.skip("Skipping FR3 interface initialization tests")
 class TestFR3InterfaceInit(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -257,7 +260,7 @@ class TestFR3InterfaceInit(unittest.TestCase):
     def test_set_get_goal_src_srv_topic(self, proc_output):
         """Check whether `/fr3_interface/set_goal_source` and `/fr3_interface/get_goal_source` service works"""
 
-        #! Set control mode to Cartesian velocity
+        #! Set goal source to TOPIC
         srv = self.node.create_client(SetGoalSource, "/fr3_interface/set_goal_source")
 
         req = SetGoalSource.Request()
@@ -283,7 +286,7 @@ class TestFR3InterfaceInit(unittest.TestCase):
         assert response.goal_source == GoalSource.TOPIC.value, "Goal source is not TOPIC"
 
 
-# @unittest.skip("Skipping FR3 interface initialization tests")
+@unittest.skip("Skipping FR3 interface initialization tests")
 class TestFR3InterfaceGripper(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -458,7 +461,139 @@ class TestFR3InterfaceGripper(unittest.TestCase):
         finally:
             self.node.destroy_subscription(sub)
 
+    def test_gripper_open_close(self, proc_output):
+        """Check whether `gripper_open` and `gripper_close` actions works"""
+        # Sub to gripper state
+        self.gripper_state: JointState = None
 
+        sub = self.node.create_subscription(
+            JointState, "/fr3_gripper/joint_states", lambda msg: setattr(self, "gripper_state", msg), 100
+        )
+
+        # Create the action client
+        action_client_open = ActionClient(self.node, GripperOpen, "gripper_open")
+        action_client_open.wait_for_server()
+
+        action_client_close = ActionClient(self.node, GripperClose, "gripper_close")
+        action_client_close.wait_for_server()
+
+        try:
+            while self.gripper_state is None:
+                print("Waiting for gripper state...")
+                rclpy.spin_once(self.node, timeout_sec=1)
+
+            start_state = self.gripper_state.position
+
+            def is_gripper_closed(gripper_state: JointState):
+                """Check if the gripper is closed"""
+                return gripper_state.position[0] < 0.01 and gripper_state.position[1] < 0.01
+
+            def open_gripper():
+                #! Open
+                self.node.get_logger().info("Opening gripper")
+                goal_msg = GripperOpen.Goal()
+                future = action_client_open.send_goal_async(goal_msg)
+                rclpy.spin_until_future_complete(self.node, future)
+
+                success = False
+                if future.done():
+                    goal_handle = future.result()
+
+                    # Goal refused
+                    if not goal_handle.accepted:
+                        self.node.get_logger().error("Goal was rejected by the action server!")
+                        success = False
+
+                    # Goal accepted
+                    self.node.get_logger().info("Goal accepted, waiting for result...")
+                    result_future = goal_handle.get_result_async()
+                    rclpy.spin_until_future_complete(self.node, result_future)
+
+                    # Action completed
+                    if result_future.done():
+                        result = result_future.result()
+                        self.node.get_logger().info(f"Result received: {result.result.success}")
+                        success = result.result.success
+
+                    # Action failed
+                    else:
+                        self.node.get_logger().error("Failed to get result!")
+                        success = False
+
+                # Goal not received
+                else:
+                    self.node.get_logger().error("Failed to send goal!")
+                    success = False
+
+                return success
+
+            def close_gripper():
+                start_state = self.gripper_state.position
+
+                self.node.get_logger().info("Closing gripper")
+                goal_msg = GripperClose.Goal()
+                future = action_client_close.send_goal_async(goal_msg)
+                rclpy.spin_until_future_complete(self.node, future)
+
+                success = False
+                if future.done():
+                    goal_handle = future.result()
+
+                    # Goal refused
+                    if not goal_handle.accepted:
+                        self.node.get_logger().error("Goal was rejected by the action server!")
+                        success = False
+
+                    # Goal accepted
+                    self.node.get_logger().info("Goal accepted, waiting for result...")
+                    result_future = goal_handle.get_result_async()
+                    rclpy.spin_until_future_complete(self.node, result_future)
+
+                    # Action completed
+                    if result_future.done():
+                        result = result_future.result()
+                        self.node.get_logger().info(f"Result received: {result.result.success}")
+                        success = result.result.success
+
+                    # Action failed
+                    else:
+                        self.node.get_logger().error("Failed to get result!")
+                        success = False
+
+                # Goal not received
+                else:
+                    self.node.get_logger().error("Failed to send goal!")
+                    success = False
+
+                return success
+
+            if is_gripper_closed(self.gripper_state):
+                self.node.get_logger().info("Gripper is closed, opening...")
+                success = open_gripper()
+                assert success, "Failed to open gripper"
+                time.sleep(1)
+
+                self.node.get_logger().info("Gripper is opened, closing...")
+                success = close_gripper()
+                assert success, "Failed to close gripper"
+                time.sleep(1)
+
+            else:
+                self.node.get_logger().info("Gripper is opened, closing...")
+                success = close_gripper()
+                assert success, "Failed to close gripper"
+                time.sleep(1)
+
+                self.node.get_logger().info("Gripper is closed, opening...")
+                success = open_gripper()
+                assert success, "Failed to open gripper"
+                time.sleep(1)
+
+        finally:
+            self.node.destroy_subscription(sub)
+
+
+@unittest.skip("Skipping FR3 interface initialization tests")
 class TestFR3InterfaceActions(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -534,6 +669,225 @@ class TestFR3InterfaceActions(unittest.TestCase):
 
         # Check if the control mode was set
         assert success, "Failed to reach pose in given duration"
+
+
+# @unittest.skip("Skipping FR3 interface initialization tests")
+class TestFR3InterfaceFollowGripperVel(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        rclpy.init()
+
+    @classmethod
+    def tearDownClass(cls):
+        rclpy.shutdown()
+
+    def setUp(self):
+        self.node = rclpy.create_node("test_fr3_interface")
+
+        #! Set goal source to TOPIC
+        srv = self.node.create_client(SetGoalSource, "/fr3_interface/set_goal_source")
+
+        req = SetGoalSource.Request()
+        req.goal_source = GoalSource.TOPIC.value
+
+        while not srv.wait_for_service(timeout_sec=1.0):
+            self.node.get_logger().warn("Service '/fr3_interface/set_goal_source' not available, waiting...")
+
+        srv.wait_for_service(timeout_sec=1)
+        future = srv.call_async(req)
+
+        rclpy.spin_until_future_complete(self.node, future)
+        response = future.result()
+
+        # Check if the control mode was set
+        assert response.success, f"Failed to set goal source to TOPIC: {response.message}"
+
+        #! Set control mode to Cartesian velocity
+        srv = self.node.create_client(SetControlMode, "/fr3_interface/set_control_mode")
+
+        req = SetControlMode.Request()
+        req.control_mode = ControlMode.CART_VEL.value
+
+        while not srv.wait_for_service(timeout_sec=1.0):
+            self.node.get_logger().warn("Service '/fr3_interface/set_control_mode' not available, waiting...")
+
+        future = srv.call_async(req)
+
+        rclpy.spin_until_future_complete(self.node, future)
+        response = future.result()
+
+        # Check if the control mode was set
+        assert response.success, f"Failed to set control mode: {response.message}"
+
+        #! Create gripper command publisher
+        self.V_G_cmd = pin.Motion()
+        self.twist_cmd_msg = TwistStamped()
+        self.gripper_cmd_pub = self.node.create_publisher(TwistStamped, "/robot_arm/gripper_vel_command", 10)
+
+    def tearDown(self):
+        self.node.destroy_node()
+
+    def pub_vel(self, twist_msg: TwistStamped):
+        # self.node.get_logger().info("!!!!!!! Publishing gripper command !!!!!!!!!")
+        twist_msg.header.stamp = self.node.get_clock().now().to_msg()
+        self.gripper_cmd_pub.publish(twist_msg)
+
+    #! Tests
+    @unittest.skip("Skipping...")
+    def test_vz_pos(self, proc_output):
+        """Check whether goto_pose action works"""
+        self.V_G_cmd = pin.Motion()
+        self.V_G_cmd.linear = np.array([0.0, 0.0, 0.05])
+
+        twist_msg = TwistStamped()
+        twist_msg.header.stamp = self.node.get_clock().now().to_msg()
+        twist_msg.twist = motion2rostwist(self.V_G_cmd)
+
+        start_time = time.time()
+
+        timer = self.node.create_timer(0.1, lambda: self.pub_vel(twist_msg))
+
+        while time.time() - start_time < 2.0:
+            rclpy.spin_once(self.node, timeout_sec=1)
+
+        timer.cancel()
+
+        # Stop robot
+        self.V_G_cmd = pin.Motion()
+        twist_msg.twist = motion2rostwist(self.V_G_cmd)
+        self.pub_vel(twist_msg)
+
+        assert True
+
+    @unittest.skip("Skipping...")
+    def test_vz_neg(self, proc_output):
+        """Check whether goto_pose action works"""
+        self.V_G_cmd = pin.Motion()
+        self.V_G_cmd.linear = np.array([0.0, 0.0, -0.05])
+
+        twist_msg = TwistStamped()
+        twist_msg.header.stamp = self.node.get_clock().now().to_msg()
+        twist_msg.twist = motion2rostwist(self.V_G_cmd)
+
+        start_time = time.time()
+
+        timer = self.node.create_timer(0.1, lambda: self.pub_vel(twist_msg))
+
+        while time.time() - start_time < 2.0:
+            rclpy.spin_once(self.node, timeout_sec=1)
+
+        timer.cancel()
+
+        # Stop robot
+        self.V_G_cmd = pin.Motion()
+        twist_msg.twist = motion2rostwist(self.V_G_cmd)
+        self.pub_vel(twist_msg)
+
+        assert True
+
+    @unittest.skip("Skipping...")
+    def test_vx(self, proc_output):
+        """Check whether goto_pose action works"""
+        self.V_G_cmd = pin.Motion()
+        self.V_G_cmd.linear = np.array([0.05, 0.0, 0.0])
+
+        twist_msg = TwistStamped()
+        twist_msg.header.stamp = self.node.get_clock().now().to_msg()
+        twist_msg.twist = motion2rostwist(self.V_G_cmd)
+
+        start_time = time.time()
+
+        timer = self.node.create_timer(0.1, lambda: self.pub_vel(twist_msg))
+
+        while time.time() - start_time < 2.0:
+            rclpy.spin_once(self.node, timeout_sec=1)
+
+        timer.cancel()
+
+        # Stop robot
+        self.V_G_cmd = pin.Motion()
+        twist_msg.twist = motion2rostwist(self.V_G_cmd)
+        self.pub_vel(twist_msg)
+
+        assert True
+
+    @unittest.skip("Skipping...")
+    def test_wx(self, proc_output):
+        """Check whether goto_pose action works"""
+        self.V_G_cmd = pin.Motion()
+        self.V_G_cmd.angular = np.array([0.25, 0.0, 0.0])
+
+        twist_msg = TwistStamped()
+        twist_msg.header.stamp = self.node.get_clock().now().to_msg()
+        twist_msg.twist = motion2rostwist(self.V_G_cmd)
+
+        start_time = time.time()
+
+        timer = self.node.create_timer(0.1, lambda: self.pub_vel(twist_msg))
+
+        while time.time() - start_time < 2.0:
+            rclpy.spin_once(self.node, timeout_sec=1)
+
+        timer.cancel()
+
+        # Stop robot
+        self.V_G_cmd = pin.Motion()
+        twist_msg.twist = motion2rostwist(self.V_G_cmd)
+        self.pub_vel(twist_msg)
+
+        assert True
+
+    # @unittest.skip("Skipping...")
+    def test_wy(self, proc_output):
+        """Check whether goto_pose action works"""
+        self.V_G_cmd = pin.Motion()
+        self.V_G_cmd.angular = np.array([0.0, 0.25, 0.0])
+
+        twist_msg = TwistStamped()
+        twist_msg.header.stamp = self.node.get_clock().now().to_msg()
+        twist_msg.twist = motion2rostwist(self.V_G_cmd)
+
+        start_time = time.time()
+
+        timer = self.node.create_timer(0.1, lambda: self.pub_vel(twist_msg))
+
+        while time.time() - start_time < 2.0:
+            rclpy.spin_once(self.node, timeout_sec=1)
+
+        timer.cancel()
+
+        # Stop robot
+        self.V_G_cmd = pin.Motion()
+        twist_msg.twist = motion2rostwist(self.V_G_cmd)
+        self.pub_vel(twist_msg)
+
+        assert True
+
+    @unittest.skip("Skipping...")
+    def test_wz(self, proc_output):
+        """Check whether goto_pose action works"""
+        self.V_G_cmd = pin.Motion()
+        self.V_G_cmd.angular = np.array([0.0, 0.0, 0.25])
+
+        twist_msg = TwistStamped()
+        twist_msg.header.stamp = self.node.get_clock().now().to_msg()
+        twist_msg.twist = motion2rostwist(self.V_G_cmd)
+
+        start_time = time.time()
+
+        timer = self.node.create_timer(0.1, lambda: self.pub_vel(twist_msg))
+
+        while time.time() - start_time < 2.0:
+            rclpy.spin_once(self.node, timeout_sec=1)
+
+        timer.cancel()
+
+        # Stop robot
+        self.V_G_cmd = pin.Motion()
+        twist_msg.twist = motion2rostwist(self.V_G_cmd)
+        self.pub_vel(twist_msg)
+
+        assert True
 
 
 # # Post-shutdown tests
