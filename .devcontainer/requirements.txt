@@ -1,1 +1,4 @@
 HaplyHardwareAPI
+gymnasium
+skrl["torch"]
+pyyaml

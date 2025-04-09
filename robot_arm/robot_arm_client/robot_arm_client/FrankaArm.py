@@ -18,9 +18,10 @@ from geometry_msgs.msg import PoseStamped
 
 import numpy as np
 from typing import List, Literal
+import pinocchio as pin
 
 # from robot_arm_interface.utils import SE32PoseStamped, PoseStamped2SE3, array2pose
-from robot_arm_interface.utils import array2pose
+from robot_arm_interface.utils import se32rospose
 
 
 class FrankaArm(Node):
@@ -29,7 +30,7 @@ class FrankaArm(Node):
         self.get_logger().info("Starting robot arm client")
 
         #! Action clients
-        self._action_client_list = []
+        self._action_client_list: list[ActionClient] = []
         self._init_action_clients()
         self._wait_for_action_servers()
 
@@ -66,7 +67,9 @@ class FrankaArm(Node):
     def _wait_for_action_servers(self):
         self.get_logger().info("Waiting for action servers...")
         for ac in self._action_client_list:
-            ac.wait_for_server()
+            ac_found = ac.wait_for_server(timeout_sec=1)
+            if not ac_found:
+                self.get_logger().error(f"Action server {ac._action_name} not found!")
 
         self.get_logger().info("Action servers are up!")
 
@@ -102,6 +105,8 @@ class FrankaArm(Node):
     def goto_joints(self, joint_goal: np.ndarray, duration: Duration):
         self.get_logger().info(f"Moving joints to goal: {joint_goal}")
 
+        raise NotImplementedError("goto_joints not implemented yet")
+
         goal_msg = GotoJoints.Goal()
         goal_msg.joints_goal = joint_goal.tolist()
         goal_msg.duration = duration.to_msg()
@@ -131,18 +136,22 @@ class FrankaArm(Node):
             self.get_logger().error("Failed to send goal!")
             return False
 
-    def goto_home(self):
+    def home(self):
         self.get_logger().info("Moving to home position")
 
-        joint_home_position = np.deg2rad([0, -45, 0, -135, 0, 90, 45])
-        self.goto_joints(joint_home_position, Duration(seconds=3))
+        # joint_home_position = np.deg2rad([0, -45, 0, -135, 0, 90, 45])
+        # self.goto_joints(joint_home_position, Duration(seconds=3))
 
-    def goto_pose(self, pose_goal: np.ndarray, duration: Duration):
+        home_t = np.array([0.30, 0.00, 0.5])
+        home_pose = pin.SE3(pin.rpy.rpyToMatrix(np.array([np.pi, 0, 0])), home_t)
+        self.goto_pose(home_pose, Duration(seconds=10))
+
+    def goto_pose(self, pose_goal: pin.SE3, duration: Duration):
         self.get_logger().info(f"Moving to cartesian goal:\n {pose_goal}")
 
         pose_goal_msg = PoseStamped()
         pose_goal_msg.header.stamp = self.get_clock().now().to_msg()
-        pose_goal_msg.pose = array2pose(pose_goal)
+        pose_goal_msg.pose = se32rospose(pose_goal)
 
         # T = PoseStamped2SE3(pose_goal_msg)
 

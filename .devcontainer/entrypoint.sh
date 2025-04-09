@@ -13,6 +13,7 @@ fi
 # Update rosdep and install dependencies if src directory has files
 if [ -d "/ros2_ws/src" ] && [ "$(ls -A /ros2_ws/src)" ]; then
     cd /ros2_ws
+    apt update
     rosdep update
     rosdep install --from-paths src --ignore-src --rosdistro humble -y --skip-keys "libfranka pinocchio" || true
 fi

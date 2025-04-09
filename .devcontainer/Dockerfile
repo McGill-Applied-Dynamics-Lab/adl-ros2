@@ -44,6 +44,20 @@ RUN apt-get update && \
 # 	&& rm -rf /var/lib/apt/lists/*
 ENV DEBIAN_FRONTEND=
 
+#! Python deps
+# Upgrade pip
+RUN python3 -m pip install --upgrade pip
+
+# RUN pip install -e python/robotic_arm_controller 
+
+# Install Python dependencies
+COPY requirements.txt /tmp/requirements.txt
+RUN pip install -r /tmp/requirements.txt
+
+# Pytorch
+RUN pip3 install --no-deps --break-system-packages torch torchvision torchaudio 
+
+
 # #! Setup jtest-gtk
 USER $USERNAME
 RUN mkdir -p /home/user/.config/jstest-gtk
@@ -117,13 +131,6 @@ WORKDIR ${WS_FOLDER}
 RUN mkdir -p src
 
 USER root
-
-# #! Python
-# RUN pip install -e python/robotic_arm_controller 
-
-# Install Python dependencies
-COPY requirements.txt /tmp/requirements.txt
-RUN pip install -r /tmp/requirements.txt
 
 #! Environment variables
 ENV PATH=/opt/openrobots/bin:$PATH \

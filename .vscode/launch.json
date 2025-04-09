@@ -57,7 +57,7 @@
             "console": "integratedTerminal",
         },
         {
-            "name": "ROS2 Launch: i3_teleop.launch.py",
+            "name": "Launch: i3_teleop.launch.py",
             "type": "debugpy",
             "request": "launch",
             "program": "/opt/ros/humble/bin/ros2",  // Path to the ros2 executable
@@ -69,7 +69,7 @@
             "console": "integratedTerminal",
         },
         {
-            "name": "ROS2 Launch: joy_teleop.launch.py",
+            "name": "Launch: joy_teleop.launch.py",
             "type": "debugpy",
             "request": "launch",
             "program": "/opt/ros/humble/bin/ros2",  // Path to the ros2 executable
@@ -81,7 +81,7 @@
             "console": "integratedTerminal",
         },
         {
-            "name": "ROS2 Launch: fr3.launch.py",
+            "name": "Launch: fr3.launch.py",
             "type": "debugpy",
             "request": "launch",
             "program": "/opt/ros/humble/bin/ros2",  // Path to the ros2 executable

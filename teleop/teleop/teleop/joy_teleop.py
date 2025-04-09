@@ -164,7 +164,7 @@ class JoyTeleop(Node):
         self.get_logger().info(f"Joystick offset: {self._axes_offset}")
 
         # --- robot ---
-        if self._n_robot_cal_msgs < 20:
+        if self._n_robot_cal_msgs < 5:
             self.get_logger().error("Robot calibration failed. Not enough messages received on '/robot'.")
             raise Exception("Robot calibration failed.")
 

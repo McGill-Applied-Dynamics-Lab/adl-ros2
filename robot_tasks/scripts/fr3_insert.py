@@ -5,19 +5,27 @@ from rclpy.duration import Duration
 import argparse
 
 import numpy as np
+from numpy import pi as PI
+
 import time
-
 import pinocchio as pin
+from pathlib import Path
+from ament_index_python.packages import get_package_share_directory
 
-PEG_IN_HAND = False
-peg_start_pose = np.array([0.30, -0.20, 0.40])
-peg_start_rpy = np.array([0.0, 0.0, 0.0])
+PEG_IN_HAND = True
+peg_start_pose = np.array([0.40, 0.20, 0.050])
+peg_start_rpy = np.array([PI, 0.0, 0.0])
 X_P_start = pin.SE3(pin.rpy.rpyToMatrix(peg_start_rpy), peg_start_pose)
 
 # Socket
-socket_start_pose = np.array([0.30, -0.20, 0.40])
+socket_start_pose = np.array([0.5, 0.0, 0.10])
 socket_start_rpy = np.array([0.0, 0.0, 0.0])
 X_S = pin.SE3(pin.rpy.rpyToMatrix(socket_start_rpy), socket_start_pose)
+
+# Agent Params
+agent_name = "insert_db2.pt"
+package_share_directory = Path(get_package_share_directory("robot_tasks"))
+agent_path = package_share_directory / "agents" / agent_name
 
 
 def main(args=None):
@@ -28,8 +36,12 @@ def main(args=None):
 
     rclpy.init(args=remaining)
 
+    #! Agent
+    ctrl_freq = 100  # Hz
+
     print("----- Starting peg insert task -----")
     franka_arm = FrankaArm()
+    franka_arm.home()
 
     # # Run with full teleop (joystick) capabilities
     # teleop_node = TeleopNode(franka_arm)
@@ -40,17 +52,18 @@ def main(args=None):
     #! Pick up peg
     if not PEG_IN_HAND:
         print("Picking up peg...")
-        # franka_arm.goto_pose(X_P_start, Duration(seconds=5.0))
+        franka_arm.goto_pose(X_P_start, Duration(seconds=5.0))
 
         # # Close gripper
         # franka_arm.gripper_close()
         franka_arm.gripper_close()
 
-    # # Moving to Start pose
-    # print("Moving to start pose...")
-    # gripper_start_pose = np.array([0.30, -0.20, 0.40])
-    # X_G_start = pin.SE3(pin.rpy.rpyToMatrix(np.array([0, 0, 0])), gripper_start_pose)
-    # franka_arm.goto_pose(X_G_start, Duration(seconds=5.0))
+    # Moving to Start pose
+    print("Moving to start pose...")
+    gripper_start_pose_t = np.array([0.5, 0.0, 0.10])
+    gripper_start_pose_rpy = np.array([PI, 0, 0])
+    X_G_start = pin.SE3(pin.rpy.rpyToMatrix(gripper_start_pose_rpy), gripper_start_pose_t)
+    franka_arm.goto_pose(X_G_start, Duration(seconds=10.0))
 
     # Start a trial!
     print("\nStarting a trial!")
