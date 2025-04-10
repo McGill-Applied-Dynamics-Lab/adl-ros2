@@ -19,14 +19,28 @@ python3 -m pip install torch torchvision torchaudio
 *Note*
 To view container building log `docker logs franka_ros2`
 
+## RL Agent
+Node to load an skrl agent and send its actions.
+It works based on actions -> an action call is required to start its control loop.
+
+For the PegInHole agent:
+```
+ros2 action send_goal /insert_action /arm_interfaces/action/PegInHole "{}"
+```
+
+To run testing:
+```
+
+```
+
 ## TODO
 - [ ] Fix torch installation in the Dockerfile
 
 - [x] Load my agent
 - [x] Subscribe to topics needed
-- [ ] Subscribe to services
+- [x] Subscribe to services
 - [ ] Trigger services
-- [ ] Process observations and send actions
+- [x] Process observations and send actions
 - [ ] Integrate in `fr3_insert.py`
 
 *see this chat https://gemini.google.com/app/e19525bb077db06c*
