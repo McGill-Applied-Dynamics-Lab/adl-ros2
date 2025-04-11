@@ -43,6 +43,13 @@
             "console": "integratedTerminal",
         },
         {
+            "name": "Node: rl_agent",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "src/adg_ros2/robot_tasks/robot_tasks/RLAgent.py",
+            "console": "integratedTerminal",
+        },
+        {
             "name": "Node: i3_teleop",
             "type": "debugpy",
             "request": "launch",

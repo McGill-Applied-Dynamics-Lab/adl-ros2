@@ -38,3 +38,19 @@ scp csirois@franka-pc:~/workspaces/franka_ros2_ws/index.html ~/workspaces/franka
 4. Open `index.html` in browser
 
 ### On Host
+
+## Data Analysis
+### With Foxglove
+Site: https://app.foxglove.dev/mc-gill/dashboard
+
+```download
+sudo apt install ros-$ROS_DISTRO-foxglove-bridge
+```
+
+To run:
+```
+ros2 launch foxglove_bridge foxglove_bridge_launch.xml
+```
+
+**Note**
+The node can be launced in the docker container

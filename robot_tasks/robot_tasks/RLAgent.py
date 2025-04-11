@@ -36,6 +36,7 @@ from arm_interfaces.action import PegInHole
 from arm_interfaces.srv import SetControlMode, GetControlMode, SetGoalSource, GetGoalSource
 from std_srvs.srv import Trigger
 
+from action_msgs.msg import GoalInfo, GoalStatus
 from rclpy.action import ActionServer, CancelResponse, GoalResponse
 from rclpy.action.server import ServerGoalHandle
 from rclpy.callback_groups import ReentrantCallbackGroup  # Recommended for Action Server
@@ -46,14 +47,14 @@ import threading  # For potential locks if needed with MTE
 import asyncio
 
 SOCKET_POSE = np.array([0.6, 0.0, 0.0])
+Z_STOP = 0.015  # 1cm
 
 
 def _process_cfg(cfg: dict) -> dict:
-    """Convert simple types to skrl classes/components
-
-    :param cfg: A configuration dictionary
-
-    :return: Updated dictionary
+    """
+    Convert simple types to skrl classes/components
+    cfg: A configuration dictionary
+    return: Updated dictionary
     """
     _direct_eval = [
         "learning_rate_scheduler",
@@ -259,6 +260,10 @@ class RlAgentNode(Node):
 
         self._last_action: np.array = np.zeros(self._action_dim, dtype=np.float32)
 
+        self._is_insertion_success = False
+        self._is_insertion_failed = False
+        self._task_finished = False
+
         # ** RPL Params **
         self.des_ee_speed = env_cfg["actions"]["arm_action"]["des_ee_speed"] / 10
         # self.des_ee_speed = 0.0
@@ -389,6 +394,8 @@ class RlAgentNode(Node):
         self.get_logger().info("Executing goal...")
 
         # --- 1. Set Control Mode and Goal Source ---
+        self._task_finished = False
+
         mode_set_ok = await self._set_robot_mode_async(control_mode=ControlMode.CART_VEL, goal_source=GoalSource.TOPIC)
 
         if not mode_set_ok:
@@ -412,23 +419,43 @@ class RlAgentNode(Node):
 
                     # Result should have been set by succeed/abort call
                     # Ensure cleanup happens if it wasn't already
-                    await self._deactivate_and_reset_mode_async()
-                    self._cleanup_goal(goal_handle)  # Pass handle for safety
+                    self._deactivate_and_reset_mode_async()
 
-                    # Return the result that was hopefully set
-                    # Need a way to get the result set by succeed/abort?
-                    # Let's return a default failure if we reach here unexpectedly
-                    return PegInHole.Result(success=False, message="Goal became inactive unexpectedly.")
+                    self._cleanup_goal(goal_handle)  # Pass handle for safety
+                    self.get_logger().info("Action completed")
+                    return result
 
                 if goal_handle.is_cancel_requested:
                     self.get_logger().info("Goal cancel requested.")
-                    await (
-                        self._deactivate_and_reset_mode_async()
-                    )  # gemini had `_deactivate_and_reset_mode` but not the method...
+                    self._deactivate_and_reset_mode_async()  # gemini had `await _deactivate_and_reset_mode` but not the method...
+
                     result.success = False
                     result.message = "Task cancelled."
-                    goal_handle.canceled(result)
+                    goal_handle.canceled()
                     self._cleanup_goal(goal_handle)
+
+                    self.get_logger().info("Action completed")
+                    return result
+
+                if self._task_finished:
+                    self.get_logger().info("Task finished.")
+
+                    # Insertion succeded
+                    if self._is_insertion_success:
+                        result.success = True
+                        result.message = "Goal succeeded."
+                        goal_handle.succeed()
+
+                    # Insertion failed
+                    elif self._is_insertion_failed:
+                        result.success = False
+                        result.message = "Insertion failed."
+                        goal_handle.abort()
+
+                    self._deactivate_and_reset_mode_async()
+
+                    self._cleanup_goal(goal_handle)
+                    self.get_logger().info("Action completed")
                     return result
 
             # Check success/failure conditions (done within control_loop_callback now)
@@ -455,13 +482,17 @@ class RlAgentNode(Node):
 
     def _cleanup_goal(self, goal_handle=None):
         """Reset goal handle, ensuring lock safety."""
-        with self._lock:
-            # Only reset if the provided handle matches the current one, or if forcing
-            if goal_handle is None or self._goal_handle == goal_handle:
-                self._goal_handle = None
-                self.get_logger().debug("Cleaned up goal handle.")
-            else:
-                self.get_logger().warn("Cleanup requested for a non-current/mismatched goal handle.")
+        self.get_logger().info("Cleaning up goal handle...")
+
+        #! Must be called from within a lock to ensure thread safety
+        # with self._lock:
+        # Only reset if the provided handle matches the current one, or if forcing
+        if goal_handle is None or self._goal_handle == goal_handle:
+            self._goal_handle = None
+            self.get_logger().debug("Cleaned up goal handle.")
+
+        else:
+            self.get_logger().warn("Cleanup requested for a non-current/mismatched goal handle.")
 
     #! --- MARK: RL Methods ---
     @torch.inference_mode()
@@ -497,7 +528,7 @@ class RlAgentNode(Node):
         self.X_P = self.X_G * self.X_GP
         self.peg_error = self.X_P.translation - self.X_S.translation
         peg_pos_rel = self.peg_error
-        print(f"Peg pose: {self.X_P.translation[2]}\t\t{peg_pos_rel[2]}")
+        # print(f"Peg pose: {self.X_P.translation[2]}\t\t{peg_pos_rel[2]}")
 
         last_action = self._last_action
 
@@ -519,6 +550,7 @@ class RlAgentNode(Node):
         return obs_tensor
 
     # --- Callback Functions for Subscriptions ---
+
     def _robot_state_callback(self, robot_state_msg: FrankaRobotState):
         """
         Callback for the '/franka_robot_state_broadcaster/robot_state' topic.
@@ -535,6 +567,7 @@ class RlAgentNode(Node):
         self.V_G = rostwist2motion(robot_state_msg.o_dp_ee_d.twist)
 
     #! --- MARK: Control Loop ---
+
     def control_loop_callback(self):
         # Check if there is an active goal
         with self._lock:
@@ -545,36 +578,39 @@ class RlAgentNode(Node):
             # Get a reference to the current goal handle inside the lock
             goal_handle = self._goal_handle
 
+        if self._task_finished:
+            # self.get_logger().info("Task finished, exiting control loop.")
+            return
+
         # -- Get observations
         self.latest_observation: torch.tensor = self._get_observation()
         if self.latest_observation is None:
-            self.get_logger().warn("Control loop active, but observation is not ready.", throttle_duration_sec=5)
+            self.get_logger().warn("Control loop active, but observation is not ready.")  # , throttle_duration_sec=5)
             return
 
         # -- Check if success/failure
-        success, failure = self.check_insertion_status()
-        task_finished = False
-        result = PegInHole.Result()
+        self._is_insertion_success, self._is_insertion_failed = self.check_insertion_status()
 
-        if success:
-            self.get_logger().info("Insertion success!")
-            result.success = True
-            result.message = "Insertion successful."
-            goal_handle.succeed(result)
-            task_finished = True
+        if self._is_insertion_success or self._is_insertion_failed:
+            self._task_finished = True
 
-        elif failure:
-            self.get_logger().info("Insertion failed!")
-            result.success = False
-            result.message = "Insertion failed."
-            goal_handle.abort(result)  # Use abort for failure condition
-            task_finished = True
+            if self._is_insertion_success:
+                self.get_logger().info("Insertion success!")
+                # goal_handle.succeed()
+                self._task_finished = True
 
-        if task_finished:
-            # Deactivate and cleanup outside the lock if possible, or call async helper
-            self._deactivate_and_reset_mode_async()  # Fire and forget deactivation
-            self._cleanup_goal(goal_handle)
-            return  # Stop further processing in this loop iteration
+            elif self._is_insertion_failed:
+                self.get_logger().info("Insertion failed!")
+                # goal_handle.abort()  # Use abort for failure condition
+                self._task_finished = True
+
+            return
+
+        # if self._task_finished:
+        #     # Deactivate and cleanup outside the lock if possible, or call async helper
+        #     # self._deactivate_and_reset_mode_async()  # Fire and forget deactivation
+        #     # self._cleanup_goal(goal_handle)
+        #     return  # Stop further processing in this loop iteration
 
         # -- Get Action from Agent
         action_tensor: torch.tensor = self._get_action()
@@ -595,7 +631,8 @@ class RlAgentNode(Node):
             np.array([0, 0, self.des_ee_speed]), np.zeros(3)
         )  # Gripper velocity in world frame
 
-        self.V_G_des = self.V_WG_ctrl  # + self.V_G_agt
+        self.V_G_des = self.V_WG_ctrl
+        # self.V_G_des = self.V_WG_ctrl + self.V_G_agt
 
         # 4. Send Action to Robot
         self.send_robot_command()
@@ -628,7 +665,7 @@ class RlAgentNode(Node):
         """
         success = False
         failure = False
-        z_thres = 0.01  # 1cm
+        z_thres = Z_STOP  # 1cm
         xy_thres = 0.03  # 3cm
 
         # Peg z reached the bottom
@@ -697,165 +734,46 @@ class RlAgentNode(Node):
 
         # Request default modes asynchronously (fire and forget)
         if self._fr3_int_set_ctrl_mode.service_is_ready() and self._fr3_int_set_goal_src.service_is_ready():
-            ctrl_mode_req = SetControlMode.Request(control_mode=ControlMode.PAUSE)
+            ctrl_mode_req = SetControlMode.Request(control_mode=ControlMode.PAUSE.value)
             # goal_src_req = SetGoalSource.Request(goal_source=self.default_goal_source)
             # Fire and forget these calls
             self._fr3_int_set_ctrl_mode.call_async(ctrl_mode_req)
             # self._fr3_int_set_goal_src.call_async(goal_src_req)
-            self.get_logger().info("Requested reset to default control mode and goal source.")
+            self.get_logger().info("Requested to set control mode to `PAUSE`")
 
         else:
             self.get_logger().warn("Cannot reset modes: control mode or goal source service not ready.")
 
-    # @property
-    # def is_active(self):
-    #     """
-    #     Property to check if the control loop is active.
-    #     """
-    #     return self._is_active
+    # Add this helper method for converting between int and enum
+    def _get_enum_from_value(self, enum_class, value):
+        """
+        Convert an integer value back to its enum constant.
 
-    # @is_active.setter
-    # def is_active(self, value: bool):
-    #     """
-    #     Setter for the control loop active state.
-    #     """
-    #     if self._is_active:
-    #         # Control loop already active
+        Args:
+            enum_class: The enum class (e.g., ControlMode, GoalSource)
+            value: The integer value
 
-    #         if not value:
-    #             # active -> inactive
-    #             self.get_logger().info("Deactivating control loop.")
+        Returns:
+            The corresponding enum member or None if not found
+        """
+        try:
+            # Method 1: Direct conversion if it's a proper Python Enum
+            return enum_class(value)
+        except (ValueError, TypeError):
+            # Method 2: Manual lookup through members
+            for member in enum_class:
+                if member.value == value:
+                    return member
+            return None
 
-    #             # --- Safety: Send a zero command immediately upon stopping ---
-    #             # self.get_logger().info("Sending zero command due to stop request.")
-
-    #             # self.V_G_des = pin.Motion()
-    #             # self.send_robot_command()  # Send command to stop motion
-
-    #             # Set fr3_interface control mode to pause
-    #             # ctrl_mode_request = SetControlMode.Request()
-    #             # ctrl_mode_request.control_mode = ControlMode.PAUSE.value
-
-    #             # future = self._fr3_int_set_ctrl_mode.call_async(ctrl_mode_request)
-    #             # future.add_done_callback(self._set_ctrl_mode_done_callback)
-
-    #         if value:
-    #             # active -> active
-    #             ...
-
-    #     else:
-    #         # Control loop not active
-    #         if value:
-    #             # inactive -> active
-    #             self.get_logger().info("Activating control loop.")
-
-    #             # Set fr3_interface control mode to cart vel
-    #             ctrl_mode_request = SetControlMode.Request()
-    #             ctrl_mode_request.control_mode = ControlMode.CART_VEL.value
-
-    #             future = self._fr3_int_set_ctrl_mode.call_async(ctrl_mode_request)
-    #             future.add_done_callback(self._set_ctrl_mode_done_callback)
-
-    #             # Set fr3_interface goal source mode to TOPIC
-    #             goal_src_request = SetGoalSource.Request()
-    #             goal_src_request.goal_source = GoalSource.TOPIC.value
-
-    #             future = self._fr3_int_set_goal_src.call_async(goal_src_request)
-    #             future.add_done_callback(self._set_goal_src_done_callback)
-
-    #         else:
-    #             # inactive -> inactive
-    #             # self.get_logger().info("Control loop already inactive.")
-    #             ...
-
-    #     self._is_active = value
-    #     self.get_logger().info(f"Control loop active state set to: {value}")
-
-    # # --- Service Callbacks ---
-    # def _start_control_callback(self, request: Trigger.Request, response: Trigger.Response):
-    #     """
-    #     Service callback to start the control loop.
-    #     """
-    #     if self.is_active:
-    #         response.success = False
-    #         response.message = "Control loop is already active."
-    #         self.get_logger().warn("Start control called when already active.")
-
-    #     else:
-    #         self.is_active = True
-    #         # Optional: Reset any internal agent state if necessary upon starting
-    #         # e.g., if your agent uses RNNs or has internal memory
-    #         response.success = True
-    #         response.message = "Control loop started."
-    #         self.get_logger().info("Control loop activated via service call.")
-    #     return response
-
-    # def _stop_control_callback(self, request: Trigger.Request, response: Trigger.Response):
-    #     """
-    #     Service callback to stop the control loop.
-    #     """
-    #     if not self.is_active:
-    #         response.success = False
-    #         response.message = "Control loop is already inactive."
-    #         self.get_logger().warn("Stop control called when already inactive.")
-
-    #     else:
-    #         self.is_active = False
-
-    #         # -------------------------------------------------------------
-    #         response.success = True
-    #         response.message = "Control loop stopped."
-    #         self.get_logger().info("Control loop deactivated via service call.")
-
-    #     return response
-
-    # def _set_ctrl_mode_done_callback(self, future):
-    #     # This runs when the control_mode_client call finishes
-    #     try:
-    #         mode_response: SetControlMode.Response = future.result()  # Get the result from the service call
-
-    #         # Check if the SetControlMode service succeeded
-    #         if mode_response.success:
-    #             self.get_logger().info("Control mode successfully set to 'cartesian vel'.")
-
-    #         else:
-    #             # Optional Lock if using MultiThreadedExecutor:
-    #             # with self.state_lock:
-    #             self.is_active = False  # Ensure not active
-    #             # self.start_pending = False
-    #             self.get_logger().error(
-    #                 "Failed to set control mode to 'cartesian vel'. Service call reported failure. Agent remains INACTIVE."
-    #             )
-
-    #     except Exception as e:
-    #         # Optional Lock if using MultiThreadedExecutor:
-    #         # with self.state_lock:
-    #         self.is_active = False  # Ensure not active
-    #         self.get_logger().error(f"Exception while calling set_control_mode service: {e}")
-
-    # def _set_goal_src_done_callback(self, future):
-    #     # This runs when the control_mode_client call finishes
-    #     try:
-    #         mode_response: SetGoalSource.Response = future.result()  # Get the result from the service call
-
-    #         # Check if the SetControlMode service succeeded
-    #         if mode_response.success:
-    #             self.get_logger().info("Goal source successfully set to 'topic'.")
-
-    #         else:
-    #             # Optional Lock if using MultiThreadedExecutor:
-    #             # with self.state_lock:
-    #             self.is_active = False  # Ensure not active
-    #             # self.start_pending = False
-    #             self.get_logger().error(
-    #                 "Failed to set goal source to 'topic'. Service call reported failure. Agent remains INACTIVE."
-    #             )
-
-    #     except Exception as e:
-    #         # Optional Lock if using MultiThreadedExecutor:
-    #         # with self.state_lock:
-    #         self.is_active = False  # Ensure not active
-    #         self.get_logger().error(f"Exception while calling set_control_mode service: {e}")
+    # Example usage:
+    def handle_current_mode(self, mode_int):
+        """Example of how to convert an integer back to enum"""
+        mode = self._get_enum_from_value(ControlMode, mode_int)
+        if mode is not None:
+            self.get_logger().info(f"Current control mode: {mode.name}")
+        else:
+            self.get_logger().warn(f"Unknown control mode value: {mode_int}")
 
 
 def main(args=None):
@@ -868,13 +786,17 @@ def main(args=None):
 
         try:
             executor.spin()
+
         except KeyboardInterrupt:
             node.get_logger().info("Keyboard interrupt detected.")
+
         finally:
             node.get_logger().info("Shutting down executor...")
             executor.shutdown()
-            # Deactivate and reset mode on shutdown (best effort)
-            node._deactivate_and_reset_mode_async()
+
+            # # Deactivate and reset mode on shutdown (best effort)
+            # node._deactivate_and_reset_mode_async()
+
             # Allow some time for async calls? Might not work reliably here.
             # time.sleep(0.5)
             node.destroy_node()

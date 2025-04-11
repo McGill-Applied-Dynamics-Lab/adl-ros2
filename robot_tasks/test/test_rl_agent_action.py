@@ -100,7 +100,7 @@ def test_context():
 
 
 # --- Helper Function ---
-def send_dummy_robot_state(node: rclpy.node.Node, pub: rclpy.publisher.Publisher, z_pos=0.1):
+def send_dummy_robot_state(node: rclpy.node.Node, pub: rclpy.publisher.Publisher, z_pos=0.1, x_pos=0.6):
     """Sends a robot state message."""
     msg = FrankaRobotState()
     # Populate with plausible default data (same as before)
@@ -112,7 +112,7 @@ def send_dummy_robot_state(node: rclpy.node.Node, pub: rclpy.publisher.Publisher
         effort=[0.0] * 7,
     )
     X_G_dummy = Pose()
-    X_G_dummy.position = Point(x=0.6, y=0.0, z=z_pos)
+    X_G_dummy.position = Point(x=x_pos, y=0.0, z=z_pos)
     X_G_dummy.orientation = Quaternion(x=1.0, y=0.0, z=0.0, w=0.0)
 
     msg.o_t_ee = PoseStamped(
@@ -223,7 +223,7 @@ def test_task_success(test_context):
     time.sleep(1.0)
 
     # Send robot state simulating successful insertion
-    send_dummy_robot_state(node, robot_state_pub, z_pos=0.1)  # z < 0.05 threshold
+    send_dummy_robot_state(node, robot_state_pub, z_pos=0.01)  # z < 0.01 threshold
 
     # Spin until the result is available
     spin_until_future_complete(node, get_result_future, timeout_sec=5.0)
@@ -248,7 +248,25 @@ def test_task_failure(test_context):
     goal_msg = PegInHole.Goal()
     send_goal_future = action_client.send_goal_async(goal_msg)
     spin_until_future_complete(node, send_goal_future)
-    goal_handle = send_goal_future.result()
-    assert goal_handle.accepted
 
-    # get_result_future = goal_
+    goal_handle = send_goal_future.result()
+    assert goal_handle.accepted, "Goal was rejected"
+
+    get_result_future = goal_handle.get_result_async()
+
+    # Wait briefly for mode setting
+    time.sleep(1.0)
+
+    # Send robot state simulating successful insertion
+    send_dummy_robot_state(node, robot_state_pub, z_pos=0.01, x_pos=0.5)  # z < 0.01 threshold
+
+    # Spin until the result is available
+    spin_until_future_complete(node, get_result_future, timeout_sec=5.0)
+
+    result_response = get_result_future.result()
+    status = result_response.status
+    result = result_response.result
+
+    assert status == GoalStatus.STATUS_ABORTED, "Expected action to be aborted"
+    assert not result.success, "Expected result to be failed"
+    node.get_logger().info(f"Goal succeeded as expected. Message: {result.message}")

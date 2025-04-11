@@ -25,7 +25,7 @@ It works based on actions -> an action call is required to start its control loo
 
 For the PegInHole agent:
 ```
-ros2 action send_goal /insert_action /arm_interfaces/action/PegInHole "{}"
+ros2 action send_goal /insert_action arm_interfaces/action/PegInHole "{}"
 ```
 
 To run testing:
@@ -39,8 +39,19 @@ To run testing:
 - [x] Load my agent
 - [x] Subscribe to topics needed
 - [x] Subscribe to services
-- [ ] Trigger services
+- [x] Trigger services
 - [x] Process observations and send actions
-- [ ] Integrate in `fr3_insert.py`
+- [x] Integrate in `fr3_insert.py`
+
+- [ ] Record measurements
+    - EE forces
+    - EE position
+    - Success
+    - Agent action
+    - EE vel 
+- [ ] Process recordings
+- [ ] Easy way to reset peg
+    - [ ] Fail if  
+
 
 *see this chat https://gemini.google.com/app/e19525bb077db06c*
