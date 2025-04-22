@@ -3,6 +3,7 @@ import launch
 import launch_ros.actions
 import launch_pytest
 from launch_pytest.tools import process as process_tools
+from ament_index_python.packages import get_package_share_directory
 
 import pytest
 import rclpy
@@ -17,6 +18,9 @@ from std_msgs.msg import String
 from geometry_msgs.msg import PoseStamped
 
 import numpy as np
+import pandas as pd
+from pathlib import Path
+import pickle
 
 
 @pytest.fixture
@@ -46,12 +50,46 @@ def launch_description(network_sim_node):
     )
 
 
+def bootstrap_data(df: pd.DataFrame) -> float:
+    """
+    Bootstrap the data to get a mean and standard deviation of the delay.
+    """
+    num_bootstrap_samples = 1000
+    bootstrap_means = []
+
+    for _ in range(num_bootstrap_samples):
+        sample = df["latency"].sample(n=len(df), replace=True)
+        bootstrap_means.append(sample.mean())
+
+    # # Plotting the histogram
+    # plt.hist(bootstrap_means, bins=30, edgecolor="k")
+    # plt.xlabel("Bootstrapped Mean Latency")
+    # plt.ylabel("Frequency")
+    # plt.title("Bootstrap Distribution of the Mean")
+    # plt.show()
+
+    # # Calculating mean and standard deviation
+    # mean_delay = np.mean(bootstrap_means)
+    # std_delay = 0.0
+
+    return bootstrap_means
+
+
 @pytest.mark.launch(fixture=launch_description)
 def test_delay():
     rclpy.init()
     node = SubPubNode("sub_pub_node")
     executor = rclpy.executors.SingleThreadedExecutor()
     spin_thread = None
+
+    # Load data
+    package_share_path = Path(get_package_share_directory("network_sim"))
+    csv_file_path = package_share_path / "data/5G-data.csv"
+    data_5g = pd.read_csv(csv_file_path)
+    node.get_logger().info("5G dataset loaded")
+
+    # Bootstrap data
+    bootstrap_means = bootstrap_data(data_5g)
 
     try:
         executor.add_node(node)
@@ -66,30 +104,49 @@ def test_delay():
 
         mean_delay, std_delay = node.analyse_delay()
 
+        node.get_logger().info(f"Mean delay: {mean_delay} ms")
+        node.get_logger().info(f"Standard deviation of delay: {std_delay} ms")
+        node.get_logger().info(f"Bootstrap means: {np.mean(bootstrap_means)}")
+
         assert mean_delay > 0.0, "Mean delay is not greater than 0"
         assert std_delay > 0.0, "Standard deviation of delay is not greater than 0"
 
-        exp_mean = 200
+        exp_mean = np.mean(bootstrap_means)
         epsilon = 10
         assert (mean_delay < exp_mean + epsilon) and (mean_delay > exp_mean - epsilon), (
             f"Mean delay {mean_delay} is not within {epsilon} ms of expected {exp_mean} ms"
         )
-        assert True, "Did not receive msgs !"
 
     finally:
-        # executor.shutdown()
+        # First properly shutdown the executor
+        executor.shutdown()
 
-        # # Wait for the spin thread to complete with a timeout
-        # if spin_thread and spin_thread.is_alive():
-        #     spin_thread.join(timeout=1.0)
+        # Wait for the spin thread to complete with a timeout
+        if spin_thread and spin_thread.is_alive():
+            spin_thread.join(timeout=1.0)
 
-        # # Now shutdown rclpy
-        # node.destroy_node()
-
-        # rclpy.shutdown()
+        rclpy.shutdown()
 
         if node:
             node.destroy_node()
+
+        # Instead of plotting directly, save the bootstrap means to a file
+        try:
+            test_data = {
+                "bootstrap_means": bootstrap_means,
+                "node_mean_delay": mean_delay,
+                "node_std_delay": std_delay,
+            }
+            save_file = Path(__file__).parent / "bootstrap_test_data"
+
+            with open(save_file.with_suffix(".pkl"), "wb") as f:
+                pickle.dump(test_data, f)
+
+            print(f"Test data saved to {save_file}")
+            print(f"To generate plot, run: python3 plot_bootstrap.py {save_file}")
+
+        except Exception as e:
+            print(f"Error saving bootstrap data: {e}")
 
 
 class SubPubNode(Node):
@@ -130,8 +187,5 @@ class SubPubNode(Node):
 
         mean_delay = np.mean(self.delays)
         std_delay = np.std(self.delays)
-
-        self.get_logger().info(f"Mean delay: {mean_delay} ms")
-        self.get_logger().info(f"Standard deviation of delay: {std_delay} ms")
 
         return mean_delay, std_delay
