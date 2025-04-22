@@ -9,11 +9,21 @@ Developped for ROS2 Humble with Ubuntu 22.04.
 * **[robot_tasks](robot_tasks/README.md)**: To execute task w/ the robot arm
 
 ## Installing
-- ROS dependencies
+1. Build Docker
+
+2. ROS dependencies
 ```
 sudo apt update
 rosdep update
 rosdep install --from-paths src --ignore-src --rosdistro humble -y --skip-keys "libfranka pinocchio"
+```
+
+3. Python deps
+```
+# numpy 1.25 needed for pinocchio. 2.0 makes it fail
+pip install numpy==1.25.2 
+pip install torch torchvision torchaudio 
+pip install skrl
 ```
 
 ## Testing

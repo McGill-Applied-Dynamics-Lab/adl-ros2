@@ -11,11 +11,21 @@ from std_msgs.msg import String
 import pandas as pd
 from pathlib import Path
 
+from arm_interfaces.msg import Delayed
+
+# TODO: Add param to select message type
+# TODO: Add param to select delay type
+
 
 class DelayedMessage:
-    def __init__(self, msg, scheduled_time):
+    def __init__(self, msg, scheduled_time: rclpy.time.Time, latency_ns: float):
         self.msg = msg
         self.scheduled_time = scheduled_time
+
+        if isinstance(msg, Delayed):
+            self.msg.sent_time = self.msg.header.stamp
+            self.msg.delayed_time = scheduled_time.to_msg()
+            self.msg.latency = rclpy.time.Duration(nanoseconds=latency_ns).to_msg()
 
     def __lt__(self, other):
         return self.scheduled_time < other.scheduled_time
@@ -38,8 +48,8 @@ class Delay5G(Node):
 
         #! Publishers and subscribers
         # Create publishers and subscribers
-        self.publisher = self.create_publisher(PoseStamped, self._output_topic, 10)
-        self.subscription = self.create_subscription(PoseStamped, self._input_topic, self._input_callback, 10)
+        self.publisher = self.create_publisher(Delayed, self._output_topic, 10)
+        self.subscription = self.create_subscription(Delayed, self._input_topic, self._input_callback, 10)
 
         #! Load 5G data
         # Load 5G data from CSV file
@@ -54,7 +64,7 @@ class Delay5G(Node):
         self.queue_lock = threading.Lock()
 
         # Create timer to check for delayed messages
-        self.timer = self.create_timer(0.001, self.timer_callback)  # check every 1ms
+        self.timer = self.create_timer(0.0001, self.timer_callback)  # check every 1ms
 
         self.get_logger().info(
             f"5G Delay Simulator started with {self.delay} second delay from {self._input_topic} to {self._output_topic}"
@@ -67,7 +77,7 @@ class Delay5G(Node):
         scheduled_time = current_time + rclpy.time.Duration(nanoseconds=latency_ns)
 
         with self.queue_lock:
-            heapq.heappush(self.msg_queue, DelayedMessage(msg, scheduled_time))
+            heapq.heappush(self.msg_queue, DelayedMessage(msg, scheduled_time, latency_ns))
 
     def timer_callback(self):
         current_time = self.get_clock().now()
@@ -77,7 +87,10 @@ class Delay5G(Node):
                 # Check if the earliest message is ready to publish
                 if self.msg_queue[0].scheduled_time <= current_time:
                     delayed_msg = heapq.heappop(self.msg_queue)
-                    self.publisher.publish(delayed_msg.msg)
+                    msg = delayed_msg.msg
+                    msg.header.stamp = current_time.to_msg()
+
+                    self.publisher.publish(msg)
                 else:
                     break
 

@@ -4,13 +4,13 @@ from rclpy.node import Node
 from ament_index_python.packages import get_package_share_directory
 
 # RL imports
+import pinocchio as pin
 import numpy as np
 import torch
 import gymnasium as gym
 from pathlib import Path
 import yaml
 import copy
-import pinocchio as pin
 
 # SKRL
 from skrl.agents.torch.ppo import PPO, PPO_DEFAULT_CONFIG

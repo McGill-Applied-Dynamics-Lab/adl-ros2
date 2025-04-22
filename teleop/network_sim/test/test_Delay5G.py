@@ -16,6 +16,7 @@ from threading import Thread
 import rclpy.time
 from std_msgs.msg import String
 from geometry_msgs.msg import PoseStamped
+from arm_interfaces.msg import Delayed
 
 import numpy as np
 import pandas as pd
@@ -99,14 +100,14 @@ def test_delay():
         spin_thread.daemon = True
         spin_thread.start()
 
-        run_time = 5  # seconds
+        run_time = 10  # seconds
         time.sleep(run_time)
 
         mean_delay, std_delay = node.analyse_delay()
 
+        node.get_logger().info(f"Bootstrap means: {np.mean(bootstrap_means)}")
         node.get_logger().info(f"Mean delay: {mean_delay} ms")
         node.get_logger().info(f"Standard deviation of delay: {std_delay} ms")
-        node.get_logger().info(f"Bootstrap means: {np.mean(bootstrap_means)}")
 
         assert mean_delay > 0.0, "Mean delay is not greater than 0"
         assert std_delay > 0.0, "Standard deviation of delay is not greater than 0"
@@ -156,27 +157,39 @@ class SubPubNode(Node):
 
         self.msg_event_object = Event()
 
-        self.publisher = self.create_publisher(PoseStamped, "input", 10)
-        self.pub_timer = self.create_timer(0.01, self.publisher_callback)
+        self.publisher = self.create_publisher(Delayed, "input", 10)
+        self.pub_timer = self.create_timer(0.001, self.publisher_callback)
 
-        self.subscription = self.create_subscription(PoseStamped, "output", self.subscriber_callback, 10)
+        self.subscription = self.create_subscription(Delayed, "output", self.subscriber_callback, 10)
 
         self.delays = np.array([], dtype=np.float64)
 
-    def subscriber_callback(self, msg: PoseStamped):
-        sent_time = msg.header.stamp
-        sent_time = rclpy.time.Time.from_msg(sent_time)
-
+    def subscriber_callback(self, msg: Delayed):
         current_time = self.get_clock().now()
         # self.get_logger().info(f"Received msg at {current_time} with sent time {sent_time}")
 
-        delay = (current_time.nanoseconds - sent_time.nanoseconds) / 1e6  # convert to milliseconds
-        self.get_logger().info(f"Delay: {delay} ms")
+        latency_ns = rclpy.time.Duration.from_msg(msg.latency).nanoseconds
+        latency_ms = latency_ns / 1e6
 
-        self.delays = np.append(self.delays, delay)
+        sent_time = rclpy.time.Time.from_msg(msg.sent_time)
+        delayed_time = rclpy.time.Time.from_msg(msg.delayed_time)
+        header_time = rclpy.time.Time.from_msg(msg.header.stamp)
+
+        # End-to-end latency
+        # network_sim latency
+
+        delay_ms = (delayed_time - sent_time).nanoseconds / 1e6
+        received_delay_ms = (current_time - sent_time).nanoseconds / 1e6
+        transmit_delay_ms = (header_time - sent_time).nanoseconds / 1e6
+
+        self.get_logger().info(
+            f"Lat: {latency_ms:.4f} ms \t Delay: {delay_ms:.4f} ms \t Received: {received_delay_ms:.4f} ms"
+        )
+
+        self.delays = np.append(self.delays, transmit_delay_ms)
 
     def publisher_callback(self):
-        msg = PoseStamped()
+        msg = Delayed()
 
         msg.header.stamp = self.get_clock().now().to_msg()
         self.publisher.publish(msg)

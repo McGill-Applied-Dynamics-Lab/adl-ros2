@@ -53,9 +53,10 @@ RUN python3 -m pip install --upgrade pip
 # Install Python dependencies
 COPY requirements.txt /tmp/requirements.txt
 RUN pip install -r /tmp/requirements.txt
+RUN python3 -m pip install --upgrade numpy
 
 # Pytorch
-RUN pip3 install --no-deps --break-system-packages torch torchvision torchaudio 
+# RUN pip3 install --no-deps --break-system-packages torch torchvision torchaudio 
 
 
 # #! Setup jtest-gtk

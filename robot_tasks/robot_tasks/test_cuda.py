@@ -1,8 +1,8 @@
+import torch
 import gymnasium
 
 print(gymnasium.__version__)
 
-import torch
 
 print(torch.__version__)
 
