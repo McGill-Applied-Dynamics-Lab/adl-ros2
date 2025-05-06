@@ -18,13 +18,12 @@ from arm_interfaces.msg import Delayed
 
 
 class DelayedMessage:
-    def __init__(self, msg, scheduled_time: rclpy.time.Time, latency_ns: float):
+    def __init__(self, msg, current_time: rclpy.time.Time, scheduled_time: rclpy.time.Time, latency_ns: float):
         self.msg = msg
         self.scheduled_time = scheduled_time
 
         if isinstance(msg, Delayed):
-            self.msg.sent_time = self.msg.header.stamp
-            self.msg.delayed_time = scheduled_time.to_msg()
+            self.msg.time_received_netsim = current_time.to_msg()
             self.msg.latency = rclpy.time.Duration(nanoseconds=latency_ns).to_msg()
 
     def __lt__(self, other):
@@ -77,7 +76,7 @@ class Delay5G(Node):
         scheduled_time = current_time + rclpy.time.Duration(nanoseconds=latency_ns)
 
         with self.queue_lock:
-            heapq.heappush(self.msg_queue, DelayedMessage(msg, scheduled_time, latency_ns))
+            heapq.heappush(self.msg_queue, DelayedMessage(msg, current_time, scheduled_time, latency_ns))
 
     def timer_callback(self):
         current_time = self.get_clock().now()
@@ -88,7 +87,8 @@ class Delay5G(Node):
                 if self.msg_queue[0].scheduled_time <= current_time:
                     delayed_msg = heapq.heappop(self.msg_queue)
                     msg = delayed_msg.msg
-                    msg.header.stamp = current_time.to_msg()
+                    msg.time_sent_netsim = current_time.to_msg()
+                    # msg.header.stamp = current_time.to_msg()
 
                     self.publisher.publish(msg)
                 else:

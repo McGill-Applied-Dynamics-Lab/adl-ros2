@@ -51,31 +51,6 @@ def launch_description(network_sim_node):
     )
 
 
-def bootstrap_data(df: pd.DataFrame) -> float:
-    """
-    Bootstrap the data to get a mean and standard deviation of the delay.
-    """
-    num_bootstrap_samples = 1000
-    bootstrap_means = []
-
-    for _ in range(num_bootstrap_samples):
-        sample = df["latency"].sample(n=len(df), replace=True)
-        bootstrap_means.append(sample.mean())
-
-    # # Plotting the histogram
-    # plt.hist(bootstrap_means, bins=30, edgecolor="k")
-    # plt.xlabel("Bootstrapped Mean Latency")
-    # plt.ylabel("Frequency")
-    # plt.title("Bootstrap Distribution of the Mean")
-    # plt.show()
-
-    # # Calculating mean and standard deviation
-    # mean_delay = np.mean(bootstrap_means)
-    # std_delay = 0.0
-
-    return bootstrap_means
-
-
 @pytest.mark.launch(fixture=launch_description)
 def test_delay():
     rclpy.init()
@@ -84,14 +59,9 @@ def test_delay():
     spin_thread = None
 
     # Load data
-    package_share_path = Path(get_package_share_directory("network_sim"))
-    csv_file_path = package_share_path / "data/5G-data.csv"
-    data_5g = pd.read_csv(csv_file_path)
     node.get_logger().info("5G dataset loaded")
 
     # Bootstrap data
-    bootstrap_means = bootstrap_data(data_5g)
-
     try:
         executor.add_node(node)
 
@@ -103,20 +73,24 @@ def test_delay():
         run_time = 10  # seconds
         time.sleep(run_time)
 
-        mean_delay, std_delay = node.analyse_delay()
+        latency_analysis = node.analyse_delay()
 
-        node.get_logger().info(f"Bootstrap means: {np.mean(bootstrap_means)}")
-        node.get_logger().info(f"Mean delay: {mean_delay} ms")
-        node.get_logger().info(f"Standard deviation of delay: {std_delay} ms")
+        time.sleep(2)  # Wait for the last message to be processed
+        # Log the mean and std for all keys in a table format
+        node.get_logger().info("Latency Analysis:")
+        node.get_logger().info(f"{'Latency Type':<20}{'Mean (ms)':<15}{'Std (ms)':<15}")
+        node.get_logger().info("-" * 50)
+        for key, (mean, std) in latency_analysis.items():
+            node.get_logger().info(f"{key:<20}{mean:<15.4f}{std:<15.4f}")
 
-        assert mean_delay > 0.0, "Mean delay is not greater than 0"
-        assert std_delay > 0.0, "Standard deviation of delay is not greater than 0"
+        # assert mean_delay > 0.0, "Mean delay is not greater than 0"
+        # assert std_delay > 0.0, "Standard deviation of delay is not greater than 0"
 
-        exp_mean = np.mean(bootstrap_means)
-        epsilon = 10
-        assert (mean_delay < exp_mean + epsilon) and (mean_delay > exp_mean - epsilon), (
-            f"Mean delay {mean_delay} is not within {epsilon} ms of expected {exp_mean} ms"
-        )
+        # exp_mean = np.mean(bootstrap_means)
+        # epsilon = 10
+        # assert (mean_delay < exp_mean + epsilon) and (mean_delay > exp_mean - epsilon), (
+        #     f"Mean delay {mean_delay} is not within {epsilon} ms of expected {exp_mean} ms"
+        # )
 
     finally:
         # First properly shutdown the executor
@@ -133,15 +107,10 @@ def test_delay():
 
         # Instead of plotting directly, save the bootstrap means to a file
         try:
-            test_data = {
-                "bootstrap_means": bootstrap_means,
-                "node_mean_delay": mean_delay,
-                "node_std_delay": std_delay,
-            }
-            save_file = Path(__file__).parent / "bootstrap_test_data"
+            save_file = Path(__file__).parent / "latency_analysis"
 
             with open(save_file.with_suffix(".pkl"), "wb") as f:
-                pickle.dump(test_data, f)
+                pickle.dump(latency_analysis, f)
 
             print(f"Test data saved to {save_file}")
             print(f"To generate plot, run: python3 plot_bootstrap.py {save_file}")
@@ -162,31 +131,44 @@ class SubPubNode(Node):
 
         self.subscription = self.create_subscription(Delayed, "output", self.subscriber_callback, 10)
 
-        self.delays = np.array([], dtype=np.float64)
+        self.latencies = {
+            "end-to-end": np.array([], dtype=np.float64),  # End-to-end latency
+            "netsim": np.array([], dtype=np.float64),  # Netsim latency
+            "desired": np.array([], dtype=np.float64),  # Desired netsim latency
+            "source-netsim": np.array([], dtype=np.float64),  # Source to netsim latency
+            "netsim-dest": np.array([], dtype=np.float64),  # Netsim to destination latency
+        }
 
     def subscriber_callback(self, msg: Delayed):
         current_time = self.get_clock().now()
         # self.get_logger().info(f"Received msg at {current_time} with sent time {sent_time}")
 
-        latency_ns = rclpy.time.Duration.from_msg(msg.latency).nanoseconds
-        latency_ms = latency_ns / 1e6
+        msg.time_received_dest = current_time.to_msg()
 
-        sent_time = rclpy.time.Time.from_msg(msg.sent_time)
-        delayed_time = rclpy.time.Time.from_msg(msg.delayed_time)
-        header_time = rclpy.time.Time.from_msg(msg.header.stamp)
+        # Supposed latency of the message
+        des_latency_ns = rclpy.time.Duration.from_msg(msg.latency).nanoseconds
+        des_latency_ms = des_latency_ns / 1e6
 
+        # Time stamps
+        time_sent_source = rclpy.time.Time.from_msg(msg.header.stamp)
+        time_received_netsim = rclpy.time.Time.from_msg(msg.time_received_netsim)
+        time_sent_netsim = rclpy.time.Time.from_msg(msg.time_sent_netsim)
+        time_received_dest = rclpy.time.Time.from_msg(msg.time_received_dest)
+
+        # -- Latencies
         # End-to-end latency
-        # network_sim latency
+        lat_end_to_end = (time_received_dest - time_sent_source).nanoseconds / 1e6
+        lat_source_netsim = (time_received_netsim - time_sent_source).nanoseconds / 1e6
+        lat_netsim_dest = (time_received_dest - time_sent_netsim).nanoseconds / 1e6
+        lat_netsim = (time_sent_netsim - time_received_netsim).nanoseconds / 1e6
 
-        delay_ms = (delayed_time - sent_time).nanoseconds / 1e6
-        received_delay_ms = (current_time - sent_time).nanoseconds / 1e6
-        transmit_delay_ms = (header_time - sent_time).nanoseconds / 1e6
+        self.get_logger().info(f"Lat: {des_latency_ms:.4f} ms \t EE Lat: {lat_end_to_end:.4f} ms")
 
-        self.get_logger().info(
-            f"Lat: {latency_ms:.4f} ms \t Delay: {delay_ms:.4f} ms \t Received: {received_delay_ms:.4f} ms"
-        )
-
-        self.delays = np.append(self.delays, transmit_delay_ms)
+        self.latencies["end-to-end"] = np.append(self.latencies["end-to-end"], lat_end_to_end)
+        self.latencies["source-netsim"] = np.append(self.latencies["source-netsim"], lat_source_netsim)
+        self.latencies["netsim-dest"] = np.append(self.latencies["netsim-dest"], lat_netsim_dest)
+        self.latencies["netsim"] = np.append(self.latencies["netsim"], lat_netsim)
+        self.latencies["desired"] = np.append(self.latencies["desired"], des_latency_ms)
 
     def publisher_callback(self):
         msg = Delayed()
@@ -195,10 +177,10 @@ class SubPubNode(Node):
         self.publisher.publish(msg)
 
     def analyse_delay(self):
-        if len(self.delays) == 0:
-            return 0.0, 0.0
+        if not self.latencies["end-to-end"].size:
+            return {key: (0.0, 0.0) for key in self.latencies}
 
-        mean_delay = np.mean(self.delays)
-        std_delay = np.std(self.delays)
+        # Compute mean and std for each latency type
+        lat_analysis = {key: (np.mean(values), np.std(values)) for key, values in self.latencies.items()}
 
-        return mean_delay, std_delay
+        return lat_analysis

@@ -37,11 +37,8 @@ def bootstrap_data(df: pd.DataFrame) -> float:
 
 def plot_bootstrap_data(data_file):
     try:
-        # Load bootstrap data
-        dir_path = Path(__file__).parent
-        with open(dir_path / data_file, "rb") as f:
-            test_data = pickle.load(f)
-
+        # -- Bootstraping
+        # to compute expected mean and std
         package_share_path = Path(get_package_share_directory("network_sim"))
         csv_file_path = package_share_path / "data/5G-data.csv"
         data_5g = pd.read_csv(csv_file_path)
@@ -49,8 +46,17 @@ def plot_bootstrap_data(data_file):
         # Bootstrap data
         bootstrap_means = bootstrap_data(data_5g)
 
+        # -- Load test data
+        dir_path = Path(__file__).parent
+        with open(dir_path / data_file, "rb") as f:
+            latency_data = pickle.load(f)
+
         # bootstrap_means = test_data["bootstrap_means"]
-        mean_delay = test_data["node_mean_delay"]
+        latency_end_to_end_mean = latency_data["end-to-end"][0]
+        lat_netsim_mean = latency_data["netsim"][0]
+        lat_desired_mean = latency_data["desired"][0]
+        lat_source_netsim_mean = latency_data["source-netsim"][0]
+        lat_netsim_dest_mean = latency_data["netsim-dest"][0]
 
         # Create the plot
         plt.figure(figsize=(10, 6))
@@ -59,7 +65,9 @@ def plot_bootstrap_data(data_file):
         plt.ylabel("Frequency")
         plt.title("Bootstrap Distribution of the Mean")
 
-        plt.axvline(mean_delay, color="red", linestyle="--", label="Mean Delay")
+        plt.axvline(latency_end_to_end_mean, color="red", linestyle="--", label="End-to-end Latency")
+        plt.axvline(lat_netsim_mean, color="blue", linestyle="--", label="NetworkSim Latency")
+        plt.axvline(lat_desired_mean, color="black", linestyle="--", label="Desired Latency")
         plt.legend()
 
         # Save plot to file
@@ -77,7 +85,7 @@ def plot_bootstrap_data(data_file):
 if __name__ == "__main__":
     if len(sys.argv) != 2:
         print("Usage: python3 plot_bootstrap.py <data_file.pkl>")
-        print('Defaulting to "bootstrap_test_data.pkl"')
-        sys.argv.append("bootstrap_test_data.pkl")
+        print('Defaulting to "latency_analysis.pkl"')
+        sys.argv.append("latency_analysis.pkl")
 
     plot_bootstrap_data(sys.argv[1])
