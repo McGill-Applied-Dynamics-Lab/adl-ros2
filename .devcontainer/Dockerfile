@@ -26,12 +26,15 @@ RUN groupadd --gid $USER_GID $USERNAME \
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-    python3-pip \
-	vim \
-    evtest \ 
-    jstest-gtk \ 
-    python3-serial \
-	&& rm -rf /var/lib/apt/lists/*
+        python3-pip \
+        vim \
+        evtest \
+        jstest-gtk \
+        python3-serial \
+ ### >>> purge Ubuntu’s old SymPy — torch needs ≥ 1.13
+        && apt-get purge -y python3-sympy \
+        && apt-get autoremove -y \
+    && rm -rf /var/lib/apt/lists/*
 # RUN apt-get update && \
 #     apt-get install -y --no-install-recommends \
 #     nodejs \

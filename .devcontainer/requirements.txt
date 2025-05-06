@@ -1,5 +1,5 @@
 HaplyHardwareAPI
 gymnasium
-# skrl["torch"]
+skrl[torch]
 pyyaml
 pandas
