@@ -130,5 +130,13 @@
     "python.testing.unittestEnabled": false,
     "python.testing.pytestEnabled": true,
     "ros.distro": "humble",
+    "spellright.language": [
+        "en_CA"
+    ],
+    "spellright.documentTypes": [
+        "markdown",
+        "latex",
+        "plaintext"
+    ],
     // "python.testing.pytestPath": "/usr/bin/pytest-3"
 }

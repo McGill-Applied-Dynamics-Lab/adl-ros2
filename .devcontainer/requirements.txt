@@ -1,5 +1,9 @@
+numpy==1.25.2
 HaplyHardwareAPI
 gymnasium
-skrl[torch]
 pyyaml
 pandas
+torch
+torchvision
+torchaudio
+skrl[torch]

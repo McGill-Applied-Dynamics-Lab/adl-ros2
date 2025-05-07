@@ -1,7 +1,7 @@
 # adg-ros2
 ROS2 packages for the Applied Dynamics Group at McGill.
 
-Developped for ROS2 Humble with Ubuntu 22.04. 
+Developed for ROS2 Humble with Ubuntu 22.04. 
 
 ## Packages
 * **[robot_arm](robot_arm/README.md)**: To send/process commands to the Franka Research 3
@@ -11,12 +11,16 @@ Developped for ROS2 Humble with Ubuntu 22.04.
 ## Installing
 1. Create a ros2 workspace
 2. In `src`, clone `adg_ros2`, `franka_ros2`, `isaac_ros2_messages`(?)
+TODO: commands
+*Note* name of folder needs to be `adg_ros2`, with an underscore and not an hyphen
+
 3. Create symlink to .devcontainer
 ```
 ln -s src/adg_ros2/.devcontainer .devcontainer
 ```
 
 4. Build Docker
+Vscode steps to build
 
 
 5. ROS dependencies
@@ -26,13 +30,19 @@ rosdep update
 rosdep install --from-paths src --ignore-src --rosdistro humble -y --skip-keys "libfranka pinocchio"
 ```
 
-6. Python deps
+6. Check installation success
 ```
-# numpy 1.25 needed for pinocchio. 2.0 makes it fail
-pip install numpy==1.25.2 
-pip install torch torchvision torchaudio 
-pip install skrl
+python3 scripts/verify_installation.py
 ```
+
+7. Build ros2 packages
+*from root directory*
+```
+colcon build --symlink-install --cmake-args '-DCMAKE_BUILD_TYPE=Debug'
+```
+
+8. Launch example
+TODO: Teleop example w/ rviz only
 
 ## Testing
 ### Franka-PC
@@ -71,4 +81,4 @@ ros2 launch foxglove_bridge foxglove_bridge_launch.xml
 ```
 
 **Note**
-The node can be launced in the docker container
+The node can be launched in the docker container

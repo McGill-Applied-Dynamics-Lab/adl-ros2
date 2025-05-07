@@ -7,6 +7,8 @@ ARG USER_GID=1000
 ARG USERNAME=user
 
 ARG WS_FOLDER=/ros2_ws
+# Add GPU arg with default to false
+# ARG USE_GPU=false
 
 #! Add User
 RUN groupadd --gid $USER_GID $USERNAME \
@@ -31,20 +33,11 @@ RUN apt-get update && \
         evtest \
         jstest-gtk \
         python3-serial \
- ### >>> purge Ubuntu’s old SymPy — torch needs ≥ 1.13
-        && apt-get purge -y python3-sympy \
-        && apt-get autoremove -y \
+    ### >>> purge Ubuntu’s old SymPy — torch needs ≥ 1.13
+    && apt-get purge -y python3-sympy \
+    && apt-get autoremove -y \
     && rm -rf /var/lib/apt/lists/*
-# RUN apt-get update && \
-#     apt-get install -y --no-install-recommends \
-#     nodejs \
-# 	npm \
-# 	&& rm -rf /var/lib/apt/lists/*
-# # npm packages
-# RUN apt-get update && \
-#     npm install -g \
-# 	xunit-viewer \
-# 	&& rm -rf /var/lib/apt/lists/*
+
 ENV DEBIAN_FRONTEND=
 
 #! Python deps
@@ -56,7 +49,7 @@ RUN python3 -m pip install --upgrade pip
 # Install Python dependencies
 COPY requirements.txt /tmp/requirements.txt
 RUN pip install -r /tmp/requirements.txt
-RUN python3 -m pip install --upgrade numpy
+# RUN python3 -m pip install --upgrade numpy
 
 # Pytorch
 # RUN pip3 install --no-deps --break-system-packages torch torchvision torchaudio 
@@ -146,10 +139,14 @@ ENV PATH=/opt/openrobots/bin:$PATH \
     # PYTHONPATH=/opt/openrobots/lib/python3.10/site-packages:$PYTHONPATH \
     # CMAKE_PREFIX_PATH=/opt/openrobots/lib/cmake:$CMAKE_PREFIX_PATH
 
-#! Entrypoint script
-COPY entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
-ENTRYPOINT ["/entrypoint.sh"]
+# # Set environment variable to disable GPU if needed
+# ENV NVIDIA_VISIBLE_DEVICES=${USE_GPU:+all}
+# ENV NVIDIA_DRIVER_CAPABILITIES=${USE_GPU:+all}
+
+# #! Entrypoint script
+# COPY entrypoint.sh /entrypoint.sh
+# RUN chmod +x /entrypoint.sh
+# ENTRYPOINT ["/entrypoint.sh"]
 
 USER $USERNAME
 # RUN echo "export GZ_SIM_RESOURCE_PATH=${GZ_SIM_RESOURCE_PATH}:/ros2_ws/src/" >> ~/.bashrc
