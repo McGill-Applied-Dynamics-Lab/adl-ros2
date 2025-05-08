@@ -1,3 +1,8 @@
+"""
+Example of using skrl with Isaac Gym environments.
+Just used to develop the skrl agent nodes.
+"""
+
 import isaacgym
 
 import torch

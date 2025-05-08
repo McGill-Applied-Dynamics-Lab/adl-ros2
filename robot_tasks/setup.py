@@ -33,9 +33,9 @@ setup(
     entry_points={
         "console_scripts": [
             # Make sure your RLAgent node executable is listed
-            "rl_agent = robot_tasks.RLAgent:main",
-            "mock_control_mode_service = robot_tasks.mock_control_mode_service:main",
-            "mock_goal_source_service = robot_tasks.mock_goal_source_service:main",
+            "insert_rl_agent = robot_tasks.RLAgent:main",
+            "mock_control_mode_service = robot_tasks.mock.mock_control_mode_service:main",
+            "mock_goal_source_service = robot_tasks.mock.mock_goal_source_service:main",
         ],
     },
 )

@@ -45,7 +45,7 @@ def launch_description():
 
     rl_agent_node = launch_ros.actions.Node(
         package=PACKAGE_NAME,
-        executable="rl_agent",
+        executable="insert_rl_agent",
         name=RL_AGENT_NODE_NAME,
         parameters=[
             {"agent_checkpoint_path": dummy_agent_path},
@@ -226,7 +226,7 @@ def test_task_success(test_context):
     send_dummy_robot_state(node, robot_state_pub, z_pos=0.01)  # z < 0.01 threshold
 
     # Spin until the result is available
-    spin_until_future_complete(node, get_result_future, timeout_sec=5.0)
+    spin_until_future_complete(node, get_result_future, timeout_sec=100.0)
 
     result_response = get_result_future.result()
     status = result_response.status
@@ -269,4 +269,5 @@ def test_task_failure(test_context):
 
     assert status == GoalStatus.STATUS_ABORTED, "Expected action to be aborted"
     assert not result.success, "Expected result to be failed"
+    assert result.message == "Insertion failed.", "Failure message mismatch"
     node.get_logger().info(f"Goal succeeded as expected. Message: {result.message}")

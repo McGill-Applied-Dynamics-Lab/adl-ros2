@@ -113,7 +113,7 @@ def test_delay():
                 pickle.dump(latency_analysis, f)
 
             print(f"Test data saved to {save_file}")
-            print(f"To generate plot, run: python3 plot_bootstrap.py {save_file}")
+            print("To generate plot, run: python3 src/adg_ros2/teleop/network_sim/test/plot_bootstrap.py")
 
         except Exception as e:
             print(f"Error saving bootstrap data: {e}")
