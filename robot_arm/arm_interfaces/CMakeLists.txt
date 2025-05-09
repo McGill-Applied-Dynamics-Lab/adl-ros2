@@ -36,6 +36,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "action/GripperOpen.action"
   "action/GripperClose.action"
   "action/PegInHole.action"
+  "action/RlAgent.action"
   "srv/GetControlMode.srv"
   "srv/SetControlMode.srv"
   "srv/GetGoalSource.srv"
