@@ -15,6 +15,7 @@ import launch_pytest
 import rclpy
 import rclpy.action
 import rclpy.node
+import rclpy.publisher
 from rclpy.task import Future
 
 import std_msgs.msg
@@ -28,11 +29,17 @@ from arm_interfaces.srv import SetControlMode, SetGoalSource
 from ament_index_python.packages import get_package_share_directory
 from rclpy.action.client import ClientGoalHandle, GoalStatus
 
+from tf2_ros.static_transform_broadcaster import StaticTransformBroadcaster
+from geometry_msgs.msg import TransformStamped
+from typing import Generator, Tuple, List
+
 # Package name where RLAgent node and dummy files are located
 PACKAGE_NAME = "robot_tasks"
 ACTION_SERVER_NAME = "/lift_action"  # Match parameter default or override in launch
 ACTION_TYPE = RlAgent
 RL_AGENT_NODE_NAME = "rl_agent"  # Match node name in RLAgent class
+
+START_RL_NODE = False
 
 
 # --- Test Fixture for Launch Description ---
@@ -65,31 +72,37 @@ def launch_description():
         output="screen",
     )
 
-    return launch.LaunchDescription(
-        [
-            rl_agent_node,
-            mock_ctrl_mode_service_node,
-            mock_goal_src_service_node,
-            launch_pytest.actions.ReadyToTest(),  # Signal readiness
-        ]
-    )
+    nodes_to_launch = [
+        mock_ctrl_mode_service_node,
+        mock_goal_src_service_node,
+        launch_pytest.actions.ReadyToTest(),  # Signal readiness
+    ]
+
+    if START_RL_NODE:
+        nodes_to_launch.insert(0, rl_agent_node)
+
+    return launch.LaunchDescription(nodes_to_launch)
 
 
 # --- Module-Scoped Fixture for Test Node and RCLPY Context ---
 @pytest.fixture(scope="module")
-def test_context():
+def test_context() -> Generator[
+    Tuple[rclpy.node.Node, rclpy.action.ActionClient, List[TwistStamped], rclpy.publisher.Publisher], None, None
+]:
     """Initializes RCLPY, creates a test node and resources, and cleans up."""
     rclpy.init()
     node = rclpy.node.Node(f"test_node_{uuid.uuid4().hex}")
     action_client = rclpy.action.ActionClient(node, ACTION_TYPE, ACTION_SERVER_NAME)
     cmd_subscriber_list = []  # Shared list to store messages
     cmd_sub = node.create_subscription(
-        TwistStamped, "/robot_arm/gripper_vel_command", lambda msg: cmd_subscriber_list.append(msg), 10
+        PoseStamped, "/robot_arm/gripper_pose_des", lambda msg: cmd_subscriber_list.append(msg), 10
     )
     robot_state_pub = node.create_publisher(FrankaRobotState, "/franka_robot_state_broadcaster/robot_state", 10)
     print("Test node setup complete (module scope).")
-    # Yield resources needed by tests
+
+    #! Yield resources needed by tests
     yield node, action_client, cmd_subscriber_list, robot_state_pub
+
     # Teardown
     print("Test node teardown starting (module scope)...")
     node.destroy_subscription(cmd_sub)
@@ -133,7 +146,58 @@ def spin_until_future_complete(node: rclpy.node.Node, future: Future, timeout_se
     assert future.done(), f"Future did not complete within timeout ({timeout_sec}s)"
 
 
+def send_tf_transform(
+    node: rclpy.node.Node,
+    pub: rclpy.publisher.Publisher,
+    parent_frame: str,
+    child_frame: str,
+    translation: list,
+    rotation: list,
+):
+    """Sends a TF transform between two frames."""
+    tf_broadcaster = StaticTransformBroadcaster(node)
+    static_transform = TransformStamped()
+
+    static_transform.header.stamp = node.get_clock().now().to_msg()
+    static_transform.header.frame_id = parent_frame
+    static_transform.child_frame_id = child_frame
+
+    # Set translation
+    static_transform.transform.translation.x = translation[0]
+    static_transform.transform.translation.y = translation[1]
+    static_transform.transform.translation.z = translation[2]
+
+    # Set rotation (as quaternion)
+    static_transform.transform.rotation.x = rotation[0]
+    static_transform.transform.rotation.y = rotation[1]
+    static_transform.transform.rotation.z = rotation[2]
+    static_transform.transform.rotation.w = rotation[3]
+
+    # Publish the transform
+    tf_broadcaster.sendTransform(static_transform)
+    time.sleep(0.5)  # Give time for the transform to be processed
+
+
 # --- Test Functions ---
+@pytest.mark.launch(fixture=launch_description)
+def test_node_initialisation(test_context):
+    time.sleep(3.0)  # Allow time for the node to initialize
+
+    node, _, _, _ = test_context
+    node.get_logger().info("Listing running nodes...")
+    node_names_and_namespaces = node.get_node_names_and_namespaces()
+
+    rl_agent_alive = False
+    for name, namespace in node_names_and_namespaces:
+        node.get_logger().info(f"Node: {name}, Namespace: {namespace}")
+
+        if name == RL_AGENT_NODE_NAME:
+            rl_agent_alive = True
+            node.get_logger().info(f"Found RL agent node: {name}")
+
+    assert rl_agent_alive, f"RL agent node '{RL_AGENT_NODE_NAME}' not found in running nodes."
+
+
 # Apply the launch fixture marker to all test functions that need the nodes running
 @pytest.mark.launch(fixture=launch_description)
 def test_action_server_available(test_context):
@@ -167,37 +231,55 @@ def test_action_goal_acceptance(test_context):
 
 
 @pytest.mark.launch(fixture=launch_description)
-def test_command_publishing(test_context):
-    """Test if commands are published after goal acceptance and state update."""
+def test_observations(
+    test_context: Tuple[rclpy.node.Node, rclpy.action.ActionClient, List[TwistStamped], rclpy.publisher.Publisher],
+):
+    """Test if the agent correctly processes cube positions from TF2 transforms.
+
+    Also checks that commands are published after goal acceptance and state update."""
     node, action_client, cmd_list, robot_state_pub = test_context
     cmd_list.clear()
-    node.get_logger().info("Running test_command_publishing...")
-    assert action_client.wait_for_server(timeout_sec=5.0)
+    node.get_logger().info("Running test_observations...")
 
+    # Start the agent by sending a goal
+    assert action_client.wait_for_server(timeout_sec=5.0)
     goal_msg = ACTION_TYPE.Goal()
     send_goal_future = action_client.send_goal_async(goal_msg)
     spin_until_future_complete(node, send_goal_future)
     goal_handle = send_goal_future.result()
     assert goal_handle.accepted
 
-    # Wait briefly for mode setting calls (async in RLAgent)
+    # Wait for agent initialization
     time.sleep(1.0)
 
-    # Send initial robot state
-    send_dummy_robot_state(node, robot_state_pub, z_pos=0.1)
+    # First send robot state (gripper pose)
+    gripper_x = 0.5
+    gripper_z = 0.3
+    send_dummy_robot_state(node, robot_state_pub, z_pos=gripper_z, x_pos=gripper_x)
 
-    # Wait for a command
+    # Send a TF transform for the cube - different position from the default in the agent
+    cube_x = 0.8
+    cube_y = 0.2
+    cube_z = 0.05
+    send_tf_transform(
+        node=node,
+        pub=None,  # Not needed for TF
+        parent_frame="world",
+        child_frame="cube_frame",
+        translation=[cube_x, cube_y, cube_z],
+        rotation=[0.0, 0.0, 0.0, 1.0],  # Identity quaternion
+    )
+
+    # Wait for commands - a good indicator that observations were processed
     start_time = time.time()
-    cmd_received = False
     while time.time() - start_time < 5.0:
         rclpy.spin_once(node, timeout_sec=0.1)
-        if cmd_list:
-            cmd_received = True
-            break
+        # if cmd_list:
+        #     cmd_received = True
+        #     break
 
-    assert cmd_received, "No command received on /robot_arm/gripper_vel_command"
-    assert isinstance(cmd_list[0], TwistStamped)
-    node.get_logger().info(f"Command received: {cmd_list[0].twist}")
+    assert len(cmd_list) > 50, "No command received, suggesting observations weren't processed"
+    assert isinstance(cmd_list[0], PoseStamped), "Expected command to be of type PoseStamped"
 
     # Cleanup
     cancel_future = goal_handle.cancel_goal_async()

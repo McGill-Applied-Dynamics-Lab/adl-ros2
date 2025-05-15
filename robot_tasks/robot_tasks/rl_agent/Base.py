@@ -57,6 +57,7 @@ class RlAgentNode(Node, abc.ABC):
         default_agent_dir,
         observation_dim,
         action_dim,
+        default_ctrl_frequency=50.0,
     ):
         """
         Initialize the RL agent node.
@@ -103,7 +104,7 @@ class RlAgentNode(Node, abc.ABC):
             str(default_agent_dir),
             # descriptor="Directory to load the default agent from (relative path to `models_dir`)",
         )
-        self.declare_parameter("control_frequency", 50.0)  # Hz - Rate of the control loop
+        self.declare_parameter("control_frequency", default_ctrl_frequency)  # Hz - Rate of the control loop
         self.declare_parameter("action_scale", 0.05)  # Optional scaling for actions
 
         self._models_dir: Path = Path(self.get_parameter("models_dir").get_parameter_value().string_value)
@@ -394,7 +395,12 @@ class RlAgentNode(Node, abc.ABC):
         Get the action from the agent based on the latest observation.
         """
         # timestep and timesteps are not used in the PPO agent (returns: action, log_prob, outputs)
-        action, _, _ = self.agent.act(states=self.latest_observation, timestep=0, timesteps=0)
+        try:
+            action, _, _ = self.agent.act(states=self.latest_observation, timestep=0, timesteps=0)
+
+        except Exception as e:
+            self.get_logger().error(f"Error while getting action from agent: {e}", throttle_duration_sec=2)
+            return torch.zeros(self._action_dim, dtype=torch.float32)
 
         return action[0]
 
@@ -478,6 +484,7 @@ class RlAgentNode(Node, abc.ABC):
         if self._task_finished:
             return
 
+        self.get_logger().debug("Control loop running...", throttle_duration_sec=2.0)
         # -- Get observations
         self.latest_observation = self._get_observation()
         if self.latest_observation is None:

@@ -16,6 +16,9 @@ from franka_msgs.msg import FrankaRobotState  # TODO: Update when processed in t
 
 from robot_arm_interface.utils import motion2rostwist, rostwist2motion, rospose2se3, se32rospose
 
+# TF2
+from tf2_ros import TransformListener, Buffer
+
 # Action and services
 from arm_interfaces.action import RlAgent
 from rclpy.executors import MultiThreadedExecutor
@@ -26,6 +29,25 @@ from robot_tasks.rl_agent.Base import RlAgentNode
 class Lift_AgentNode(RlAgentNode):
     """
     Implementation of the Lift agent.
+
+    Actions (7,):
+    - Delta translation [dx, dy, dz] (3,)
+    - Delta rotation, angle-axis representation (3,)
+    - Gripper opening/closing (1,)
+
+    Observations (19,):
+    - object: pose of the object (10,)
+        - object position [x, y, z]. World frame (3,)
+        - object orientation. quaternions representation. World frame (4,)
+        - object relative position to gripper [x, y, z]. Gripper frame (3,)
+    - robot0_eef_pos: end-effector position (3,)
+        - [x, y, x]. World frame
+    - robot0_eef_quat: end-effector orientation (4,)
+        - quaternions representation. World frame
+    - robot0_gripper_qpos: finger position (2,)
+        - Distance of each finger to the gripper center.
+
+    Control rate: 20 Hz
     """
 
     def __init__(self):
@@ -43,8 +65,9 @@ class Lift_AgentNode(RlAgentNode):
             agent_lib="robomimic",
             default_models_dir=models_dir,
             default_agent_dir=default_agent,
-            observation_dim=24,  # TODO
-            action_dim=3,  # TODO
+            observation_dim=19,
+            action_dim=7,
+            default_ctrl_frequency=20.0,
         )
 
         self.action_scale = 0.05
@@ -66,12 +89,19 @@ class Lift_AgentNode(RlAgentNode):
         self.X_GP = pin.SE3(
             pin.rpy.rpyToMatrix(np.array([0, 0, 0])), np.array([0, 0, 0.04])
         )  # Gripper to peg transform
-        self.V_G = None  # Gripper velocity
-        self.V_G_des = None  # Desired gripper velocity
+        # self.V_G = None  # Gripper velocity
+        # self.V_G_des = None  # Desired gripper velocity
+        self.X_G_des = None
 
         self.X_C = pin.SE3(pin.rpy.rpyToMatrix(np.array([0, 0, 0])), np.array([0.6, 0.0, 0.0]))  # Cube pose
         self.X_G = None  # Gripper pose
         self.X_GC = None  # Gripper to cube transform
+
+        # TF2 setup
+        self.tf_buffer = Buffer()
+        self.tf_listener = TransformListener(self.tf_buffer, self)
+        self.world_frame = "world"
+        self.cube_frame = "cube_frame"
 
     def _init_subscribers(self):
         """
@@ -83,15 +113,19 @@ class Lift_AgentNode(RlAgentNode):
         robot_topic = "/franka_robot_state_broadcaster/robot_state"
         self._robot_sub = self.create_subscription(FrankaRobotState, robot_topic, self._robot_state_callback, 10)
 
+        # # --- object ---
+        # object_topic = "/object_pose"
+        # self._object_sub = self.create_subscription(PoseStamped, object_topic, self._object_state_callback, 10)
+
     def _init_publishers(self):
         """
         Initialize publishers for robot commands.
         """
         self.get_logger().info("Initializing publishers...")
 
-        robot_cmd_topic = "/robot_arm/gripper_vel_command"
+        robot_cmd_topic = "/robot_arm/gripper_pose_des"
         self._robot_cmd_pub = self.create_publisher(
-            TwistStamped,
+            PoseStamped,
             robot_cmd_topic,
             10,
         )
@@ -116,38 +150,71 @@ class Lift_AgentNode(RlAgentNode):
         Get the latest observation from the robot's sensors.
         """
         # Return if one observation component is not available
-        if self._joint_state is None or self.X_GP is None or self.X_C is None:
+        tf_cube_pose = self._get_cube_pose_from_tf()
+
+        if self._joint_state is None or self.X_GP is None or tf_cube_pose is None:
             self.get_logger().warn("Missing some observations...", throttle_duration_sec=5)
             return None
 
         #! Process observations
-        joint_pos_rel = np.array(self._joint_state.position) - self.default_joint_poses
-        joint_pos_rel = np.concatenate([joint_pos_rel, np.array([0.0, 0.0])])  # Add fingers
+        p_G = self.X_G.translation
+        quat_G = pin.Quaternion(self.X_G.rotation).coeffs()  # [x, y, z, w]
+        gripper_state = np.array([0, 0])  # TODO: Update with actual gripper state
 
-        joint_vel_rel = np.array(self._joint_state.velocity)
-        joint_vel_rel = np.concatenate([joint_vel_rel, np.array([0.0, 0.0])])  # Add fingers
+        # Try to get cube position from TF2, fall back to stored value if not available
+        self.X_GC = tf_cube_pose
+        p_C = self.X_C.translation
+        q_C = pin.Quaternion(self.X_C.rotation).coeffs()  # [x, y, z, w]
 
-        self.X_P = self.X_G * self.X_GP
-        self.peg_error = self.X_P.translation - self.X_C.translation
-        peg_pos_rel = self.peg_error
+        p_GC = self.X_C.translation - self.X_G.translation
 
-        last_action = self._last_action
+        object_array = [
+            p_C,
+            q_C,
+            p_GC,
+        ]
+        object_array = np.concatenate(object_array).astype(np.float32)
 
-        obs_list = [joint_pos_rel, joint_vel_rel, peg_pos_rel, last_action]
+        observation_dict = {
+            "object": torch.tensor(object_array, dtype=torch.float32).to(self.device),
+            "robot0_eef_pos": torch.tensor(p_G, dtype=torch.float32).to(self.device),
+            "robot0_eef_quat": torch.tensor(quat_G, dtype=torch.float32).to(self.device),
+            "robot0_gripper_qpos": torch.tensor(gripper_state, dtype=torch.float32).to(self.device),
+        }
 
+        return observation_dict
+
+    def _get_cube_pose_from_tf(self) -> pin.SE3:
+        """
+        Get the cube pose from the TF tree.
+
+        Returns:
+            pin.SE3: The cube pose in the world frame
+        """
+        # TODO: Return the the transform X_GC instead of X_WC
         try:
-            observation = np.concatenate(obs_list).astype(np.float32)
-            if observation.shape != (self._observation_dim,):
-                self.get_logger().error(
-                    f"Observation shape mismatch: expected ({self._observation_dim},), got {observation.shape}"
-                )
-                return None
-        except ValueError as e:
-            self.get_logger().error(f"Error concatenating observation: {e}")
-            return None
+            # Look up the transform from world to cube
+            transform = self.tf_buffer.lookup_transform(
+                self.world_frame, self.cube_frame, time=rclpy.time.Time(), timeout=rclpy.duration.Duration(seconds=1.0)
+            )
 
-        obs_tensor = torch.tensor(observation, dtype=torch.float32).to(self.device)
-        return obs_tensor
+            # Extract position and orientation from the transform
+            translation = transform.transform.translation
+            rotation = transform.transform.rotation
+
+            # Convert to pin.SE3
+            position = np.array([translation.x, translation.y, translation.z])
+            quaternion = np.array([rotation.x, rotation.y, rotation.z, rotation.w])
+
+            # Convert quaternion to rotation matrix
+            rot_matrix = pin.Quaternion(quaternion).toRotationMatrix()
+
+            # Create the SE3 transform
+            return pin.SE3(rot_matrix, position)
+
+        except Exception as e:
+            self.get_logger().warn(f"Failed to get cube pose from TF: {str(e)}", throttle_duration_sec=0.01)
+            return None
 
     def init_task_execution(self):
         """Initialize task-specific parameters."""
@@ -171,23 +238,27 @@ class Lift_AgentNode(RlAgentNode):
     def process_action(self, action):
         """Process the raw action from the agent."""
         # Scale the action
-        processed_action = action * self.action_scale
+        processed_action = action[:6] * self.action_scale
 
-        # Create motion from action
-        self.V_G_agt = pin.Motion(
-            np.array([processed_action[0], 0.0, processed_action[1]]),
-            np.array([0.0, processed_action[2], 0.0]),
-        )
+        # Compute desired position from the action
 
-        # Combine with control action
-        self.V_G_des = self.V_WG_ctrl + self.V_G_agt
+        delta_rotation_matrix = pin.exp3(action[3:6])
+        delta_pose_SE3 = pin.SE3(delta_rotation_matrix, processed_action[:3])
+
+        self.X_G_des = self.X_G * delta_pose_SE3
+
+        if action[6] > 0.5:
+            self.gripper_state = "open"
+        else:
+            self.gripper_state = "close"
 
     def send_robot_command(self):
         """Send the command to the robot."""
-        msg = TwistStamped()
-        gripper_twist = motion2rostwist(self.V_G_des)
+        msg = PoseStamped()
+
+        gripper_pose = se32rospose(self.X_G_des)
         msg.header.stamp = self.get_clock().now().to_msg()
-        msg.twist = gripper_twist
+        msg.pose = gripper_pose
 
         self._robot_cmd_pub.publish(msg)
 
