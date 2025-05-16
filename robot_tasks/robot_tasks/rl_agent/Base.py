@@ -142,6 +142,7 @@ class RlAgentNode(Node, abc.ABC):
         self.latest_observation = None
         self._last_action = np.zeros(self._action_dim, dtype=np.float32)
         self._task_finished = False
+        self._control_loop_active = False
 
         self._ctrl_mode = ControlMode.CART_VEL
         self._goal_src = GoalSource.TOPIC
@@ -298,6 +299,7 @@ class RlAgentNode(Node, abc.ABC):
         self._task_finished = False
         self._is_task_success = False
         self._is_task_failure = False
+        self._control_loop_active = False
 
         mode_set_ok = await self._set_robot_mode_async(control_mode=self._ctrl_mode, goal_source=self._goal_src)
 
@@ -308,13 +310,14 @@ class RlAgentNode(Node, abc.ABC):
             self._cleanup_goal(goal_handle=None, lock_handle=True)
             return result
 
-        # --- 2. Start Control Loop (Implicitly via goal_handle active state) ---
-        self.get_logger().info("Robot modes set. RL control loop is now active for this goal.")
-        # Reset last action
-        self._last_action = np.zeros(self._action_dim, dtype=np.float32)
-
         # Custom initialization for the task
         self.init_task_execution()
+
+        # --- 2. Start Control Loop (Implicitly via `_control_loop_active`) ---
+        self.get_logger().info("Robot modes set. RL control loop is now active for this goal.")
+
+        self._last_action = np.zeros(self._action_dim, dtype=np.float32)
+        self._control_loop_active = True
 
         # --- 3. Monitor for Completion or Cancellation ---
         result = self._create_result()
@@ -322,6 +325,7 @@ class RlAgentNode(Node, abc.ABC):
             with self._lock:
                 if not goal_handle.is_active:
                     self.get_logger().info("Goal is no longer active (completed or aborted externally).")
+                    self._control_loop_active = False
 
                     # Result should have been set by succeed/abort call
                     # Ensure cleanup happens if it wasn't already
@@ -333,6 +337,7 @@ class RlAgentNode(Node, abc.ABC):
 
                 if goal_handle.is_cancel_requested:
                     self.get_logger().info("Goal cancel requested.")
+                    self._control_loop_active = False
                     await self._deactivate_and_reset_mode_async()
 
                     result = self._create_result(success=False, message="Task cancelled.")
@@ -347,6 +352,7 @@ class RlAgentNode(Node, abc.ABC):
 
                 if self._task_finished:
                     self.get_logger().info("Task finished.")
+                    self._control_loop_active = False
 
                     # Get task result
                     success, message = self.get_task_result()
@@ -373,6 +379,7 @@ class RlAgentNode(Node, abc.ABC):
 
         # If rclpy is shut down
         self.get_logger().warn("RCLPY shutdown during goal execution.")
+        self._control_loop_active = False
         try:
             await self._deactivate_and_reset_mode_async()
         except Exception as e:
@@ -511,10 +518,14 @@ class RlAgentNode(Node, abc.ABC):
         """
         Main control loop that runs at the specified frequency.
         """
-        # Check if there is an active goal
+        #! Check if there is an active goal
+        if not self._control_loop_active:
+            self.get_logger().debug("Control loop inactive, control loop idle.", throttle_duration_sec=10)
+            return
+
         with self._lock:
             if self._goal_handle is None or not self._goal_handle.is_active:
-                self.get_logger().debug("No active goal, control loop idle.", throttle_duration_sec=10)
+                self.get_logger().debug("No active goal handle, control loop idle.", throttle_duration_sec=10)
                 return  # Do nothing if no goal is active
 
         if self._task_finished:

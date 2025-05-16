@@ -10,6 +10,7 @@ import yaml
 
 
 # ROS2 Communications
+import rclpy.time
 from sensor_msgs.msg import JointState
 from geometry_msgs.msg import PoseStamped, TwistStamped, Twist  # Example message types
 from franka_msgs.msg import FrankaRobotState  # TODO: Update when processed in the interface
@@ -25,6 +26,11 @@ from arm_interfaces.action import RlAgent
 from rclpy.executors import MultiThreadedExecutor
 
 from robot_tasks.rl_agent.Base import RlAgentNode
+
+import os
+import csv
+
+MAX_TIME = 100
 
 
 class Lift_AgentNode(RlAgentNode):
@@ -68,11 +74,11 @@ class Lift_AgentNode(RlAgentNode):
             default_agent_dir=default_agent,
             observation_dim=19,
             action_dim=7,
-            default_ctrl_frequency=20.0,
+            default_ctrl_frequency=2.0,
         )
 
         #! Task parameters
-        self.action_scale = 0.05
+        self.action_scale = 0.1
 
         self._ctrl_mode = ControlMode.CART_POSE
         self._goal_src = GoalSource.TOPIC
@@ -89,6 +95,9 @@ class Lift_AgentNode(RlAgentNode):
         ]  # Start position of the joints [rad]
 
         self._joint_state = None
+
+        self.task_start_time = None
+        self.max_task_duration = rclpy.time.Duration(seconds=MAX_TIME)
 
         # Poses and twists
         self.X_GP = pin.SE3(
@@ -107,6 +116,17 @@ class Lift_AgentNode(RlAgentNode):
         self.tf_listener = TransformListener(self.tf_buffer, self)
         self.world_frame = "world"
         self.cube_frame = "cube_frame"
+
+        csv_path = os.path.join(str(Path(__file__).parent.parent), "demo_68_actions.csv")
+        self.get_logger().info(f"Loading actions from CSV: {csv_path}")
+        self._csv_actions = []
+        with open(csv_path, "r") as f:
+            reader = csv.reader(f)
+            next(reader)  # skip header
+            for row in reader:
+                # Only take the first 7 columns (actions)
+                self._csv_actions.append([float(x) for x in row[:7]])
+        self._csv_action_idx = 0
 
     def _init_subscribers(self):
         """
@@ -167,16 +187,20 @@ class Lift_AgentNode(RlAgentNode):
         gripper_state = np.array([0, 0])  # TODO: Update with actual gripper state
 
         # Try to get cube position from TF2, fall back to stored value if not available
-        self.X_GC = tf_cube_pose
+        self.X_C = tf_cube_pose
         p_C = self.X_C.translation
         q_C = pin.Quaternion(self.X_C.rotation).coeffs()  # [x, y, z, w]
 
         p_GC = self.X_C.translation - self.X_G.translation
+        p_CG = self.X_G.translation - self.X_C.translation
+
+        R_WG = self.X_G.rotation
+        p_GC_G = R_WG.T @ p_GC
 
         object_array = [
             p_C,
             q_C,
-            p_GC,
+            p_GC_G,
         ]
         object_array = np.concatenate(object_array).astype(np.float32)
 
@@ -224,7 +248,9 @@ class Lift_AgentNode(RlAgentNode):
     def init_task_execution(self):
         """Initialize task-specific parameters."""
         self.task_start_time = self.get_clock().now()
-        ...
+
+        if self.X_G is not None:
+            self.X_G_des = self.X_G.copy()
 
     def check_task_status(self):
         """
@@ -236,20 +262,47 @@ class Lift_AgentNode(RlAgentNode):
         success = False
         failure = False
 
-        # TODO: Implement the logic to check for success or failure
-        ...
+        # if self.task_start_time is None:
+        #     self.get_logger().warn("Task start time is not set.")
+        #     return success, failure
+
+        current_time = self.get_clock().now()
+
+        if current_time - self.task_start_time > self.max_task_duration:
+            failure = True
+            self.get_logger().info("Task timed out.")
 
         return success, failure
 
     def process_action(self, action):
-        """Process the raw action from the agent."""
-        action = np.array([0, 0, 0, 0, 0, 0, 0], dtype=np.float32)
+        """Process the raw action from the agent or from CSV for debugging."""
+
+        # # On first call, load actions from CSV
+        # if self._csv_actions is None:
+        #     return
+
+        # # Use next action from CSV
+        # if self._csv_action_idx < len(self._csv_actions):
+        #     action = np.array(self._csv_actions[self._csv_action_idx], dtype=np.float32)
+        #     self._csv_action_idx += 1
+        #     self.get_logger().info(f"Applying CSV action {self._csv_action_idx}/{len(self._csv_actions)}: {action}")
+
+        # else:
+        #     self.get_logger().warn("No more actions in CSV. Skipping action application.")
+        #     return
 
         # Scale the action
         processed_action = action[:6] * self.action_scale
-        # Compute desired position from the action
-        delta_rotation_matrix = pin.exp3(action[3:6])
-        delta_pose_SE3 = pin.SE3(delta_rotation_matrix, processed_action[:3])
+
+        R_WG = self.X_G.rotation
+
+        # rot_vec = action[3:6]
+        rot_vec = R_WG @ action[3:6]  # TODO TRANSPOSE ROT MATRIX??
+        delta_rotation_matrix = pin.exp3(rot_vec)
+
+        delta_trans = R_WG @ processed_action[:3]
+
+        delta_pose_SE3 = pin.SE3(delta_rotation_matrix, delta_trans)
 
         self.X_G_des = self.X_G * delta_pose_SE3
 

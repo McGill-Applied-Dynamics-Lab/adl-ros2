@@ -4,6 +4,9 @@ import time
 import pytest  # Use pytest directly
 import uuid
 import asyncio  # Import asyncio for async functions if needed
+from typing import Generator, Tuple, List
+import numpy as np
+import pinocchio as pin
 
 import launch
 import launch_ros
@@ -17,22 +20,22 @@ import rclpy.action
 import rclpy.node
 import rclpy.publisher
 from rclpy.task import Future
+from rclpy.action.client import ClientGoalHandle, GoalStatus
+from ament_index_python.packages import get_package_share_directory
 
 import std_msgs.msg
 from geometry_msgs.msg import Pose, Point, Quaternion, Twist, Vector3, TwistStamped, PoseStamped
+from geometry_msgs.msg import TransformStamped
 from sensor_msgs.msg import JointState
 from franka_msgs.msg import FrankaRobotState  # Use actual import
 
+from tf2_ros.static_transform_broadcaster import StaticTransformBroadcaster
+
 # Use actual imports for your interfaces
+from robot_tasks.rl_agent.Lift import Lift_AgentNode
 from arm_interfaces.action import RlAgent
 from arm_interfaces.srv import SetControlMode, SetGoalSource
-from ament_index_python.packages import get_package_share_directory
-from rclpy.action.client import ClientGoalHandle, GoalStatus
-from rclpy.task import Future
 
-from tf2_ros.static_transform_broadcaster import StaticTransformBroadcaster
-from geometry_msgs.msg import TransformStamped
-from typing import Generator, Tuple, List
 
 # Package name where RLAgent node and dummy files are located
 PACKAGE_NAME = "robot_tasks"
@@ -308,8 +311,23 @@ def test_task_success(
     # Wait briefly for mode setting
     time.sleep(1.0)
 
-    # Send robot state simulating successful insertion
-    send_dummy_robot_state(node, robot_state_pub, z_pos=0.01)  # z < 0.01 threshold
+    # First send robot state (gripper pose)
+    gripper_x = 0.5
+    gripper_z = 0.3
+    send_dummy_robot_state(node, robot_state_pub, z_pos=gripper_z, x_pos=gripper_x)
+
+    # Send a TF transform for the cube - different position from the default in the agent
+    cube_x = 0.8
+    cube_y = 0.2
+    cube_z = 0.05
+    send_tf_transform(
+        node=node,
+        pub=None,  # Not needed for TF
+        parent_frame="world",
+        child_frame="cube_frame",
+        translation=[cube_x, cube_y, cube_z],
+        rotation=[0.0, 0.0, 0.0, 1.0],  # Identity quaternion
+    )
 
     # Spin until the result is available
     spin_until_future_complete(node, get_result_future, timeout_sec=10.0)
@@ -324,7 +342,7 @@ def test_task_success(
 
 
 @pytest.mark.launch(fixture=launch_description)
-def test_task_failure(
+def test_task_failure_timeout(
     test_context: Tuple[rclpy.node.Node, rclpy.action.ActionClient, List[TwistStamped], rclpy.publisher.Publisher],
 ):
     """Test if the action aborts when insertion fails."""
@@ -345,8 +363,23 @@ def test_task_failure(
     # Wait briefly for mode setting
     time.sleep(1.0)
 
-    # Send robot state simulating successful insertion
-    send_dummy_robot_state(node, robot_state_pub, z_pos=0.01, x_pos=0.5)  # z < 0.01 threshold
+    # First send robot state (gripper pose)
+    gripper_x = 0.5
+    gripper_z = 0.3
+    send_dummy_robot_state(node, robot_state_pub, z_pos=gripper_z, x_pos=gripper_x)
+
+    # Send a TF transform for the cube - different position from the default in the agent
+    cube_x = 0.8
+    cube_y = 0.2
+    cube_z = 0.05
+    send_tf_transform(
+        node=node,
+        pub=None,  # Not needed for TF
+        parent_frame="world",
+        child_frame="cube_frame",
+        translation=[cube_x, cube_y, cube_z],
+        rotation=[0.0, 0.0, 0.0, 1.0],  # Identity quaternion
+    )
 
     # Spin until the result is available
     spin_until_future_complete(node, get_result_future, timeout_sec=5.0)
@@ -357,8 +390,8 @@ def test_task_failure(
 
     assert status == GoalStatus.STATUS_ABORTED, "Expected action to be aborted"
     assert not result.success, "Expected result to be failed"
-    assert result.message == "Insertion failed.", "Failure message mismatch"
-    node.get_logger().info(f"Goal succeeded as expected. Message: {result.message}")
+    assert result.message == "Task failed.", "Failure message mismatch"
+    node.get_logger().info(f"Goal failed as expected. Message: {result.message}")
 
 
 @pytest.mark.launch(fixture=launch_description)
@@ -485,3 +518,37 @@ def test_cancel_repeat(
     assert status == GoalStatus.STATUS_SUCCEEDED
     assert result.success
     node.get_logger().info(f"Goal succeeded as expected. Message: {result.message}")
+
+
+@pytest.mark.launch(fixture=launch_description)
+def test_process_action(
+    test_context: Tuple[rclpy.node.Node, rclpy.action.ActionClient, List[TwistStamped], rclpy.publisher.Publisher],
+):
+    # Create the agent node (no ROS needed for this test)
+    agent = Lift_AgentNode()
+    # Set a known X_G (identity transform)
+    gripper_rpy = np.array([np.pi, 0.0, 0.0], dtype=np.float32)
+    agent.X_G = pin.SE3(pin.rpy.rpyToMatrix(gripper_rpy), np.array([1.0, 2.0, 3.0]))
+    agent.action_scale = 0.1  # Make scale obvious
+
+    # Action: [dx, dy, dz, rx, ry, rz, gripper]
+    action = np.array([0.0, 0.0, 1.0, 0.0, 0.0, 0, 1.0], dtype=np.float32)
+    agent.process_action(action)
+
+    # Compute expected translation and rotation
+    expected_translation = agent.X_G.translation + action[:3] * agent.action_scale
+    expected_rotation = agent.X_G.rotation @ pin.exp3(action[3:6])
+    np.testing.assert_allclose(agent.X_G_des.translation, expected_translation, atol=1e-6)
+    np.testing.assert_allclose(agent.X_G_des.rotation, expected_rotation, atol=1e-6)
+    assert agent.gripper_state == "open"
+
+    # Test gripper close
+    action[6] = 0.0
+    agent.process_action(action)
+    assert agent.gripper_state == "close"
+
+    # Test with zero action (should not move)
+    zero_action = np.zeros(7, dtype=np.float32)
+    agent.process_action(zero_action)
+    np.testing.assert_allclose(agent.X_G_des.translation, agent.X_G.translation, atol=1e-6)
+    np.testing.assert_allclose(agent.X_G_des.rotation, agent.X_G.rotation, atol=1e-6)
