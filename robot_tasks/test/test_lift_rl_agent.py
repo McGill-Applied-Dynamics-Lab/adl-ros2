@@ -28,6 +28,7 @@ from arm_interfaces.action import RlAgent
 from arm_interfaces.srv import SetControlMode, SetGoalSource
 from ament_index_python.packages import get_package_share_directory
 from rclpy.action.client import ClientGoalHandle, GoalStatus
+from rclpy.task import Future
 
 from tf2_ros.static_transform_broadcaster import StaticTransformBroadcaster
 from geometry_msgs.msg import TransformStamped
@@ -246,7 +247,7 @@ def test_observations(
     goal_msg = ACTION_TYPE.Goal()
     send_goal_future = action_client.send_goal_async(goal_msg)
     spin_until_future_complete(node, send_goal_future)
-    goal_handle = send_goal_future.result()
+    goal_handle: ClientGoalHandle = send_goal_future.result()
     assert goal_handle.accepted
 
     # Wait for agent initialization
@@ -287,7 +288,9 @@ def test_observations(
 
 
 @pytest.mark.launch(fixture=launch_description)
-def test_task_success(test_context):
+def test_task_success(
+    test_context: Tuple[rclpy.node.Node, rclpy.action.ActionClient, List[TwistStamped], rclpy.publisher.Publisher],
+):
     """Test if the action succeeds when insertion criteria are met."""
     node, action_client, cmd_list, robot_state_pub = test_context
     cmd_list.clear()
@@ -321,7 +324,9 @@ def test_task_success(test_context):
 
 
 @pytest.mark.launch(fixture=launch_description)
-def test_task_failure(test_context):
+def test_task_failure(
+    test_context: Tuple[rclpy.node.Node, rclpy.action.ActionClient, List[TwistStamped], rclpy.publisher.Publisher],
+):
     """Test if the action aborts when insertion fails."""
     node, action_client, cmd_list, robot_state_pub = test_context
     cmd_list.clear()
@@ -353,4 +358,130 @@ def test_task_failure(test_context):
     assert status == GoalStatus.STATUS_ABORTED, "Expected action to be aborted"
     assert not result.success, "Expected result to be failed"
     assert result.message == "Insertion failed.", "Failure message mismatch"
+    node.get_logger().info(f"Goal succeeded as expected. Message: {result.message}")
+
+
+@pytest.mark.launch(fixture=launch_description)
+def test_task_canceled(
+    test_context: Tuple[rclpy.node.Node, rclpy.action.ActionClient, List[TwistStamped], rclpy.publisher.Publisher],
+):
+    """Test if the action succeeds when insertion criteria are met."""
+    node, action_client, cmd_list, robot_state_pub = test_context
+    cmd_list.clear()
+    node.get_logger().info("Running test_task_success...")
+    assert action_client.wait_for_server(timeout_sec=5.0)
+
+    #! Start the action
+    node.get_logger().info("Sending goal to action server")
+    goal_msg = ACTION_TYPE.Goal()
+    send_goal_future = action_client.send_goal_async(goal_msg)
+    spin_until_future_complete(node, send_goal_future, timeout_sec=5.0)
+    goal_handle: ClientGoalHandle = send_goal_future.result()
+    assert goal_handle.accepted
+
+    get_result_future: Future = goal_handle.get_result_async()
+
+    # Wait briefly for mode setting
+    time.sleep(1.0)
+
+    #! Send robot state simulating successful insertion
+    node.get_logger().info("Sending dummy states")
+    send_dummy_robot_state(node, robot_state_pub, z_pos=1.0)  # z < 0.01 threshold
+
+    #! Cancel the action
+    time.sleep(1.0)
+    node.get_logger().info("Canceling the action")
+    cancel_future = goal_handle.cancel_goal_async()
+    spin_until_future_complete(node, cancel_future, timeout_sec=5.0)
+
+    # Wait until the action is completed
+    node.get_logger().info("Waiting for action to complete")
+    spin_until_future_complete(node, get_result_future, timeout_sec=5.0)
+
+    #! Check the result
+    result_response = get_result_future.result()
+    result_status = result_response.status
+    result = result_response.result
+
+    assert goal_handle.status == GoalStatus.STATUS_CANCELED
+    assert result_status == GoalStatus.STATUS_CANCELED
+    node.get_logger().info(f"Action cancelled as expected. Message: {result.message}")
+
+
+@pytest.mark.launch(fixture=launch_description)
+def test_cancel_repeat(
+    test_context: Tuple[rclpy.node.Node, rclpy.action.ActionClient, List[TwistStamped], rclpy.publisher.Publisher],
+):
+    """Test if the action can be canceled and then restarted for a success."""
+    node, action_client, cmd_list, robot_state_pub = test_context
+    cmd_list.clear()
+    node.get_logger().info("Running test_task_success...")
+    assert action_client.wait_for_server(timeout_sec=5.0)
+
+    #! Start 1st action
+    node.get_logger().info("Sending goal to action server")
+    goal_msg = ACTION_TYPE.Goal()
+    send_goal_future = action_client.send_goal_async(goal_msg)
+    spin_until_future_complete(node, send_goal_future, timeout_sec=5.0)
+    goal_handle: ClientGoalHandle = send_goal_future.result()
+    assert goal_handle.accepted
+
+    get_result_future: Future = goal_handle.get_result_async()
+
+    # Wait briefly for mode setting
+    time.sleep(1.0)
+
+    # * Send robot state simulating successful insertion
+    node.get_logger().info("Sending dummy states")
+    send_dummy_robot_state(node, robot_state_pub, z_pos=1.0)  # z < 0.01 threshold
+
+    # * Cancel the action
+    time.sleep(1.0)
+    node.get_logger().info("Canceling the action")
+    cancel_future: Future = goal_handle.cancel_goal_async()
+    spin_until_future_complete(node, cancel_future, timeout_sec=5.0)
+
+    # Wait until the action is completed
+    node.get_logger().info("Waiting for action to complete")
+    spin_until_future_complete(node, get_result_future, timeout_sec=5.0)
+
+    # * Check the result
+    result_response = get_result_future.result()
+    result_status = result_response.status
+    result = result_response.result
+
+    assert goal_handle.status == GoalStatus.STATUS_CANCELED
+    assert result_status == GoalStatus.STATUS_CANCELED
+    node.get_logger().info(f"Action cancelled as expected. Message: {result.message}")
+
+    #! Start second action
+    time.sleep(2.0)
+    node.get_logger().info("Starting second action")
+
+    send_goal_future = action_client.send_goal_async(goal_msg)
+    spin_until_future_complete(node, send_goal_future, timeout_sec=5.0)
+    goal_handle = send_goal_future.result()
+    assert goal_handle.accepted
+
+    get_result_future = goal_handle.get_result_async()
+
+    # Wait briefly for mode setting
+    time.sleep(1.0)
+
+    # * Send robot state
+    node.get_logger().info("Sending dummy states")
+    send_dummy_robot_state(node, robot_state_pub, z_pos=0.01)  # z < 0.01 threshold
+
+    # Wait until the action is completed
+    node.get_logger().info("Waiting for action to complete")
+    spin_until_future_complete(node, get_result_future, timeout_sec=5.0)
+
+    # * Check the result
+    node.get_logger().info("Action completed, checking result")
+    result_response = get_result_future.result()
+    status = result_response.status
+    result = result_response.result
+
+    assert status == GoalStatus.STATUS_SUCCEEDED
+    assert result.success
     node.get_logger().info(f"Goal succeeded as expected. Message: {result.message}")

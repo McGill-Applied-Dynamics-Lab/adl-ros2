@@ -305,7 +305,7 @@ class RlAgentNode(Node, abc.ABC):
             self.get_logger().error("Failed to set robot modes for RL Agent. Aborting goal.")
             result = self._create_result(success=False, message="Failed to set robot control mode or goal source.")
             goal_handle.abort()
-            self._cleanup_goal()
+            self._cleanup_goal(goal_handle=None, lock_handle=True)
             return result
 
         # --- 2. Start Control Loop (Implicitly via goal_handle active state) ---
@@ -327,7 +327,7 @@ class RlAgentNode(Node, abc.ABC):
                     # Ensure cleanup happens if it wasn't already
                     await self._deactivate_and_reset_mode_async()
 
-                    self._cleanup_goal(goal_handle)  # Pass handle for safety
+                    self._cleanup_goal(goal_handle, lock_handle=False)  # Pass handle for safety
                     self.get_logger().info("Action completed")
                     return result
 
@@ -340,7 +340,7 @@ class RlAgentNode(Node, abc.ABC):
                         goal_handle.canceled()
                     except Exception as e:
                         self.get_logger().warn(f"Error setting goal to canceled: {e}")
-                    self._cleanup_goal(goal_handle)
+                    self._cleanup_goal(goal_handle, lock_handle=False)
 
                     self.get_logger().info("Action completed")
                     return result
@@ -362,7 +362,9 @@ class RlAgentNode(Node, abc.ABC):
                         self.get_logger().warn(f"Error setting goal state: {e}")
 
                     await self._deactivate_and_reset_mode_async()
-                    self._cleanup_goal(goal_handle)
+
+                    self._cleanup_goal(goal_handle, lock_handle=False)
+
                     self.get_logger().info("Action completed")
                     return result
 
@@ -384,8 +386,8 @@ class RlAgentNode(Node, abc.ABC):
         except Exception:
             # We're shutting down, so errors are expected here
             pass
-            
-        self._cleanup_goal(goal_handle)
+
+        self._cleanup_goal(goal_handle, lock_handle=True)
         return result
 
     @abc.abstractmethod
@@ -396,19 +398,26 @@ class RlAgentNode(Node, abc.ABC):
         """
         pass
 
-    def _cleanup_goal(self, goal_handle=None):
+    def _cleanup_goal(self, goal_handle=None, lock_handle=False):
         """Reset goal handle, ensuring lock safety."""
         self.get_logger().info("Cleaning up goal handle...")
 
+        def reset_goal_handle():
+            # Only reset if the provided handle matches the current one, or if forcing
+            if goal_handle is None or self._goal_handle == goal_handle:
+                self._goal_handle = None
+                self._task_finished = True
+                self.get_logger().debug("Cleaned up goal handle.")
+            else:
+                self.get_logger().warn("Cleanup requested for a non-current/mismatched goal handle.")
+
         try:
-            with self._lock:
-                # Only reset if the provided handle matches the current one, or if forcing
-                if goal_handle is None or self._goal_handle == goal_handle:
-                    self._goal_handle = None
-                    self._task_finished = True
-                    self.get_logger().debug("Cleaned up goal handle.")
-                else:
-                    self.get_logger().warn("Cleanup requested for a non-current/mismatched goal handle.")
+            if lock_handle:
+                with self._lock:
+                    reset_goal_handle()
+            else:
+                reset_goal_handle()
+
         except Exception as e:
             # Make sure we reset even if there's an error
             self.get_logger().warn(f"Error during goal cleanup: {e}")
@@ -587,7 +596,11 @@ class RlAgentNode(Node, abc.ABC):
         # Request default modes asynchronously
         try:
             # Only attempt service calls if ROS is still active
-            if rclpy.ok() and self._fr3_int_set_ctrl_mode.service_is_ready() and self._fr3_int_set_goal_src.service_is_ready():
+            if (
+                rclpy.ok()
+                and self._fr3_int_set_ctrl_mode.service_is_ready()
+                and self._fr3_int_set_goal_src.service_is_ready()
+            ):
                 ctrl_mode_req = SetControlMode.Request(control_mode=ControlMode.PAUSE.value)
                 # Actually await the call so we know it completes
                 await self._fr3_int_set_ctrl_mode.call_async(ctrl_mode_req)

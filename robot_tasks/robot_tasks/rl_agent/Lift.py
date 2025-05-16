@@ -223,6 +223,7 @@ class Lift_AgentNode(RlAgentNode):
 
     def init_task_execution(self):
         """Initialize task-specific parameters."""
+        self.task_start_time = self.get_clock().now()
         ...
 
     def check_task_status(self):

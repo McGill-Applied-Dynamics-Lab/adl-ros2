@@ -43,14 +43,14 @@
             "console": "integratedTerminal",
         },
         {
-            "name": "Node: rl_agent",
+            "name": "Agent Node: insert",
             "type": "debugpy",
             "request": "launch",
-            "program": "src/adg_ros2/robot_tasks/robot_tasks/RLAgent.py",
+            "program": "src/adg_ros2/robot_tasks/robot_tasks/rl_agent/Insert.py",
             "console": "integratedTerminal",
         },
         {
-            "name": "Node: lift_rl_agent",
+            "name": "Agent Node: lift",
             "type": "debugpy",
             "request": "launch",
             "program": "src/adg_ros2/robot_tasks/robot_tasks/rl_agent/Lift.py",
