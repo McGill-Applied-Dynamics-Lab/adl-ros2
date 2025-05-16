@@ -39,7 +39,7 @@ ACTION_SERVER_NAME = "/lift_action"  # Match parameter default or override in la
 ACTION_TYPE = RlAgent
 RL_AGENT_NODE_NAME = "rl_agent"  # Match node name in RLAgent class
 
-START_RL_NODE = False
+START_RL_NODE = True
 
 
 # --- Test Fixture for Launch Description ---
@@ -95,7 +95,7 @@ def test_context() -> Generator[
     action_client = rclpy.action.ActionClient(node, ACTION_TYPE, ACTION_SERVER_NAME)
     cmd_subscriber_list = []  # Shared list to store messages
     cmd_sub = node.create_subscription(
-        PoseStamped, "/robot_arm/gripper_pose_des", lambda msg: cmd_subscriber_list.append(msg), 10
+        PoseStamped, "/robot_arm/gripper_pose_cmd", lambda msg: cmd_subscriber_list.append(msg), 10
     )
     robot_state_pub = node.create_publisher(FrankaRobotState, "/franka_robot_state_broadcaster/robot_state", 10)
     print("Test node setup complete (module scope).")

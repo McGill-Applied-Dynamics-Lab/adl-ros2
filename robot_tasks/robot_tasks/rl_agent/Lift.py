@@ -15,6 +15,7 @@ from geometry_msgs.msg import PoseStamped, TwistStamped, Twist  # Example messag
 from franka_msgs.msg import FrankaRobotState  # TODO: Update when processed in the interface
 
 from robot_arm_interface.utils import motion2rostwist, rostwist2motion, rospose2se3, se32rospose
+from robot_arm_interface.fr3_interface import GoalSource, ControlMode
 
 # TF2
 from tf2_ros import TransformListener, Buffer
@@ -70,7 +71,11 @@ class Lift_AgentNode(RlAgentNode):
             default_ctrl_frequency=20.0,
         )
 
+        #! Task parameters
         self.action_scale = 0.05
+
+        self._ctrl_mode = ControlMode.CART_POSE
+        self._goal_src = GoalSource.TOPIC
 
         # Initialize state storage specific to insertion task
         self.default_joint_poses = [
@@ -123,7 +128,7 @@ class Lift_AgentNode(RlAgentNode):
         """
         self.get_logger().info("Initializing publishers...")
 
-        robot_cmd_topic = "/robot_arm/gripper_pose_des"
+        robot_cmd_topic = "/robot_arm/gripper_pose_cmd"
         self._robot_cmd_pub = self.create_publisher(
             PoseStamped,
             robot_cmd_topic,
@@ -237,11 +242,11 @@ class Lift_AgentNode(RlAgentNode):
 
     def process_action(self, action):
         """Process the raw action from the agent."""
+        action = np.array([0, 0, 0, 0, 0, 0, 0], dtype=np.float32)
+
         # Scale the action
         processed_action = action[:6] * self.action_scale
-
         # Compute desired position from the action
-
         delta_rotation_matrix = pin.exp3(action[3:6])
         delta_pose_SE3 = pin.SE3(delta_rotation_matrix, processed_action[:3])
 
@@ -265,22 +270,33 @@ class Lift_AgentNode(RlAgentNode):
 
 def main(args=None):
     rclpy.init(args=args)
+    node = None
     try:
         node = Lift_AgentNode()
-
         executor = MultiThreadedExecutor()
         executor.add_node(node)
 
         try:
             executor.spin()
-
         except KeyboardInterrupt:
             node.get_logger().info("Keyboard interrupt detected.")
-
+            # Properly handle any active action goals when interrupted
+            with node._lock:
+                if node._goal_handle is not None and node._goal_handle.is_active:
+                    node.get_logger().info("Cancelling active goal due to keyboard interrupt")
+                    node._task_finished = True
+                    try:
+                        node._goal_handle.abort()
+                    except Exception as e:
+                        node.get_logger().warn(f"Error aborting goal during shutdown: {e}")
         finally:
             node.get_logger().info("Shutting down executor...")
             executor.shutdown()
-            node.destroy_node()
+            if node is not None:
+                # Make sure we're not in the middle of an action execution when shutting down
+                node._task_finished = True
+                node._cleanup_goal()
+                node.destroy_node()
 
     except Exception as e:
         # Log any exceptions raised during node initialization
