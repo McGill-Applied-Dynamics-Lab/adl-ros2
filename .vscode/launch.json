@@ -36,10 +36,17 @@
             "console": "integratedTerminal",
         },
         {
-            "name": "Node: fr3_insert",
+            "name": "Task: fr3_insert",
             "type": "debugpy",
             "request": "launch",
             "program": "src/adg_ros2/robot_tasks/scripts/fr3_insert.py",
+            "console": "integratedTerminal",
+        },
+        {
+            "name": "Task: fr3_lift",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "src/adg_ros2/robot_tasks/scripts/fr3_lift.py",
             "console": "integratedTerminal",
         },
         {

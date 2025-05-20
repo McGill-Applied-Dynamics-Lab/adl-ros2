@@ -30,7 +30,7 @@ from robot_tasks.rl_agent.Base import RlAgentNode
 import os
 import csv
 
-MAX_TIME = 100
+MAX_TIME = 4
 
 
 class Lift_AgentNode(RlAgentNode):
@@ -74,11 +74,11 @@ class Lift_AgentNode(RlAgentNode):
             default_agent_dir=default_agent,
             observation_dim=19,
             action_dim=7,
-            default_ctrl_frequency=2.0,
+            default_ctrl_frequency=10.0,
         )
 
         #! Task parameters
-        self.action_scale = 0.1
+        self.action_scale = 0.05
 
         self._ctrl_mode = ControlMode.CART_POSE
         self._goal_src = GoalSource.TOPIC
@@ -100,21 +100,26 @@ class Lift_AgentNode(RlAgentNode):
         self.max_task_duration = rclpy.time.Duration(seconds=MAX_TIME)
 
         # Poses and twists
-        self.X_GP = pin.SE3(
-            pin.rpy.rpyToMatrix(np.array([0, 0, 0])), np.array([0, 0, 0.04])
-        )  # Gripper to peg transform
-        # self.V_G = None  # Gripper velocity
-        # self.V_G_des = None  # Desired gripper velocity
-        self.X_G_des = None
 
-        self.X_C = pin.SE3(pin.rpy.rpyToMatrix(np.array([0, 0, 0])), np.array([0.6, 0.0, 0.0]))  # Cube pose
-        self.X_G = None  # Gripper pose
+        self.X_WG = None  # Gripper pose in world frame
+        self.X_BG = None  # Gripper pose in base frame
+
+        self.X_BG_des = None
+        self.X_WG_des = None
+
+        # self.X_C = pin.SE3(pin.rpy.rpyToMatrix(np.array([0, 0, 0])), np.array([0.6, 0.0, 0.0]))  # Cube pose
+        self.X_C = None  # Cube pose in world frame
         self.X_GC = None  # Gripper to cube transform
+
+        # World frame
+        p_WB = np.array([0.0, 0.0, 0.0])  # World frame position
+        rpy_WB = np.array([0.0, 0.0, 0.0])  # World frame to base frame rpy angles
+        self.X_WB = pin.SE3(pin.rpy.rpyToMatrix(rpy_WB), p_WB)  # World to base transform
 
         # TF2 setup
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
-        self.world_frame = "world"
+        self.base_frame = "base"
         self.cube_frame = "cube_frame"
 
         csv_path = os.path.join(str(Path(__file__).parent.parent), "demo_68_actions.csv")
@@ -167,7 +172,7 @@ class Lift_AgentNode(RlAgentNode):
         Callback for the '/franka_robot_state_broadcaster/robot_state' topic.
         """
         self._joint_state = robot_state_msg.measured_joint_state
-        self.X_G = rospose2se3(robot_state_msg.o_t_ee.pose)
+        self.X_BG = rospose2se3(robot_state_msg.o_t_ee.pose)
         self.V_G = rostwist2motion(robot_state_msg.o_dp_ee_d.twist)
 
     def _get_observation(self) -> torch.Tensor:
@@ -177,37 +182,51 @@ class Lift_AgentNode(RlAgentNode):
         # Return if one observation component is not available
         tf_cube_pose = self._get_cube_pose_from_tf()
 
-        if self._joint_state is None or self.X_GP is None or tf_cube_pose is None:
+        if self._joint_state is None or self.X_BG is None or tf_cube_pose is None:
             self.get_logger().warn("Missing some observations...", throttle_duration_sec=5)
             return None
 
         #! Process observations
-        p_G = self.X_G.translation
-        quat_G = pin.Quaternion(self.X_G.rotation).coeffs()  # [x, y, z, w]
+        # * Gripper state *
         gripper_state = np.array([0, 0])  # TODO: Update with actual gripper state
 
-        # Try to get cube position from TF2, fall back to stored value if not available
-        self.X_C = tf_cube_pose
-        p_C = self.X_C.translation
-        q_C = pin.Quaternion(self.X_C.rotation).coeffs()  # [x, y, z, w]
+        # * Gripper pose *
+        self.X_WG = self.X_WB * self.X_BG
 
-        p_GC = self.X_C.translation - self.X_G.translation
-        p_CG = self.X_G.translation - self.X_C.translation
+        p_WG = self.X_WG.translation
+        quat_WG = pin.Quaternion(self.X_WG.rotation).coeffs()  # [x, y, z, w]
 
-        R_WG = self.X_G.rotation
-        p_GC_G = R_WG.T @ p_GC
+        # * Cube pose *
+        self.X_BC = tf_cube_pose
+        self.X_WC = self.X_WB * self.X_BC
 
+        p_WC = self.X_WC.translation
+        q_WC = pin.Quaternion(self.X_WC.rotation).coeffs()  # [x, y, z, w]
+
+        # * Cube pose in gripper frame *
+        p_BC_B = self.X_BC.translation
+        p_BG_B = self.X_BG.translation
+
+        p_GC_B = p_BC_B - p_BG_B
+        p_CG_B = -p_GC_B
+
+        R_BG = self.X_BG.rotation
+
+        p_GC_G = R_BG.T * p_GC_B
+        p_GC_W = self.X_WB.rotation @ p_GC_B
+
+        # * Observation vector *
         object_array = [
-            p_C,
-            q_C,
-            p_GC_G,
+            p_WC,
+            q_WC,
+            p_GC_W,
         ]
         object_array = np.concatenate(object_array).astype(np.float32)
 
         observation_dict = {
             "object": torch.tensor(object_array, dtype=torch.float32).to(self.device),
-            "robot0_eef_pos": torch.tensor(p_G, dtype=torch.float32).to(self.device),
-            "robot0_eef_quat": torch.tensor(quat_G, dtype=torch.float32).to(self.device),
+            "robot0_eef_pos": torch.tensor(p_WG, dtype=torch.float32).to(self.device),
+            "robot0_eef_quat": torch.tensor(quat_WG, dtype=torch.float32).to(self.device),
             "robot0_gripper_qpos": torch.tensor(gripper_state, dtype=torch.float32).to(self.device),
         }
 
@@ -218,13 +237,12 @@ class Lift_AgentNode(RlAgentNode):
         Get the cube pose from the TF tree.
 
         Returns:
-            pin.SE3: The cube pose in the world frame
+            pin.SE3: The cube pose in the **base** frame
         """
-        # TODO: Return the the transform X_GC instead of X_WC
         try:
             # Look up the transform from world to cube
             transform = self.tf_buffer.lookup_transform(
-                self.world_frame, self.cube_frame, time=rclpy.time.Time(), timeout=rclpy.duration.Duration(seconds=1.0)
+                self.base_frame, self.cube_frame, time=rclpy.time.Time(), timeout=rclpy.duration.Duration(seconds=1.0)
             )
 
             # Extract position and orientation from the transform
@@ -238,8 +256,10 @@ class Lift_AgentNode(RlAgentNode):
             # Convert quaternion to rotation matrix
             rot_matrix = pin.Quaternion(quaternion).toRotationMatrix()
 
+            X_BC = pin.SE3(rot_matrix, position)  # Cube pose in base frame
+
             # Create the SE3 transform
-            return pin.SE3(rot_matrix, position)
+            return X_BC
 
         except Exception as e:
             self.get_logger().warn(f"Failed to get cube pose from TF: {str(e)}", throttle_duration_sec=0.01)
@@ -249,8 +269,11 @@ class Lift_AgentNode(RlAgentNode):
         """Initialize task-specific parameters."""
         self.task_start_time = self.get_clock().now()
 
-        if self.X_G is not None:
-            self.X_G_des = self.X_G.copy()
+        if self.X_BG is not None:
+            self.X_BG_des = self.X_BG.copy()
+
+        # TODO: Remove
+        self._csv_action_idx = 0
 
     def check_task_status(self):
         """
@@ -276,35 +299,63 @@ class Lift_AgentNode(RlAgentNode):
 
     def process_action(self, action):
         """Process the raw action from the agent or from CSV for debugging."""
+        # #! Fixed action
+        # action = np.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=np.float32)
+        # self.action_scale = 0.1
 
-        # # On first call, load actions from CSV
-        # if self._csv_actions is None:
-        #     return
+        #! CSV Action
+        if self._csv_actions is None:
+            return
 
-        # # Use next action from CSV
-        # if self._csv_action_idx < len(self._csv_actions):
-        #     action = np.array(self._csv_actions[self._csv_action_idx], dtype=np.float32)
-        #     self._csv_action_idx += 1
-        #     self.get_logger().info(f"Applying CSV action {self._csv_action_idx}/{len(self._csv_actions)}: {action}")
+        # Use next action from CSV
+        if self._csv_action_idx < len(self._csv_actions):
+            action = np.array(self._csv_actions[self._csv_action_idx], dtype=np.float32)
+            self._csv_action_idx += 1
+            self.get_logger().info(f"Applying CSV action {self._csv_action_idx}/{len(self._csv_actions)}: {action}")
 
-        # else:
-        #     self.get_logger().warn("No more actions in CSV. Skipping action application.")
-        #     return
+        else:
+            self.get_logger().warn("No more actions in CSV. Skipping action application.")
+            action = np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=np.float32)
+            return
 
+        #! Process action
         # Scale the action
         processed_action = action[:6] * self.action_scale
 
-        R_WG = self.X_G.rotation
+        p_GGd_W = processed_action[:3]  # Gripper translation
+        rot_vec = processed_action[3:6]
 
-        # rot_vec = action[3:6]
-        rot_vec = R_WG @ action[3:6]  # TODO TRANSPOSE ROT MATRIX??
-        delta_rotation_matrix = pin.exp3(rot_vec)
+        #! Rotations
+        # * Option 1 - Assume rotation vector is in world frame *
+        rvec_W = rot_vec
 
-        delta_trans = R_WG @ processed_action[:3]
+        R_GW = self.X_WG.rotation.T
+        rvec_G = R_GW @ rvec_W  # Rotation vector in gripper frame
 
-        delta_pose_SE3 = pin.SE3(delta_rotation_matrix, delta_trans)
+        R_GGd_G = pin.exp3(rvec_G)  # Rotation matrix from gripper to desired gripper pose
 
-        self.X_G_des = self.X_G * delta_pose_SE3
+        # # * Option 2 - Assume rotation vector is in gripper frame *
+        # rvec_G = rot_vec
+        # R_GGd_G = pin.exp3(rvec_G)  # Rotation matrix from gripper to desired gripper pose
+
+        #! Translation
+        p_GGd_G = R_GW @ p_GGd_W  # Translation vector in gripper frame
+
+        # * Compute transform *
+        X_GGd = pin.SE3(R_GGd_G, p_GGd_G)  # Desired gripper pose in world frame
+
+        X_BGd_B = self.X_BG * X_GGd
+        self.X_BG_des = X_BGd_B  # Desired gripper pose in base frame
+
+        # # OLD
+        # # rot_vec = action[3:6]
+        # rot_vec = R_BG @ action[3:6]  # TODO TRANSPOSE ROT MATRIX??
+        # delta_rotation_matrix = pin.exp3(rot_vec)
+        # delta_trans = R_BG @ processed_action[:3]
+
+        # delta_pose_SE3 = pin.SE3(delta_rotation_matrix, delta_trans)
+
+        # self.X_BG_des = self.X_BG * delta_pose_SE3
 
         if action[6] > 0.5:
             self.gripper_state = "open"
@@ -315,7 +366,7 @@ class Lift_AgentNode(RlAgentNode):
         """Send the command to the robot."""
         msg = PoseStamped()
 
-        gripper_pose = se32rospose(self.X_G_des)
+        gripper_pose = se32rospose(self.X_BG_des)
         msg.header.stamp = self.get_clock().now().to_msg()
         msg.pose = gripper_pose
 
