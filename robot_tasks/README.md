@@ -49,6 +49,7 @@ To run testing:
     - Success
     - Agent action
     - EE vel 
+    
 - [ ] Process recordings
 - [ ] Easy way to reset peg
     - [ ] Fail if  
