@@ -125,12 +125,14 @@ class Lift_AgentNode(RlAgentNode):
         csv_path = os.path.join(str(Path(__file__).parent.parent), "demo_68_actions.csv")
         self.get_logger().info(f"Loading actions from CSV: {csv_path}")
         self._csv_actions = []
+
         with open(csv_path, "r") as f:
             reader = csv.reader(f)
             next(reader)  # skip header
             for row in reader:
                 # Only take the first 7 columns (actions)
                 self._csv_actions.append([float(x) for x in row[:7]])
+
         self._csv_action_idx = 0
 
     def _init_subscribers(self):
