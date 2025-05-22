@@ -24,6 +24,9 @@ from tf2_ros import TransformListener, Buffer
 # Action and services
 from arm_interfaces.action import RlAgent
 from rclpy.executors import MultiThreadedExecutor
+from rcl_interfaces.srv import SetParameters
+from rclpy.parameter import Parameter
+
 
 from robot_tasks.rl_agent.Base import RlAgentNode
 
@@ -31,6 +34,8 @@ import os
 import csv
 
 MAX_TIME = 4
+KP = 7.0
+KD = 0.6
 
 
 class Lift_AgentNode(RlAgentNode):
@@ -74,7 +79,7 @@ class Lift_AgentNode(RlAgentNode):
             default_agent_dir=default_agent,
             observation_dim=19,
             action_dim=7,
-            default_ctrl_frequency=10.0,
+            default_ctrl_frequency=20.0,
         )
 
         #! Task parameters
@@ -122,10 +127,14 @@ class Lift_AgentNode(RlAgentNode):
         self.base_frame = "base"
         self.cube_frame = "cube_frame"
 
+        # Set gains
+        self._set_control_gains(KP, KD)
+
+        # ? Temp, load from csv for testing
         csv_path = os.path.join(str(Path(__file__).parent.parent), "demo_68_actions.csv")
         self.get_logger().info(f"Loading actions from CSV: {csv_path}")
-        self._csv_actions = []
 
+        self._csv_actions = []
         with open(csv_path, "r") as f:
             reader = csv.reader(f)
             next(reader)  # skip header
@@ -162,6 +171,7 @@ class Lift_AgentNode(RlAgentNode):
             10,
         )
 
+    #! Observation and action methods
     def _create_result(self, success=False, message=""):
         """Create a Lift result message."""
         result: RlAgent.Result = self._action_type.Result()
@@ -267,15 +277,27 @@ class Lift_AgentNode(RlAgentNode):
             self.get_logger().warn(f"Failed to get cube pose from TF: {str(e)}", throttle_duration_sec=0.01)
             return None
 
-    def init_task_execution(self):
+    async def init_task_execution(self):
         """Initialize task-specific parameters."""
         self.task_start_time = self.get_clock().now()
 
         if self.X_BG is not None:
             self.X_BG_des = self.X_BG.copy()
 
+        Kp_future, Kd_future = self._set_control_gains(KP, KD)
+
+        # Wait for the service calls to complete
+        await Kp_future
+        await Kd_future
+
+        if Kp_future.result() is None or Kd_future.result() is None:
+            self.get_logger().error("Failed to set control gains.")
+            return False
+
         # TODO: Remove
         self._csv_action_idx = 0
+
+        return True
 
     def check_task_status(self):
         """
@@ -373,6 +395,33 @@ class Lift_AgentNode(RlAgentNode):
         msg.pose = gripper_pose
 
         self._robot_cmd_pub.publish(msg)
+
+    #! Utility methods
+    def _set_control_gains(self, Kp, Kd):
+        target_node_name = "/fr3_interface"
+        kp_param_name = "Kp_gripper_trans"
+        kd_param_name = "Kd_gripper_trans"
+
+        client = self.create_client(SetParameters, f"{target_node_name}/set_parameters")
+
+        if not client.wait_for_service(timeout_sec=2.0):
+            self.get_logger().error(f"Service {target_node_name}/set_parameters not available.")
+            return False
+
+        param_msg = Parameter(kp_param_name, Parameter.Type.DOUBLE, float(Kp)).to_parameter_msg()
+        req = SetParameters.Request()
+        req.parameters = [param_msg]
+
+        Kp_future = client.call_async(req)
+
+        #! Kd
+        param_msg = Parameter(kd_param_name, Parameter.Type.DOUBLE, float(Kd)).to_parameter_msg()
+        req = SetParameters.Request()
+        req.parameters = [param_msg]
+
+        Kd_future = client.call_async(req)
+
+        return Kp_future, Kd_future
 
 
 def main(args=None):

@@ -85,7 +85,7 @@ def main(args=None):
     gripper_start_pose_rpy = np.array([PI, 0, 0])
 
     X_G_start = pin.SE3(pin.rpy.rpyToMatrix(gripper_start_pose_rpy), gripper_start_pose_t)
-    franka_arm.goto_pose(X_G_start, Duration(seconds=10.0))
+    franka_arm.goto_pose(X_G_start, Duration(seconds=10.0), Kp=1.0, Kd=0.0)
 
     # Start a trial! Call the insert action
     print("--- Starting insertion trials ---")
@@ -111,7 +111,7 @@ def main(args=None):
 
         time.sleep(2.0)
 
-        franka_arm.goto_pose(X_G_start, Duration(seconds=10.0))
+        franka_arm.goto_pose(X_G_start, Duration(seconds=10.0), Kp=1.0, Kd=0.0)
 
         trial_n += 1
 

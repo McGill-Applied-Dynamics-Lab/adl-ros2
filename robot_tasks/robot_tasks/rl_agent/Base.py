@@ -311,7 +311,14 @@ class RlAgentNode(Node, abc.ABC):
             return result
 
         # Custom initialization for the task
-        self.init_task_execution()
+        task_rdy = await self.init_task_execution()
+
+        if not task_rdy:
+            self.get_logger().error("Failed to initialize task execution. Aborting goal.")
+            result = self._create_result(success=False, message="Failed to initialize task execution.")
+            goal_handle.abort()
+            self._cleanup_goal(goal_handle=None, lock_handle=True)
+            return result
 
         # --- 2. Start Control Loop (Implicitly via `_control_loop_active`) ---
         self.get_logger().info("Robot modes set. RL control loop is now active for this goal.")
@@ -459,7 +466,7 @@ class RlAgentNode(Node, abc.ABC):
         pass
 
     @abc.abstractmethod
-    def init_task_execution(self):
+    async def init_task_execution(self) -> bool:
         """
         Initialize task-specific parameters before executing the task.
         Called before starting the control loop.

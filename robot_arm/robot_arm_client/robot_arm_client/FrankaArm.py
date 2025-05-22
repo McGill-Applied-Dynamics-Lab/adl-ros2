@@ -23,6 +23,9 @@ import pinocchio as pin
 # from robot_arm_interface.utils import SE32PoseStamped, PoseStamped2SE3, array2pose
 from robot_arm_interface.utils import se32rospose
 
+from rclpy.parameter import Parameter
+from rcl_interfaces.srv import SetParameters
+
 
 class FrankaArm(Node):
     def __init__(self):
@@ -146,8 +149,16 @@ class FrankaArm(Node):
         home_pose = pin.SE3(pin.rpy.rpyToMatrix(np.array([np.pi, 0, 0])), home_t)
         self.goto_pose(home_pose, Duration(seconds=10))
 
-    def goto_pose(self, pose_goal: pin.SE3, duration: Duration):
+    def goto_pose(self, pose_goal: pin.SE3, duration: Duration, Kp=None, Kd=None):
         self.get_logger().info(f"Moving to cartesian goal:\n {pose_goal}")
+
+        if Kp is not None:
+            self.get_logger().info(f"Setting Kp: {Kp}")
+            self.set_robot_parameter("/fr3_interface", "Kp_gripper_trans", Kp)
+
+        if Kd is not None:
+            self.get_logger().info(f"Setting Kd: {Kd}")
+            self.set_robot_parameter("/fr3_interface", "Kd_gripper_trans", Kd)
 
         pose_goal_msg = PoseStamped()
         pose_goal_msg.header.stamp = self.get_clock().now().to_msg()
@@ -241,6 +252,34 @@ class FrankaArm(Node):
     def get_joints(self): ...
 
     def get_pose(self): ...
+
+    #! Utility functions
+    def set_robot_parameter(self, target_node_name: str, param_name: str, param_value: float):
+        """
+        Update a parameter on another ROS2 node.
+
+        Args:
+            target_node_name: The name of the target node (e.g., '/fr3_interface').
+            param: The name of the parameter (str).
+            value: The new value for the parameter.
+        Returns:
+            True if successful, False otherwise.
+        """
+        client = self.create_client(SetParameters, f"{target_node_name}/set_parameters")
+        if not client.wait_for_service(timeout_sec=2.0):
+            self.get_logger().error(f"Service {target_node_name}/set_parameters not available.")
+            return False
+
+        param_msg = Parameter(param_name, Parameter.Type.DOUBLE, float(param_value)).to_parameter_msg()
+        req = SetParameters.Request()
+        req.parameters = [param_msg]
+
+        future = client.call_async(req)
+        import rclpy
+
+        rclpy.spin_until_future_complete(self, future)
+        result = future.result()
+        return result.results[0].successful if result and result.results else False
 
 
 def main(args=None):
