@@ -58,6 +58,7 @@ class RlAgentNode(Node, abc.ABC):
         observation_dim,
         action_dim,
         default_ctrl_frequency=50.0,
+        default_command_frequency=50.0,
     ):
         """
         Initialize the RL agent node.
@@ -115,6 +116,8 @@ class RlAgentNode(Node, abc.ABC):
         control_frequency = self.get_parameter("control_frequency").get_parameter_value().double_value
         self.action_scale = self.get_parameter("action_scale").get_parameter_value().double_value / 10
 
+        self.command_frequency = default_command_frequency
+
         #! --- Define Spaces ---
         self.observation_space = gym.spaces.Box(
             low=-np.inf, high=np.inf, shape=(self._observation_dim,), dtype=np.float32
@@ -140,7 +143,7 @@ class RlAgentNode(Node, abc.ABC):
 
         #! --- Control Loop State ---
         self.latest_observation = None
-        self._last_action = np.zeros(self._action_dim, dtype=np.float32)
+        self._last_action = None
         self._task_finished = False
         self._control_loop_active = False
 
@@ -151,6 +154,11 @@ class RlAgentNode(Node, abc.ABC):
         self.timer_period = 1.0 / control_frequency
         self.control_timer = self.create_timer(
             self.timer_period, self.control_loop_callback, callback_group=self.callback_group
+        )
+
+        self.command_frequency_period = 1.0 / self.command_frequency
+        self.command_timer = self.create_timer(
+            self.command_frequency_period, self.process_action, callback_group=self.callback_group
         )
 
         self.get_logger().info(f"Node initialized. Control loop frequency: {control_frequency} Hz.")
@@ -323,7 +331,7 @@ class RlAgentNode(Node, abc.ABC):
         # --- 2. Start Control Loop (Implicitly via `_control_loop_active`) ---
         self.get_logger().info("Robot modes set. RL control loop is now active for this goal.")
 
-        self._last_action = np.zeros(self._action_dim, dtype=np.float32)
+        self._last_action = None
         self._control_loop_active = True
 
         # --- 3. Monitor for Completion or Cancellation ---
@@ -440,19 +448,22 @@ class RlAgentNode(Node, abc.ABC):
 
     #! --- MARK: RL Methods ---
     @torch.inference_mode()
-    def _get_action(self) -> torch.Tensor:
+    def _get_action(self) -> np.ndarray:
         """
         Get the action from the agent based on the latest observation.
         """
         # timestep and timesteps are not used in the PPO agent (returns: action, log_prob, outputs)
         try:
-            action, _, _ = self.agent.act(states=self.latest_observation, timestep=0, timesteps=0)
+            action_tensor, _, _ = self.agent.act(states=self.latest_observation, timestep=0, timesteps=0)
 
         except Exception as e:
             self.get_logger().error(f"Error while getting action from agent: {e}", throttle_duration_sec=2)
             return torch.zeros(self._action_dim, dtype=torch.float32)
 
-        return action[0]
+        action_tensor = action_tensor[0]
+        action = action_tensor.cpu().numpy()  # Convert to numpy array for processing
+
+        return action
 
     @abc.abstractmethod
     def _get_observation(self) -> torch.Tensor:
@@ -523,7 +534,16 @@ class RlAgentNode(Node, abc.ABC):
     #! --- MARK: Control Loop ---
     def control_loop_callback(self):
         """
-        Main control loop that runs at the specified frequency.
+        Main control loop that runs at the specified frequency (from `self.self.control_timer`)
+
+        Get the latest observation and do the inference to get the action.
+
+        The loop only runs if:
+        - `self._control_loop_active` is True
+        - `self._goal_handle` is not None and is active
+        - The task is not finished
+
+        Note: This method computes the action. Another loop is responsible for publishing the action to the robot.
         """
         #! Check if there is an active goal
         if not self._control_loop_active:
@@ -564,13 +584,12 @@ class RlAgentNode(Node, abc.ABC):
             return
 
         # -- Get Action from Agent
-        action_tensor = self._get_action()
-        action = action_tensor.cpu().numpy()  # Convert to numpy array for processing
+        action = self._get_action()
         self._last_action = action  # Store last action for observation
 
         # -- Process and send action
-        self.process_action(action)
-        self.send_robot_command()
+        # self.process_action(action)
+        # self.send_robot_command()
 
     #! --- MARK: Mode Setting ---
     async def _set_robot_mode_async(self, control_mode: ControlMode, goal_source: GoalSource):

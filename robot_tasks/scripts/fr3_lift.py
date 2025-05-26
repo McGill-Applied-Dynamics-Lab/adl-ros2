@@ -15,14 +15,21 @@ from pathlib import Path
 from ament_index_python.packages import get_package_share_directory
 
 PEG_IN_HAND = True
-cube_start_pose = np.array([0.60, 0.0, 0.050])
+cube_start_pose = np.array([0.56, 0.0, 0.050])
 cube_start_rpy = np.array([0, 0.0, 0.0])
 X_BC = pin.SE3(pin.rpy.rpyToMatrix(cube_start_rpy), cube_start_pose)
 
-# # Agent Params
-# agent_name = "insert_db2.pt"
-# package_share_directory = Path(get_package_share_directory("robot_tasks"))
-# agent_path = package_share_directory / "agents" / agent_name
+p_WBsim = np.array([-0.56, 0.0, 0.912])  # World frame position
+p_BsimB = np.array([0.0, 0.0, -0.117])  # World frame position
+
+rpy_WB = np.array([0.0, 0.0, 0.0])  # World frame to base frame rpy angles
+
+X_WBsim = pin.SE3(pin.rpy.rpyToMatrix(rpy_WB), p_WBsim)  # World to base transform
+X_BsimB = pin.SE3(pin.rpy.rpyToMatrix(rpy_WB), p_BsimB)  # Base to base simulation transform
+X_WB = X_WBsim * X_BsimB  # World to base transform in simulation
+
+p_WGstart_W = np.array([0.0, 0.0, 1.01])  # World frame position of gripper start pose
+p_BGstart_B = X_WB.inverse() * p_WGstart_W  # Base frame position of gripper start pose
 
 
 def call_lift_action(node):
@@ -81,15 +88,22 @@ def main(args=None):
 
     # Moving to Start pose
     print("Moving to start pose...")
-    gripper_start_pose_t = np.array([0.40, 0.0, 0.5])
+    franka_arm.gripper_open()
+    # cube_height = 0.025
+
+    # gripper_start_pose_t = np.array([0.56, 0.0, 0.180])
     gripper_start_pose_rpy = np.array([PI, 0, 0])
 
-    X_G_start = pin.SE3(pin.rpy.rpyToMatrix(gripper_start_pose_rpy), gripper_start_pose_t)
+    X_G_start = pin.SE3(pin.rpy.rpyToMatrix(gripper_start_pose_rpy), p_BGstart_B)
     franka_arm.goto_pose(X_G_start, Duration(seconds=10.0), Kp=1.0, Kd=0.0)
 
+    franka_arm.gripper_open()
+    # franka_arm.gripper_close()
+
     # Start a trial! Call the insert action
-    print("--- Starting insertion trials ---")
+    print("--- Starting lift trials ---")
     trial_n = 1
+
     while True:
         print(f"\n\n--- Trial {trial_n} ---")
         # trial_offset = np.array([*np.random.uniform(-SOCKET_NOISE, SOCKET_NOISE, size=1), 0.0, 0.0])
@@ -112,6 +126,7 @@ def main(args=None):
         time.sleep(2.0)
 
         franka_arm.goto_pose(X_G_start, Duration(seconds=10.0), Kp=1.0, Kd=0.0)
+        franka_arm.gripper_open()
 
         trial_n += 1
 

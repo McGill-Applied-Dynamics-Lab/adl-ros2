@@ -311,7 +311,7 @@ class TestGripperTracking:
         with self.pose_lock:
             start_pose = self.current_pose
         assert start_pose is not None
-        center_x = start_pose.pose.position.xself.node
+        center_x = start_pose.pose.position.x
         center_y = start_pose.pose.position.y
         z = start_pose.pose.position.z
         radius = 0.075

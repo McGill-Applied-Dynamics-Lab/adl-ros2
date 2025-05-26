@@ -11,12 +11,14 @@ import yaml
 
 # ROS2 Communications
 import rclpy.time
+from rclpy.action import ActionClient
 from sensor_msgs.msg import JointState
 from geometry_msgs.msg import PoseStamped, TwistStamped, Twist  # Example message types
 from franka_msgs.msg import FrankaRobotState  # TODO: Update when processed in the interface
 
 from robot_arm_interface.utils import motion2rostwist, rostwist2motion, rospose2se3, se32rospose
 from robot_arm_interface.fr3_interface import GoalSource, ControlMode
+from arm_interfaces.action import GripperClose, GripperOpen  # , GripperHoming
 
 # TF2
 from tf2_ros import TransformListener, Buffer
@@ -33,7 +35,7 @@ from robot_tasks.rl_agent.Base import RlAgentNode
 import os
 import csv
 
-MAX_TIME = 4
+MAX_TIME = 25
 KP = 7.0
 KD = 0.6
 
@@ -69,6 +71,12 @@ class Lift_AgentNode(RlAgentNode):
 
         default_agent = "lift_agent"
 
+        # Slow down factor
+        self.slow_down_factor = 0.2  # 5x slower
+        base_freq = 20.0
+        self.ctrl_rate = base_freq * self.slow_down_factor
+        self.command_rate = 20.0
+
         # Initialize base class
         super().__init__(
             node_name="lift_agent_node",
@@ -79,7 +87,8 @@ class Lift_AgentNode(RlAgentNode):
             default_agent_dir=default_agent,
             observation_dim=19,
             action_dim=7,
-            default_ctrl_frequency=20.0,
+            default_ctrl_frequency=self.ctrl_rate,
+            default_command_frequency=self.command_rate,
         )
 
         #! Task parameters
@@ -105,6 +114,7 @@ class Lift_AgentNode(RlAgentNode):
         self.max_task_duration = rclpy.time.Duration(seconds=MAX_TIME)
 
         # Poses and twists
+        self.processed_action = None
 
         self.X_WG = None  # Gripper pose in world frame
         self.X_BG = None  # Gripper pose in base frame
@@ -117,9 +127,14 @@ class Lift_AgentNode(RlAgentNode):
         self.X_GC = None  # Gripper to cube transform
 
         # World frame
-        p_WB = np.array([0.0, 0.0, 0.0])  # World frame position
+        p_WBsim = np.array([-0.56, 0.0, 0.912])  # World frame position
+        p_BsimB = np.array([0.0, 0.0, -0.117])  # World frame position
+
         rpy_WB = np.array([0.0, 0.0, 0.0])  # World frame to base frame rpy angles
-        self.X_WB = pin.SE3(pin.rpy.rpyToMatrix(rpy_WB), p_WB)  # World to base transform
+
+        self.X_WBsim = pin.SE3(pin.rpy.rpyToMatrix(rpy_WB), p_WBsim)  # World to base transform
+        self.X_BsimB = pin.SE3(pin.rpy.rpyToMatrix(rpy_WB), p_BsimB)  # Base to base simulation transform
+        self.X_WB = self.X_WBsim * self.X_BsimB  # World to base transform in simulation
 
         # TF2 setup
         self.tf_buffer = Buffer()
@@ -128,10 +143,13 @@ class Lift_AgentNode(RlAgentNode):
         self.cube_frame = "cube_frame"
 
         # Set gains
-        self._set_control_gains(KP, KD)
+        # self._set_control_gains(KP, KD)
 
         # ? Temp, load from csv for testing
-        csv_path = os.path.join(str(Path(__file__).parent.parent), "demo_68_actions.csv")
+        file_name = "actions_20250521_144331.csv"
+        # file_name = "demo_68_actions.csv"
+
+        csv_path = os.path.join(str(Path(__file__).parent.parent), file_name)
         self.get_logger().info(f"Loading actions from CSV: {csv_path}")
 
         self._csv_actions = []
@@ -142,7 +160,52 @@ class Lift_AgentNode(RlAgentNode):
                 # Only take the first 7 columns (actions)
                 self._csv_actions.append([float(x) for x in row[:7]])
 
+        # Load observations
+        obs_mapping = {
+            "object": ("obs_object_20250521_144331.csv", 10),
+            "robot0_eef_pos": ("obs_robot0_eef_pos_20250521_144331.csv", 3),
+            "robot0_eef_quat": ("obs_robot0_eef_quat_20250521_144331.csv", 4),
+            "robot0_gripper_qpos": ("obs_robot0_gripper_qpos_20250521_144331.csv", 2),
+        }
+
+        self.obs_csv_data = {
+            "object": [],
+            "robot0_eef_pos": [],
+            "robot0_eef_quat": [],
+            "robot0_gripper_qpos": [],
+        }
+
+        for each_obs, (file_name, n_rows) in obs_mapping.items():
+            obs_path = os.path.join(str(Path(__file__).parent.parent), "obs_test", file_name)
+            self.get_logger().info(f"Loading {each_obs} from CSV: {obs_path}")
+
+            with open(obs_path, "r") as f:
+                reader = csv.reader(f)
+                next(reader)
+
+                for row in reader:
+                    # Only take the first 7 columns (actions)
+                    self.obs_csv_data[each_obs].append([float(x) for x in row[:n_rows]])
+
         self._csv_action_idx = 0
+
+        self.get_logger().info("Lift agent node initialized.")
+        self.get_logger().info(f"Control rate: {self.ctrl_rate} Hz")
+        self.get_logger().info(f"Command rate: {self.command_rate} Hz")
+        self.get_logger().info(f"Action scale: {self.action_scale}")
+
+        # Gripper action clients
+        self.gripper_state = "open"  # Initial gripper state
+        self._last_gripper_command = "open"  # Track last command sent: 'open', 'close', or None
+        self._gripper_goal_in_progress = False  # Prevent overlapping goals
+        self._gripper_open_client = ActionClient(self, GripperOpen, "/gripper_open")
+        self._gripper_close_client = ActionClient(self, GripperClose, "/gripper_close")
+
+        while not self._gripper_open_client.wait_for_server(timeout_sec=1.0):
+            self.get_logger().warn("Waiting for gripper open action server...")
+
+        while not self._gripper_close_client.wait_for_server(timeout_sec=1.0):
+            self.get_logger().warn("Waiting for gripper close action server...")
 
     def _init_subscribers(self):
         """
@@ -221,19 +284,38 @@ class Lift_AgentNode(RlAgentNode):
 
         p_GC_B = p_BC_B - p_BG_B
         p_CG_B = -p_GC_B
+        # p_CG_W = self.X_WB.rotation @ p_CG_B
 
         R_BG = self.X_BG.rotation
 
         p_GC_G = R_BG.T * p_GC_B
         p_GC_W = self.X_WB.rotation @ p_GC_B
+        p_CG_W = -p_GC_W
 
         # * Observation vector *
         object_array = [
             p_WC,
             q_WC,
-            p_GC_W,
+            p_CG_W,
         ]
         object_array = np.concatenate(object_array).astype(np.float32)
+
+        # #! Overwrite with CSV data
+        # if self.obs_csv_data is not None:
+        #     object_array = np.array(self.obs_csv_data["object"][self._csv_action_idx], dtype=np.float32)
+        #     p_WG = np.array(self.obs_csv_data["robot0_eef_pos"][self._csv_action_idx], dtype=np.float32)
+        #     quat_WG = np.array(self.obs_csv_data["robot0_eef_quat"][self._csv_action_idx], dtype=np.float32)
+        #     gripper_state = np.array(self.obs_csv_data["robot0_gripper_qpos"][self._csv_action_idx], dtype=np.float32)
+
+        #     p_WC = object_array[:3]
+        #     q_WC = object_array[3:7]
+        #     p_CG_W = object_array[7:10]
+
+        #     # p_WG = gripper_state[:3]
+
+        #     self._csv_action_idx += 1
+        #     if self._csv_action_idx >= len(self._csv_actions):
+        #         self._csv_action_idx = 0
 
         observation_dict = {
             "object": torch.tensor(object_array, dtype=torch.float32).to(self.device),
@@ -241,6 +323,12 @@ class Lift_AgentNode(RlAgentNode):
             "robot0_eef_quat": torch.tensor(quat_WG, dtype=torch.float32).to(self.device),
             "robot0_gripper_qpos": torch.tensor(gripper_state, dtype=torch.float32).to(self.device),
         }
+
+        print(
+            f"p_WC: {p_WC[0]:>10.4f} {p_WC[1]:>10.4f} {p_WC[2]:>10.4f} | "
+            f"p_CG_W: {p_CG_W[0]:>10.4f} {p_CG_W[1]:>10.4f} {p_CG_W[2]:>10.4f} | "
+            f"p_WG: {p_WG[0]:>10.4f} {p_WG[1]:>10.4f} {p_WG[2]:>10.4f}"
+        )
 
         return observation_dict
 
@@ -280,6 +368,10 @@ class Lift_AgentNode(RlAgentNode):
     async def init_task_execution(self):
         """Initialize task-specific parameters."""
         self.task_start_time = self.get_clock().now()
+
+        self._last_action = None
+        self.gripper_state = "open"  # Initial gripper state
+        self._last_gripper_command = "open"  # Track last command sent: 'open', 'close', or None
 
         if self.X_BG is not None:
             self.X_BG_des = self.X_BG.copy()
@@ -321,36 +413,79 @@ class Lift_AgentNode(RlAgentNode):
 
         return success, failure
 
-    def process_action(self, action):
-        """Process the raw action from the agent or from CSV for debugging."""
+    def _get_action(self):
+        """
+        Get the action from the agent.
+
+        Called in the main loop (`control_loop_callback`).
+
+        Runs at the control rate.
+        """
+        #! Update desired gripper pose to current gripper pose
+        # if self.X_BG is not None:
+        #     self.X_BG_des = self.X_BG.copy()
+
+        #! From agent
+        action = super()._get_action()
+        # print(f"Gripper:\t {action[-1]:>10.4f} | ")
+        return action
+
         # #! Fixed action
-        # action = np.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=np.float32)
-        # self.action_scale = 0.1
+        # current_time = self.get_clock().now()
 
-        #! CSV Action
-        if self._csv_actions is None:
+        # if current_time - self.task_start_time > rclpy.time.Duration(seconds=4):
+        #     action = np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -1.0], dtype=np.float32)
+
+        # elif current_time - self.task_start_time > rclpy.time.Duration(seconds=2):
+        #     action = np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0], dtype=np.float32)
+
+        # else:
+        #     action = np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -1.0], dtype=np.float32)
+
+        # return action
+
+        # #! CSV Action
+        # if self._csv_actions is None:
+        #     return
+
+        # # Use next action from CSV
+        # self.get_logger().info("Applying CSV actions...", throttle_duration_sec=2.0)
+        # if self._csv_action_idx < len(self._csv_actions):
+        #     action = np.array(self._csv_actions[self._csv_action_idx], dtype=np.float32)
+        #     self._csv_action_idx += 1
+        #     # self.get_logger().info(f"Applying CSV action {self._csv_action_idx}/{len(self._csv_actions)}: {action}")
+
+        # else:
+        #     self.get_logger().warn("No more actions in CSV.", throttle_duration_sec=2.0)
+        #     action = np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=np.float32)
+        #     return
+
+        # return action
+
+    def process_action(self):
+        """Process the raw action from the agent to convert it to desired gripper pose and gripper state.
+
+        Sends the computed commands to the robot.
+
+        Called from the command timer callback.
+
+        Runs at the command rate.
+        """
+        if not self._control_loop_active or self._last_action is None:
             return
 
-        # Use next action from CSV
-        if self._csv_action_idx < len(self._csv_actions):
-            action = np.array(self._csv_actions[self._csv_action_idx], dtype=np.float32)
-            self._csv_action_idx += 1
-            self.get_logger().info(f"Applying CSV action {self._csv_action_idx}/{len(self._csv_actions)}: {action}")
+        action = self._last_action
 
-        else:
-            self.get_logger().warn("No more actions in CSV. Skipping action application.")
-            action = np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=np.float32)
-            return
+        # * Process action
+        # Scale the action.
+        self.processed_action = action[:6] * self.action_scale * (self.ctrl_rate / self.command_rate)
 
-        #! Process action
-        # Scale the action
-        processed_action = action[:6] * self.action_scale
+        #! ACTION WRT CURRENT GRIPPER POSE
+        p_GGd_W = self.processed_action[:3]  # Gripper translation
+        rot_vec = self.processed_action[3:6]
 
-        p_GGd_W = processed_action[:3]  # Gripper translation
-        rot_vec = processed_action[3:6]
-
-        #! Rotations
-        # * Option 1 - Assume rotation vector is in world frame *
+        # * Rotations
+        # ? Option 1 - Assume rotation vector is in world frame *
         rvec_W = rot_vec
 
         R_GW = self.X_WG.rotation.T
@@ -358,11 +493,11 @@ class Lift_AgentNode(RlAgentNode):
 
         R_GGd_G = pin.exp3(rvec_G)  # Rotation matrix from gripper to desired gripper pose
 
-        # # * Option 2 - Assume rotation vector is in gripper frame *
+        # # ? Option 2 - Assume rotation vector is in gripper frame *
         # rvec_G = rot_vec
         # R_GGd_G = pin.exp3(rvec_G)  # Rotation matrix from gripper to desired gripper pose
 
-        #! Translation
+        # * Translation
         p_GGd_G = R_GW @ p_GGd_W  # Translation vector in gripper frame
 
         # * Compute transform *
@@ -371,20 +506,38 @@ class Lift_AgentNode(RlAgentNode):
         X_BGd_B = self.X_BG * X_GGd
         self.X_BG_des = X_BGd_B  # Desired gripper pose in base frame
 
-        # # OLD
-        # # rot_vec = action[3:6]
-        # rot_vec = R_BG @ action[3:6]  # TODO TRANSPOSE ROT MATRIX??
-        # delta_rotation_matrix = pin.exp3(rot_vec)
-        # delta_trans = R_BG @ processed_action[:3]
+        # #! ACTION WRT GOAL POSE
+        # p_GdGd2_W = self.processed_action[:3]  # Gripper desired to new gripper desired
+        # rot_vec = self.processed_action[3:6]
 
-        # delta_pose_SE3 = pin.SE3(delta_rotation_matrix, delta_trans)
+        # # * Rotations
+        # # ? Option 1 - Assume rotation vector is in world frame *
+        # rvec_W = rot_vec
 
-        # self.X_BG_des = self.X_BG * delta_pose_SE3
+        # R_WGd = self.X_WB.rotation @ self.X_BG_des.rotation
+        # R_GdW = R_WGd.T  # Desired gripper pose in world frame
+        # rvec_G = R_GdW @ rvec_W  # Rotation vector in gripper frame
 
-        if action[6] > 0.5:
-            self.gripper_state = "open"
-        else:
-            self.gripper_state = "close"
+        # R_GdGd2_G = pin.exp3(rvec_G)  # Rotation matrix from gripper des to new desired gripper pose
+
+        # # # ? Option 2 - Assume rotation vector is in gripper frame *
+        # # rvec_G = rot_vec
+        # # R_GGd_G = pin.exp3(rvec_G)  # Rotation matrix from gripper to desired gripper pose
+
+        # # * Translation
+        # p_GdGd2_G = R_GdW @ p_GdGd2_W  # Translation vector in gripper frame
+
+        # # * Compute transform *
+        # X_GdGd2 = pin.SE3(R_GdGd2_G, p_GdGd2_G)  # Desired gripper pose in world frame
+
+        # X_BGd2_B = self.X_BG_des * X_GdGd2
+        # self.X_BG_des = X_BGd2_B  # Desired gripper pose in base frame
+
+        #! Gripper state
+        self._process_gripper_actions(action)
+
+        #! Send command
+        self.send_robot_command()
 
     def send_robot_command(self):
         """Send the command to the robot."""
@@ -395,6 +548,63 @@ class Lift_AgentNode(RlAgentNode):
         msg.pose = gripper_pose
 
         self._robot_cmd_pub.publish(msg)
+
+    def _process_gripper_actions(self, action: np.ndarray):
+        desired_gripper_state = None
+
+        if action[6] > 0.8:
+            desired_gripper_state = "close"
+        elif action[6] < -0.8:
+            desired_gripper_state = "open"
+        # else:
+        #     desired_gripper_state = None
+        self.gripper_state = desired_gripper_state
+
+        # Non-blocking gripper action logic
+        if (
+            self.gripper_state is not None
+            and self.gripper_state != self._last_gripper_command
+            and not self._gripper_goal_in_progress
+        ):
+            # if self.gripper_state == "open":
+            #     print("Sending gripper open command")
+            #     self._send_gripper_goal(self._gripper_open_client, GripperOpen)
+
+            #     self._last_gripper_command = self.gripper_state
+
+            if self.gripper_state == "close":
+                print("Sending gripper close command")
+                self._send_gripper_goal(self._gripper_close_client, GripperClose)
+
+                self._last_gripper_command = self.gripper_state
+
+    def _send_gripper_goal(self, client: ActionClient, action_type):
+        """Send a gripper goal asynchronously and set in-progress flag."""
+        self._gripper_goal_in_progress = True
+        goal_msg = action_type.Goal()
+        send_goal_future = client.send_goal_async(goal_msg)
+        send_goal_future.add_done_callback(self._gripper_goal_response_callback)
+
+    def _gripper_goal_response_callback(self, future):
+        try:
+            goal_handle = future.result()
+            if not goal_handle.accepted:
+                self.get_logger().warn("Gripper action goal rejected.")
+                self._gripper_goal_in_progress = False
+                return
+            get_result_future = goal_handle.get_result_async()
+            get_result_future.add_done_callback(self._gripper_result_callback)
+        except Exception as e:
+            self.get_logger().warn(f"Exception in gripper goal response: {e}")
+            self._gripper_goal_in_progress = False
+
+    def _gripper_result_callback(self, future):
+        try:
+            result = future.result().result
+            # Optionally log result
+        except Exception as e:
+            self.get_logger().warn(f"Exception in gripper result callback: {e}")
+        self._gripper_goal_in_progress = False
 
     #! Utility methods
     def _set_control_gains(self, Kp, Kd):
