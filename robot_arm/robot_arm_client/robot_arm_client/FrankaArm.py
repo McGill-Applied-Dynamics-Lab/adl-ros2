@@ -38,9 +38,9 @@ class FrankaArm(Node):
         self._wait_for_action_servers()
 
     def _init_action_clients(self):
-        # goto_joints
-        self._goto_joints_ac = ActionClient(self, GotoJoints, "goto_joints")
-        self._action_client_list.append(self._goto_joints_ac)
+        # # goto_joints
+        # self._goto_joints_ac = ActionClient(self, GotoJoints, "goto_joints")
+        # self._action_client_list.append(self._goto_joints_ac)
 
         # goto_pose
         self._goto_pose_ac = ActionClient(self, GotoPose, "goto_pose")
@@ -70,9 +70,12 @@ class FrankaArm(Node):
     def _wait_for_action_servers(self):
         self.get_logger().info("Waiting for action servers...")
         for ac in self._action_client_list:
-            ac_found = ac.wait_for_server(timeout_sec=1)
-            if not ac_found:
-                self.get_logger().error(f"Action server {ac._action_name} not found!")
+            # ac_found = ac.wait_for_server(timeout_sec=1)
+            # if not ac_found:
+            #     self.get_logger().error(f"Action server {ac._action_name} not found!")
+
+            while ac.wait_for_server(timeout_sec=1):
+                self.get_logger().warn(f"Action server {ac._action_name} is up!")
 
         self.get_logger().info("Action servers are up!")
 

@@ -35,7 +35,7 @@ from robot_tasks.rl_agent.Base import RlAgentNode
 import os
 import csv
 
-MAX_TIME = 25
+MAX_TIME = 15
 KP = 7.0
 KD = 0.6
 
@@ -69,10 +69,10 @@ class Lift_AgentNode(RlAgentNode):
         pkg_dir = Path(get_package_share_directory("robot_tasks"))
         models_dir = pkg_dir / "agents" / "lift"
 
-        default_agent = "lift_agent"
+        default_agent = "qpos_2025-05-27"
 
         # Slow down factor
-        self.slow_down_factor = 0.2  # 5x slower
+        self.slow_down_factor = 0.5  # 0.2 = 5x slower
         base_freq = 20.0
         self.ctrl_rate = base_freq * self.slow_down_factor
         self.command_rate = 20.0
@@ -109,6 +109,7 @@ class Lift_AgentNode(RlAgentNode):
         ]  # Start position of the joints [rad]
 
         self._joint_state = None
+        self._gripper_finger_distance = np.array([0.0, 0.0], dtype=np.float32)  # Store finger positions
 
         self.task_start_time = None
         self.max_task_duration = rclpy.time.Duration(seconds=MAX_TIME)
@@ -128,7 +129,7 @@ class Lift_AgentNode(RlAgentNode):
 
         # World frame
         p_WBsim = np.array([-0.56, 0.0, 0.912])  # World frame position
-        p_BsimB = np.array([0.0, 0.0, -0.117])  # World frame position
+        p_BsimB = np.array([0.0, 0.0, -0.142])  # World frame position
 
         rpy_WB = np.array([0.0, 0.0, 0.0])  # World frame to base frame rpy angles
 
@@ -207,6 +208,15 @@ class Lift_AgentNode(RlAgentNode):
         while not self._gripper_close_client.wait_for_server(timeout_sec=1.0):
             self.get_logger().warn("Waiting for gripper close action server...")
 
+        # Add gripper joint state subscriber
+        gripper_joint_topic = "/fr3_gripper/joint_states"
+        self._gripper_joint_sub = self.create_subscription(
+            JointState,
+            gripper_joint_topic,
+            self._gripper_joint_state_callback,
+            10,
+        )
+
     def _init_subscribers(self):
         """
         Initialize subscribers for robot and env states.
@@ -250,6 +260,18 @@ class Lift_AgentNode(RlAgentNode):
         self.X_BG = rospose2se3(robot_state_msg.o_t_ee.pose)
         self.V_G = rostwist2motion(robot_state_msg.o_dp_ee_d.twist)
 
+    def _gripper_joint_state_callback(self, msg: JointState):
+        """
+        Callback for the '/fr3_gripper/joint_states' topic.
+        Updates the gripper finger distances.
+        """
+        # Expecting two positions: [finger1, finger2]
+        if len(msg.position) == 2:
+            self._gripper_finger_distance = np.array(msg.position[:2], dtype=np.float32)
+            self._gripper_finger_distance[1] = -self._gripper_finger_distance[1]  # Invert second finger position
+        else:
+            self.get_logger().warn("Received gripper joint state with insufficient positions.")
+
     def _get_observation(self) -> torch.Tensor:
         """
         Get the latest observation from the robot's sensors.
@@ -263,7 +285,7 @@ class Lift_AgentNode(RlAgentNode):
 
         #! Process observations
         # * Gripper state *
-        gripper_state = np.array([0, 0])  # TODO: Update with actual gripper state
+        gripper_state = self._gripper_finger_distance.copy()  # Use actual finger positions
 
         # * Gripper pose *
         self.X_WG = self.X_WB * self.X_BG
@@ -325,9 +347,10 @@ class Lift_AgentNode(RlAgentNode):
         }
 
         print(
-            f"p_WC: {p_WC[0]:>10.4f} {p_WC[1]:>10.4f} {p_WC[2]:>10.4f} | "
-            f"p_CG_W: {p_CG_W[0]:>10.4f} {p_CG_W[1]:>10.4f} {p_CG_W[2]:>10.4f} | "
-            f"p_WG: {p_WG[0]:>10.4f} {p_WG[1]:>10.4f} {p_WG[2]:>10.4f}"
+            f"p_WC: {p_WC[0]:>8.4f} {p_WC[1]:>8.4f} {p_WC[2]:>8.4f} | "
+            f"p_CG_W: {p_CG_W[0]:>8.4f} {p_CG_W[1]:>8.4f} {p_CG_W[2]:>8.4f} | "
+            f"p_WG: {p_WG[0]:>8.4f} {p_WG[1]:>8.4f} {p_WG[2]:>8.4f} | "
+            f"fingers: {gripper_state[0]:>8.4f} {gripper_state[1]:>8.4f} | ",
         )
 
         return observation_dict
@@ -427,7 +450,7 @@ class Lift_AgentNode(RlAgentNode):
 
         #! From agent
         action = super()._get_action()
-        # print(f"Gripper:\t {action[-1]:>10.4f} | ")
+        # print(f"Gripper:\t {action[-1]:>8.4f} | ")
         return action
 
         # #! Fixed action

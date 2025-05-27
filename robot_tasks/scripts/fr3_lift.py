@@ -20,7 +20,7 @@ cube_start_rpy = np.array([0, 0.0, 0.0])
 X_BC = pin.SE3(pin.rpy.rpyToMatrix(cube_start_rpy), cube_start_pose)
 
 p_WBsim = np.array([-0.56, 0.0, 0.912])  # World frame position
-p_BsimB = np.array([0.0, 0.0, -0.117])  # World frame position
+p_BsimB = np.array([0.0, 0.0, -0.142])  # World frame position
 
 rpy_WB = np.array([0.0, 0.0, 0.0])  # World frame to base frame rpy angles
 
