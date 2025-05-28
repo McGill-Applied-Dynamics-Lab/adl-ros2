@@ -2,6 +2,10 @@
 
 #include <cstring>
 #include <iostream>
+
+#include "hardware_interface/types/hardware_interface_return_values.hpp"
+#include "hardware_interface/types/hardware_interface_type_values.hpp"
+
 namespace {
 
 // Example implementation of bit_cast: https://en.cppreference.com/w/cpp/numeric/bit_cast
@@ -19,10 +23,21 @@ bit_cast(const From& src) noexcept {
   return dst;
 }
 
+// std::vector<hardware_interface::LoanedStateInterface> to_value_vector(std::vector<std::reference_wrapper<hardware_interface::LoanedStateInterface>> state_interfaces_)
+// {
+//   std::vector<hardware_interface::LoanedStateInterface> result;
+//   result.reserve(state_interfaces_.size());
+//   for (const auto & ref : state_interfaces_)
+//   {
+//     result.emplace_back(ref.get());
+//   }
+//   return result;
+// }
+
 }  // namespace
 
 FrankaRimNode::FrankaRimNode()
-  : Node("franka_rim_node")
+  : Node("franka_rim_node"), SemanticComponentInterface("fr3/robot_model", 2)
 {
     RCLCPP_INFO(this->get_logger(), "Starting FrankaRimNode...");
 //   this->declare_parameter<std::string>("model_source_path", "");
@@ -31,6 +46,11 @@ FrankaRimNode::FrankaRimNode()
 
   // * Initialize franka_model_
   // TODO: Initialize franka_model_ here.
+  franka_robot_model_ = std::make_unique<franka_rim::FrankaRobotModel>(
+      franka_rim::FrankaRobotModel(arm_id_ + "/" + k_robot_model_interface_name,
+                                                   arm_id_ + "/" + k_robot_state_interface_name));
+
+
   // The method for initializing franka::Model depends on your setup:
   // 1. If you have a franka::Robot object (e.g., in a control node):
     //  franka_model_ = robot.loadModel();
@@ -41,8 +61,70 @@ FrankaRimNode::FrankaRimNode()
   // Ensure franka_model_ is valid before use in callbacks.
   // For now, we'll proceed assuming it will be initialized.
   // auto franka_model_interface;
+  // size_t state_interface_size = 1; // Adjust this based on your actual state interfaces
+  // state_interfaces_.reserve(state_interface_size);
+
+    // const std::string& franka_model_interface_name_ = "fr3/robot_model";
+    // interface_names_.emplace_back(franka_model_interface_name_);
+
+    // model_interfaces_.reserve(1);
+    // model_interfaces_.emplace_back(franka_model_interface_name_);
+    
+
+    // // this->assign_loaned_state_interfaces(model_interfaces_);
+
+    // auto franka_model_interface =
+    //     std::find_if(state_interfaces_.begin(), state_interfaces_.end(), [&](const auto& interface) {
+    //       return interface.get().get_name() == franka_model_interface_name_;
+    //     });
+
+    // robot_model_ = bit_cast<franka_hardware::Model*>((*franka_model_interface).get().get_value());
+
+    // if (franka_model_interface != state_interfaces_.end()) {
+    //   robot_model_ = bit_cast<franka_hardware::Model*>((*franka_model_interface).get().get_value());
+    // } else {
+    //   RCLCPP_ERROR(this->get_logger(),
+    //               "Franka interface does not exist! Did you assign the loaned state in the "
+    //               "controller?");
+    //   throw std::runtime_error("Franka state interfaces does not exist");
+    // }
+
+
+  // auto franka_model_interface =
+  //     std::find_if(state_interfaces_.begin(), state_interfaces_.end(), [&](const auto& interface) {
+  //       return interface.get().get_name() == franka_model_interface_name_;
+  //     });
 
   // robot_model_ = bit_cast<franka_hardware::Model*>((*franka_model_interface).get().get_value());
+        std::array<double, 49> mass = franka_robot_model_->getMassMatrix();
+  std::array<double, 7> coriolis = franka_robot_model_->getCoriolisForceVector();
+  std::array<double, 7> gravity = franka_robot_model_->getGravityForceVector();
+  std::array<double, 16> pose = franka_robot_model_->getPoseMatrix(franka::Frame::kJoint4);
+  std::array<double, 42> joint4_body_jacobian_wrt_joint4 =
+      franka_robot_model_->getBodyJacobian(franka::Frame::kJoint4);
+  std::array<double, 42> endeffector_jacobian_wrt_base =
+      franka_robot_model_->getZeroJacobian(franka::Frame::kEndEffector);
+
+  RCLCPP_INFO(this->get_logger(), "-------------------------------------------------------------");
+
+  // RCLCPP_INFO_STREAM(this->get_logger(), "FrankaRimNode initialized with arm_id: " << arm_id_);
+
+  // RCLCPP_INFO_STREAM(this->get_logger(), "mass :" << mass);
+  // RCLCPP_INFO_STREAM_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
+  //                             "coriolis :" << coriolis);
+  // RCLCPP_INFO_STREAM_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
+  //                             "gravity :" << gravity);
+  // RCLCPP_INFO_STREAM_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
+  //                             "joint_pose :" << pose);
+  // RCLCPP_INFO_STREAM_THROTTLE(
+  //     this->get_logger(), *this->get_clock(), 1000,
+  //     "joint4_body_jacobian in joint4 frame :" << joint4_body_jacobian_wrt_joint4);
+  // RCLCPP_INFO_STREAM_THROTTLE(
+  //     this->get_logger(), *this->get_clock(), 1000,
+  //     "end_effector_jacobian in base frame :" << endeffector_jacobian_wrt_base);
+  // RCLCPP_INFO(this->get_logger(), *this->get_clock(), 1000,
+                      //  "-------------------------------------------------------------");
+
 
 
   // * Initialize pub/sub

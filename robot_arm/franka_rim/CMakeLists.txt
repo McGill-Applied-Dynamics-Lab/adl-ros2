@@ -16,6 +16,7 @@ set(PROJECT_DEPENDS
   std_msgs
   franka_msgs
   franka_hardware
+  hardware_interface
 )
 
 find_package(backward_ros REQUIRED)
@@ -23,6 +24,14 @@ find_package(ament_cmake REQUIRED)
 foreach(Dependency IN ITEMS ${PROJECT_DEPENDS})
   find_package(${Dependency} REQUIRED)
 endforeach()
+
+add_library(
+  franka_rim SHARED
+  src/franka_robot_model.cpp
+)
+
+target_include_directories(franka_rim PUBLIC include)
+ament_target_dependencies(franka_rim ${PROJECT_DEPENDS})
 
 # uncomment the following section in order to fill in
 # further dependencies manually.
@@ -46,6 +55,7 @@ add_executable(franka_rim_node src/franka_rim_node.cpp)
 # Include directories
 ament_target_dependencies(franka_rim_node ${PROJECT_DEPENDS})
 target_include_directories(franka_rim_node PRIVATE include)
+target_link_libraries(franka_rim_node franka_rim)
 
 # Install targets
 install(TARGETS franka_rim_node
@@ -56,4 +66,7 @@ install(DIRECTORY include/
   DESTINATION include/
 )
 
+ament_export_include_directories(include)
+ament_export_libraries(franka_rim)
+ament_export_dependencies(${THIS_PACKAGE_INCLUDE_DEPENDS})
 ament_package()

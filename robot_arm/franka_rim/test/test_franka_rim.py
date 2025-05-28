@@ -137,6 +137,6 @@ def test_node_init(test_context):
         _,
     ) = test_context
 
-    time.sleep(1)
+    time.sleep(2)
     node_names = node.get_node_names()
     assert any("franka_rim_node" in n for n in node_names), "franka_rim_node is not alive"
