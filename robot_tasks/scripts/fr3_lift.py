@@ -13,23 +13,22 @@ import time
 import pinocchio as pin
 from pathlib import Path
 from ament_index_python.packages import get_package_share_directory
+from tf2_ros import TransformBroadcaster, StaticTransformBroadcaster
+from geometry_msgs.msg import TransformStamped
 
-PEG_IN_HAND = True
-cube_start_pose = np.array([0.56, 0.0, 0.050])
-cube_start_rpy = np.array([0, 0.0, 0.0])
-X_BC = pin.SE3(pin.rpy.rpyToMatrix(cube_start_rpy), cube_start_pose)
+# Experiment parameters
+OBJECT_POSITIONS = [
+    np.array([-0.0, 0.0, -np.deg2rad(0)]),  # x, y, theta
+    # np.array([-0.01, 0.02, np.deg2rad(45)]),  # x, y, theta
+]
 
-p_WBsim = np.array([-0.56, 0.0, 0.912])  # World frame position
-p_BsimB = np.array([0.0, 0.0, -0.142])  # World frame position
+GRIPPER_TYPE = ["rigid", "soft"]
 
-rpy_WB = np.array([0.0, 0.0, 0.0])  # World frame to base frame rpy angles
-
-X_WBsim = pin.SE3(pin.rpy.rpyToMatrix(rpy_WB), p_WBsim)  # World to base transform
-X_BsimB = pin.SE3(pin.rpy.rpyToMatrix(rpy_WB), p_BsimB)  # Base to base simulation transform
-X_WB = X_WBsim * X_BsimB  # World to base transform in simulation
-
-p_WGstart_W = np.array([0.0, 0.0, 1.01])  # World frame position of gripper start pose
-p_BGstart_B = X_WB.inverse() * p_WGstart_W  # Base frame position of gripper start pose
+OBJECTS = {
+    "cube": 0.035,  # 3.5cm cube
+    "cube_big": 0.05,  # 5cm cube
+    "sphere": 0.03,
+}
 
 
 def call_lift_action(node):
@@ -67,6 +66,24 @@ def call_lift_action(node):
     return result.success, result.message
 
 
+def publish_static_transform(static_broadcaster, node, X: pin.SE3, parent_frame="base", child_frame="cube_frame"):
+    """Publish the transform `X` from `parent_frame` to `child_frame` as a static transform to tf2."""
+    tf_msg = TransformStamped()
+    tf_msg.header.stamp = node.get_clock().now().to_msg()
+    tf_msg.header.frame_id = parent_frame
+    tf_msg.child_frame_id = child_frame
+    tf_msg.transform.translation.x = X.translation[0]
+    tf_msg.transform.translation.y = X.translation[1]
+    tf_msg.transform.translation.z = X.translation[2]
+
+    quat = pin.Quaternion(X.rotation)
+    tf_msg.transform.rotation.x = quat.x
+    tf_msg.transform.rotation.y = quat.y
+    tf_msg.transform.rotation.z = quat.z
+    tf_msg.transform.rotation.w = quat.w
+    static_broadcaster.sendTransform(tf_msg)
+
+
 def main(args=None):
     parser = argparse.ArgumentParser(description="Robot arm control test")
     # parser.add_argument("--demo", action="store_true", help="Run the demo sequence")
@@ -75,60 +92,97 @@ def main(args=None):
 
     rclpy.init(args=remaining)
 
-    #! Agent
     print("----- Starting lift insert task -----")
     franka_arm = FrankaArm()
-    # franka_arm.home()
 
-    # # Run with full teleop (joystick) capabilities
-    # teleop_node = TeleopNode(franka_arm)
+    # Create tf2 broadcasters
+    node = rclpy.create_node("fr3_lift_tf_broadcaster")
+    # tf_broadcaster = TransformBroadcaster(node)
+    static_broadcaster = StaticTransformBroadcaster(node)
 
-    # # Move joints home
-    # franka_arm.goto_home()
+    #! Transforms
+    # Gripper to tool transform (fingers tips)
+    # TODO: Change this for soft gripper
+    p_Toffset = np.array([0.0, 0.0, 0.0])  # Tool offset from gripper (z-axis)
 
+    X_GT = pin.SE3(pin.rpy.rpyToMatrix(np.zeros(3)), p_Toffset)  # Gripper to tool transform
+    publish_static_transform(static_broadcaster, node, X_GT, parent_frame="fr3_hand_tcp", child_frame="fr3_tool")
+
+    # World to sim base and real base
+    p_WBsim = np.array([-0.56, 0.0, 0.912])  # World to simulation base
+
+    # ? Change `p_BsimB` in `Lift.py` to match this
+    p_BsimB = np.array(
+        [0.0, 0.0, -0.1095]
+    )  # Sim base to real base (-0.142 if object's top, -0.117 for middle, -0.1095 for 3.5cm cube)
+
+    rpy_WB = np.array([0.0, 0.0, 0.0])  # World frame to base frame rpy angles
+
+    X_WBsim = pin.SE3(pin.rpy.rpyToMatrix(rpy_WB), p_WBsim)  # World to base transform
+    X_BsimB = pin.SE3(pin.rpy.rpyToMatrix(rpy_WB), p_BsimB)  # Base to base simulation transform
+    X_WB = X_WBsim * X_BsimB  # World to base transform in simulation
+
+    # Gripper start pose (G is at the tip of the rigid fingers)
+    gripper_start_pose_rpy = np.array([PI, 0, 0])  # Orientation
+    p_WTstart_W = np.array([0.0, 0.0, 1.01])  # World to tool
+    p_BTstart_B = X_WB.inverse() * p_WTstart_W  # Base frame position of tool start pose
+
+    p_BGstart = p_BTstart_B + p_Toffset  # Base frame position of gripper start pose
+
+    p_BOzero = np.array([0.56, 0.0, 0.0])  # Base to object zero position
+
+    #! Agent
     # Moving to Start pose
     print("Moving to start pose...")
-    franka_arm.gripper_open()
-    # cube_height = 0.025
 
-    # gripper_start_pose_t = np.array([0.56, 0.0, 0.180])
-    gripper_start_pose_rpy = np.array([PI, 0, 0])
-
-    X_G_start = pin.SE3(pin.rpy.rpyToMatrix(gripper_start_pose_rpy), p_BGstart_B)
+    X_G_start = pin.SE3(pin.rpy.rpyToMatrix(gripper_start_pose_rpy), p_BGstart)
     franka_arm.goto_pose(X_G_start, Duration(seconds=10.0), Kp=1.0, Kd=0.0)
 
     franka_arm.gripper_open()
+
+    # Test functions
     # franka_arm.gripper_close()
+    # X_test = pin.SE3(pin.rpy.rpyToMatrix(gripper_start_pose_rpy), np.array([0.56, -0.4, 0.2]))
+    # franka_arm.goto_pose(X_test, Duration(seconds=10.0), Kp=1.0, Kd=0.0)
 
     # Start a trial! Call the insert action
     print("--- Starting lift trials ---")
     trial_n = 1
 
     while True:
-        print(f"\n\n--- Trial {trial_n} ---")
-        # trial_offset = np.array([*np.random.uniform(-SOCKET_NOISE, SOCKET_NOISE, size=1), 0.0, 0.0])
-        # trial_offset = np.array([-0.00, 0.0, 0.0])
+        object = "cube_big"  # Example object, can be parameterized
+        object_size = OBJECTS[object]
 
-        # print(f"Trial offset: {trial_offset}")
-        # X_G_start_trial = X_G_start.copy()
-        # X_G_start_trial.translation += trial_offset
-        # franka_arm.goto_pose(X_G_start_trial, Duration(seconds=10.0))
+        for each_object_pose in OBJECT_POSITIONS:
+            print(f"\n\n--- Trial {trial_n} ---")
+            dx = each_object_pose[0]
+            dy = each_object_pose[1]
+            theta = each_object_pose[2]
+            print(f"Object position: dx={dx}, dy={dy}, theta={theta}")
 
-        print("Starting lift action")
-        success, message = call_lift_action(franka_arm)
+            # Adjust object position based on trial parameters
+            cube_start_pose = p_BOzero + np.array([dx, dy, object_size / 2.0])
+            cube_start_rpy = np.array([0, 0.0, theta])
+            X_BC = pin.SE3(pin.rpy.rpyToMatrix(cube_start_rpy), cube_start_pose)
 
-        # Print result
-        if success:
-            print(f"Lift successful! Message: {message}")
-        else:
-            print(f"Lift failed! Message: {message}")
+            # Publish object static transform (only once per trial)
+            publish_static_transform(static_broadcaster, node, X_BC, parent_frame="base", child_frame="cube_frame")
 
-        time.sleep(2.0)
+            print("Starting lift action")
+            success, message = call_lift_action(franka_arm)
 
-        franka_arm.goto_pose(X_G_start, Duration(seconds=10.0), Kp=1.0, Kd=0.0)
-        franka_arm.gripper_open()
+            # Print result
+            if success:
+                print(f"Lift successful! Message: {message}")
+            else:
+                print(f"Lift failed! Message: {message}")
 
-        trial_n += 1
+            time.sleep(1.0)
+
+            franka_arm.gripper_open()
+            franka_arm.goto_pose(X_G_start, Duration(seconds=10.0), Kp=1.0, Kd=0.0)
+
+            trial_n += 1
 
     # Clean up
     rclpy.shutdown()

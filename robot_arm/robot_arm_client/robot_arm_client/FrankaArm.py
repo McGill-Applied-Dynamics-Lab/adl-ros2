@@ -74,8 +74,8 @@ class FrankaArm(Node):
             # if not ac_found:
             #     self.get_logger().error(f"Action server {ac._action_name} not found!")
 
-            while ac.wait_for_server(timeout_sec=1):
-                self.get_logger().warn(f"Action server {ac._action_name} is up!")
+            while not ac.wait_for_server(timeout_sec=1):
+                self.get_logger().warn(f"Action server {ac._action_name} not up...")
 
         self.get_logger().info("Action servers are up!")
 
