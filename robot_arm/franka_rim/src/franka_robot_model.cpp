@@ -58,16 +58,16 @@ void FrankaRobotModel::initialize() {
         return interface.get().get_name() == franka_model_interface_name_;
       });
 
-  if (franka_state_interface != state_interfaces_.end() &&
-      franka_model_interface != state_interfaces_.end()) {
-    robot_model_ = bit_cast<franka_hardware::Model*>((*franka_model_interface).get().get_value());
-    robot_state_ = bit_cast<franka::RobotState*>((*franka_state_interface).get().get_value());
-  } else {
-    RCLCPP_ERROR(rclcpp::get_logger("franka_model_semantic_component"),
-                 "Franka interface does not exist! Did you assign the loaned state in the "
-                 "controller?");
-    throw std::runtime_error("Franka state interfaces does not exist");
-  }
+  robot_model_ = bit_cast<franka_hardware::Model*>((*franka_model_interface).get().get_value());
+  // if (franka_state_interface != state_interfaces_.end() &&
+  //     franka_model_interface != state_interfaces_.end()) {
+  //   robot_state_ = bit_cast<franka::RobotState*>((*franka_state_interface).get().get_value());
+  // } else {
+  //   RCLCPP_ERROR(rclcpp::get_logger("franka_model_semantic_component"),
+  //                "Franka interface does not exist! Did you assign the loaned state in the "
+  //                "controller?");
+  //   throw std::runtime_error("Franka state interfaces does not exist");
+  // }
   initialized_ = true;
 }
 }  // namespace franka_rim

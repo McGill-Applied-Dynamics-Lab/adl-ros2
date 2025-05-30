@@ -20,7 +20,10 @@
 #include "franka_rim/franka_robot_model.hpp"
 
 
-class FrankaRimNode : public rclcpp::Node, public semantic_components::SemanticComponentInterface<franka_hardware::Model> {
+class FrankaRimNode : 
+  public rclcpp::Node
+  // public semantic_components::SemanticComponentInterface<franka_hardware::Model> 
+{
 public:
   FrankaRimNode();
 
@@ -47,5 +50,10 @@ private:
   const std::string k_robot_model_interface_name{"robot_model"};
   const std::string arm_id_{"fr3"};
 
+  std::unique_ptr<franka::Robot> robot_;
+  std::unique_ptr<franka::Model> model_;
+  // rclcpp::Subscription<franka_msgs::msg::FrankaState>::SharedPtr subscription_;
+  // rclcpp::Publisher<std_msgs::msg::Float64MultiArray>::SharedPtr mass_pub_, coriolis_pub_, gravity_pub_;
+  std::string robot_ip_{"10.69.54.223"};  // Replace with your robot's IP
 
 };
