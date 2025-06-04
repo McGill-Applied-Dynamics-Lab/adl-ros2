@@ -153,7 +153,7 @@ class FrankaArm(Node):
         self.goto_pose(home_pose, Duration(seconds=10))
 
     def goto_pose(self, pose_goal: pin.SE3, duration: Duration, Kp=None, Kd=None):
-        self.get_logger().info(f"Moving to cartesian goal:\n {pose_goal}")
+        # self.get_logger().info(f"Moving to cartesian goal:\n {pose_goal}")
 
         if Kp is not None:
             self.get_logger().info(f"Setting Kp: {Kp}")
