@@ -20,7 +20,7 @@ ln -s src/adg_ros2/.devcontainer .devcontainer
 ```
 
 4. Build Docker
-Vscode steps to build
+Vs code steps to build
 
 
 5. ROS dependencies
