@@ -35,9 +35,15 @@ from robot_tasks.rl_agent.Base import RlAgentNode
 import os
 import csv
 
-MAX_TIME = 15
+MAX_TIME = 40
+SPEED = 0.2
+AGENT = "agent_04"  # "qpos_2025-05-27", core_bc_lift_ph_low_dim_42_683_0.1_RND_seed2_2000, core_bc_lift_ph_low_dim_42_683_0.1_nRND_2000
+
 KP = 7.0
 KD = 0.6
+
+Z_SUCCESS_THRESHOLD = 0.075  # 7.5 cm z threshold for success
+GRIPPER_SUCCESS_THRESHOLD = 0.055  # 5.5 cm gripper distance threshold for success
 
 
 class Lift_AgentNode(RlAgentNode):
@@ -69,10 +75,10 @@ class Lift_AgentNode(RlAgentNode):
         pkg_dir = Path(get_package_share_directory("robot_tasks"))
         models_dir = pkg_dir / "agents" / "lift"
 
-        default_agent = "qpos_2025-05-27"
+        default_agent = AGENT
 
         # Slow down factor
-        self.slow_down_factor = 0.5  # 0.2 = 5x slower
+        self.slow_down_factor = SPEED  # 0.2 = 5x slower
         base_freq = 20.0
         self.ctrl_rate = base_freq * self.slow_down_factor
         self.command_rate = 20.0
@@ -129,13 +135,17 @@ class Lift_AgentNode(RlAgentNode):
 
         # World frame
         p_WBsim = np.array([-0.56, 0.0, 0.912])  # World frame position
-        p_BsimB = np.array([0.0, 0.0, -0.142])  # World frame position
+        p_BsimB = np.array([0.0, 0.0, -0.1095])  # World frame position
 
         rpy_WB = np.array([0.0, 0.0, 0.0])  # World frame to base frame rpy angles
 
         self.X_WBsim = pin.SE3(pin.rpy.rpyToMatrix(rpy_WB), p_WBsim)  # World to base transform
         self.X_BsimB = pin.SE3(pin.rpy.rpyToMatrix(rpy_WB), p_BsimB)  # Base to base simulation transform
         self.X_WB = self.X_WBsim * self.X_BsimB  # World to base transform in simulation
+
+        self.gripper_offset = 0.0
+
+        self.X_GT = pin.SE3(np.eye(3), np.array([0.0, 0.0, self.gripper_offset]))  # Gripper to tool transform
 
         # TF2 setup
         self.tf_buffer = Buffer()
@@ -147,7 +157,7 @@ class Lift_AgentNode(RlAgentNode):
         # self._set_control_gains(KP, KD)
 
         # ? Temp, load from csv for testing
-        file_name = "actions_20250521_144331.csv"
+        file_name = "actions_20250530_193528.csv"  # actions_20250530_193528, actions_20250521_144331:
         # file_name = "demo_68_actions.csv"
 
         csv_path = os.path.join(str(Path(__file__).parent.parent), file_name)
@@ -269,6 +279,14 @@ class Lift_AgentNode(RlAgentNode):
         if len(msg.position) == 2:
             self._gripper_finger_distance = np.array(msg.position[:2], dtype=np.float32)
             self._gripper_finger_distance[1] = -self._gripper_finger_distance[1]  # Invert second finger position
+
+            gripper_distance = (
+                self._gripper_finger_distance[0] - self._gripper_finger_distance[1]
+            )  # Calculate the distance between the fingers
+
+            if gripper_distance < GRIPPER_SUCCESS_THRESHOLD:
+                self._gripper_finger_distance = np.array([0.0, 0.0], dtype=np.float32)
+
         else:
             self.get_logger().warn("Received gripper joint state with insufficient positions.")
 
@@ -278,8 +296,9 @@ class Lift_AgentNode(RlAgentNode):
         """
         # Return if one observation component is not available
         tf_cube_pose = self._get_cube_pose_from_tf()
+        # self.X_BG = self._get_tool_pose_from_tf()
 
-        if self._joint_state is None or self.X_BG is None or tf_cube_pose is None:
+        if self.X_BG is None or tf_cube_pose is None:
             self.get_logger().warn("Missing some observations...", throttle_duration_sec=5)
             return None
 
@@ -289,9 +308,14 @@ class Lift_AgentNode(RlAgentNode):
 
         # * Gripper pose *
         self.X_WG = self.X_WB * self.X_BG
+        X_BT = self.X_BG * self.X_GT  # Base to tool transform
+        X_WT = self.X_WG * self.X_GT  # World to tool transform
 
         p_WG = self.X_WG.translation
+        p_WT = X_WT.translation
+
         quat_WG = pin.Quaternion(self.X_WG.rotation).coeffs()  # [x, y, z, w]
+        quat_WT = pin.Quaternion(X_WT.rotation).coeffs()  # [x, y, z, w]
 
         # * Cube pose *
         self.X_BC = tf_cube_pose
@@ -303,22 +327,32 @@ class Lift_AgentNode(RlAgentNode):
         # * Cube pose in gripper frame *
         p_BC_B = self.X_BC.translation
         p_BG_B = self.X_BG.translation
+        p_BT_B = X_BT.translation
 
         p_GC_B = p_BC_B - p_BG_B
         p_CG_B = -p_GC_B
         # p_CG_W = self.X_WB.rotation @ p_CG_B
 
+        p_TC_B = p_BC_B - p_BT_B  # Cube position in tool frame
+
         R_BG = self.X_BG.rotation
 
-        p_GC_G = R_BG.T * p_GC_B
+        # p_GC_G = R_BG.T * p_GC_B
         p_GC_W = self.X_WB.rotation @ p_GC_B
         p_CG_W = -p_GC_W
+
+        p_TC_W = self.X_WB.rotation @ p_TC_B  # Cube position in tool frame
+        p_CT_W = -p_TC_W  # Tool position in cube frame
+
+        # # offset
+        # p_CG_W[2] -= self.gripper_offset  # Adjust z position by gripper offset
 
         # * Observation vector *
         object_array = [
             p_WC,
             q_WC,
-            p_CG_W,
+            # p_CG_W,
+            p_CT_W,
         ]
         object_array = np.concatenate(object_array).astype(np.float32)
 
@@ -341,17 +375,10 @@ class Lift_AgentNode(RlAgentNode):
 
         observation_dict = {
             "object": torch.tensor(object_array, dtype=torch.float32).to(self.device),
-            "robot0_eef_pos": torch.tensor(p_WG, dtype=torch.float32).to(self.device),
-            "robot0_eef_quat": torch.tensor(quat_WG, dtype=torch.float32).to(self.device),
+            "robot0_eef_pos": torch.tensor(p_WT, dtype=torch.float32).to(self.device),
+            "robot0_eef_quat": torch.tensor(quat_WT, dtype=torch.float32).to(self.device),
             "robot0_gripper_qpos": torch.tensor(gripper_state, dtype=torch.float32).to(self.device),
         }
-
-        print(
-            f"p_WC: {p_WC[0]:>8.4f} {p_WC[1]:>8.4f} {p_WC[2]:>8.4f} | "
-            f"p_CG_W: {p_CG_W[0]:>8.4f} {p_CG_W[1]:>8.4f} {p_CG_W[2]:>8.4f} | "
-            f"p_WG: {p_WG[0]:>8.4f} {p_WG[1]:>8.4f} {p_WG[2]:>8.4f} | "
-            f"fingers: {gripper_state[0]:>8.4f} {gripper_state[1]:>8.4f} | ",
-        )
 
         return observation_dict
 
@@ -388,6 +415,38 @@ class Lift_AgentNode(RlAgentNode):
             self.get_logger().warn(f"Failed to get cube pose from TF: {str(e)}", throttle_duration_sec=0.01)
             return None
 
+    def _get_tool_pose_from_tf(self) -> pin.SE3:
+        """
+        Get the tool pose from the TF tree.
+
+        Returns:
+            pin.SE3: The tool pose in the **base** frame
+        """
+        try:
+            # Look up the transform from world to gripper
+            transform = self.tf_buffer.lookup_transform(
+                self.base_frame, "fr3_tool", time=rclpy.time.Time(), timeout=rclpy.duration.Duration(seconds=1.0)
+            )
+
+            # Extract position and orientation from the transform
+            translation = transform.transform.translation
+            rotation = transform.transform.rotation
+
+            # Convert to pin.SE3
+            position = np.array([translation.x, translation.y, translation.z])
+            quaternion = np.array([rotation.x, rotation.y, rotation.z, rotation.w])
+
+            # Convert quaternion to rotation matrix
+            rot_matrix = pin.Quaternion(quaternion).toRotationMatrix()
+
+            X_BG = pin.SE3(rot_matrix, position)  # Gripper pose in base frame
+
+            return X_BG
+
+        except Exception as e:
+            self.get_logger().warn(f"Failed to get tool pose from TF: {str(e)}", throttle_duration_sec=0.01)
+            return None
+
     async def init_task_execution(self):
         """Initialize task-specific parameters."""
         self.task_start_time = self.get_clock().now()
@@ -412,6 +471,31 @@ class Lift_AgentNode(RlAgentNode):
         # TODO: Remove
         self._csv_action_idx = 0
 
+        #! Find gripper offset
+        offset_set = False
+        while not offset_set:
+            try:
+                transform = self.tf_buffer.lookup_transform(
+                    "fr3_hand_tcp", "fr3_tool", time=rclpy.time.Time(), timeout=rclpy.duration.Duration(seconds=1.0)
+                )
+                offset_set = True
+
+            except Exception as e:
+                self.get_logger().error(f"Failed to get gripper offset from TF: {str(e)}")
+                return False
+
+        if transform is not None:
+            # Extract position and orientation from the transform
+            self.gripper_offset = transform.transform.translation.z
+
+            self.X_GT.translation[2] = self.gripper_offset  # Set the z offset in the gripper to tool transform
+
+            self.get_logger().info(f"Gripper offset: {self.gripper_offset} m")
+            self.get_logger().info(f"X_GT: {self.X_GT} m")
+
+        else:
+            raise RuntimeError("Failed to get gripper offset from TF. Ensure the transform is published.")
+
         return True
 
     def check_task_status(self):
@@ -424,9 +508,18 @@ class Lift_AgentNode(RlAgentNode):
         success = False
         failure = False
 
-        # if self.task_start_time is None:
-        #     self.get_logger().warn("Task start time is not set.")
-        #     return success, failure
+        # Success if z > threshold and gripper dist < threshold
+        if self.X_BG is not None:
+            p_BG = self.X_BG.translation - np.array([0.0, 0.0, self.gripper_offset])  # Adjust for gripper offset
+
+            gripper_distance = (
+                self._gripper_finger_distance[0] - self._gripper_finger_distance[1]
+            )  # Calculate the distance between the fingers
+
+            # Check if gripper is above the cube
+            if p_BG[2] > Z_SUCCESS_THRESHOLD and gripper_distance < GRIPPER_SUCCESS_THRESHOLD:
+                success = True
+                self.get_logger().info("Lift successful!")
 
         current_time = self.get_clock().now()
 
@@ -450,20 +543,26 @@ class Lift_AgentNode(RlAgentNode):
 
         #! From agent
         action = super()._get_action()
-        # print(f"Gripper:\t {action[-1]:>8.4f} | ")
+        # print(f"Gripper:\t {action[-1]:>7.4f} | ")
+        # print(
+        #     f"rot action: {action[3]:>7.4f} {action[4]:>7.4f} {action[5]:>7.4f} | "
+        #     # f"Gripper: {{action[6]:>7.4f}} | "
+        # )
         return action
 
         # #! Fixed action
         # current_time = self.get_clock().now()
 
-        # if current_time - self.task_start_time > rclpy.time.Duration(seconds=4):
-        #     action = np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -1.0], dtype=np.float32)
+        # # if current_time - self.task_start_time > rclpy.time.Duration(seconds=4):
+        # #     action = np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -1.0], dtype=np.float32)
 
-        # elif current_time - self.task_start_time > rclpy.time.Duration(seconds=2):
-        #     action = np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0], dtype=np.float32)
+        # # elif current_time - self.task_start_time > rclpy.time.Duration(seconds=2):
+        # #     action = np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0], dtype=np.float32)
 
-        # else:
-        #     action = np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -1.0], dtype=np.float32)
+        # # else:
+        # #     action = np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -1.0], dtype=np.float32)
+
+        # action = np.array([0.0, 0.0, 0.0, 0.0, 0.0, -0.25, -1.0], dtype=np.float32)
 
         # return action
 
@@ -501,22 +600,23 @@ class Lift_AgentNode(RlAgentNode):
 
         # * Process action
         # Scale the action.
-        self.processed_action = action[:6] * self.action_scale * (self.ctrl_rate / self.command_rate)
+        self.processed_action = action[:6].copy()  # Copy the first 6 elements
+        self.processed_action[:3] = action[:3] * self.action_scale * (self.ctrl_rate / self.command_rate)
+        self.processed_action[3:6] = action[3:6] * (self.ctrl_rate / self.command_rate) * self.action_scale * 20
 
         #! ACTION WRT CURRENT GRIPPER POSE
         p_GGd_W = self.processed_action[:3]  # Gripper translation
         rot_vec = self.processed_action[3:6]
 
+        R_GW = self.X_WG.rotation.T
         # * Rotations
         # ? Option 1 - Assume rotation vector is in world frame *
         rvec_W = rot_vec
-
-        R_GW = self.X_WG.rotation.T
         rvec_G = R_GW @ rvec_W  # Rotation vector in gripper frame
 
         R_GGd_G = pin.exp3(rvec_G)  # Rotation matrix from gripper to desired gripper pose
 
-        # # ? Option 2 - Assume rotation vector is in gripper frame *
+        # # # ? Option 2 - Assume rotation vector is in gripper frame *
         # rvec_G = rot_vec
         # R_GGd_G = pin.exp3(rvec_G)  # Rotation matrix from gripper to desired gripper pose
 
@@ -561,6 +661,41 @@ class Lift_AgentNode(RlAgentNode):
 
         #! Send command
         self.send_robot_command()
+
+        # Print debug info using self.latest_observation
+        if self.latest_observation is not None and self.X_WC is not None and self.processed_action is not None:
+            obs = self.latest_observation
+            object_obs = obs["object"].cpu().numpy() if hasattr(obs["object"], "cpu") else obs["object"]
+            ee_pos = (
+                obs["robot0_eef_pos"].cpu().numpy() if hasattr(obs["robot0_eef_pos"], "cpu") else obs["robot0_eef_pos"]
+            )
+            ee_quat = (
+                obs["robot0_eef_quat"].cpu().numpy()
+                if hasattr(obs["robot0_eef_quat"], "cpu")
+                else obs["robot0_eef_quat"]
+            )
+            fingers_obs = (
+                obs["robot0_gripper_qpos"].cpu().numpy()
+                if hasattr(obs["robot0_gripper_qpos"], "cpu")
+                else obs["robot0_gripper_qpos"]
+            )
+
+            # Convert tensors to numpy arrays
+            p_WC = object_obs[:3]
+            q_WC = object_obs[3:7]
+            p_CG_W = object_obs[7:10]
+
+            action = self.processed_action
+
+            print(
+                f"p_WC: {p_WC[0]:>7.4f} {p_WC[1]:>7.4f} {p_WC[2]:>7.4f} | "
+                f"p_CG_W: {p_CG_W[0]:>7.4f} {p_CG_W[1]:>7.4f} {p_CG_W[2]:>7.4f} | "
+                f"q_WC: {q_WC[0]:>7.4f} {q_WC[1]:>7.4f} {q_WC[2]:>7.4f} {q_WC[3]:>7.4f} | "
+                # f"q_G: {ee_quat[0]:>7.4f} {ee_quat[1]:>7.4f} {ee_quat[2]:>7.4f} {ee_quat[3]:>7.4f} | "
+                # f"fingers: {fingers_obs[0]:>7.4f} {fingers_obs[1]:>7.4f} | "
+                # f"dt: {action[0]:>7.4f} {action[1]:>7.4f} {action[2]:>7.4f} | "
+                # f"drot: {action[3]:>7.4f} {action[4]:>7.4f} {action[5]:>7.4f} | "
+            )
 
     def send_robot_command(self):
         """Send the command to the robot."""
