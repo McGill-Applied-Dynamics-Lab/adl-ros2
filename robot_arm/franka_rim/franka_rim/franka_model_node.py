@@ -1,6 +1,7 @@
 import rclpy
 from rclpy.node import Node
 from franka_msgs.msg import FrankaRobotState
+from arm_interfaces.msg import FrankaModel
 import pinocchio as pin
 import numpy as np
 from ament_index_python.packages import get_package_share_directory
@@ -25,6 +26,9 @@ class FrankaModelNode(Node):
             self._robot_state_callback,
             10,
         )
+
+        # Publisher for model matrices
+        self._model_pub = self.create_publisher(FrankaModel, "fr3_model", 10)
 
         self._robot_model = None  # Pinocchio model
         self._collision_model = None  # Pinocchio collision model
@@ -106,17 +110,23 @@ class FrankaModelNode(Node):
     def _compute_and_publish_model(self):
         if not self._model_loaded or self._last_q is None or self._last_dq is None:
             return
+
         q = self._last_q
         dq = self._last_dq
         M, c, tau, Ai, Ai_dot = self._compute_model_matrices(q, dq)
 
-        # TODO: Publish M, c, tau, Ai, Ai_dot
-        self.get_logger().info("Computed model matrices")
-        # self.get_logger().info(f"Mass matrix:\n{M}")
-        # self.get_logger().info(f"Coriolis: {c}")
-        # self.get_logger().info(f"Tau: {tau}")
-        # self.get_logger().info(f"Ai: {Ai}")
-        # self.get_logger().info(f"Ai_dot: {Ai_dot}")
+        # Prepare FrankaModel message
+        msg = FrankaModel()
+        n = self._robot_model.nv
+        msg.n = n
+        msg.mass_matrix = M.flatten().tolist()
+        msg.coriolis = c.tolist()
+        msg.tau = tau.tolist()
+        msg.ai = Ai.flatten().tolist()
+        msg.ai_dot_q_dot = (Ai_dot @ dq).flatten().tolist()  # (1, n) @ (n,) -> (1,)
+
+        self._model_pub.publish(msg)
+        self.get_logger().info("Published FrankaModel message to fr3_model topic")
 
 
 def main(args=None):

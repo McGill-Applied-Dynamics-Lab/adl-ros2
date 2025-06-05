@@ -26,6 +26,8 @@ import std_msgs.msg
 
 # My pkg imports
 from franka_rim.franka_model_node import FrankaModelNode
+from arm_interfaces.msg import FrankaModel
+
 
 PACKAGE_NAME = "franka_rim"
 
@@ -91,9 +93,9 @@ def urdf_path():
 
 def send_dummy_robot_state(node: Node, pub: Publisher, positions=None, velocities=None, efforts=None):
     msg = FrankaRobotState()
-    n = 7
+    n = 9
     if positions is None:
-        positions = [0.0, 0.53249995, 0.0, -2.02528006, 0.0, 2.55778002, 0.78539816]
+        positions = [0.0, 0.53249995, 0.0, -2.02528006, 0.0, 2.55778002, 0.78539816, 0.0, 0.0]
 
     if velocities is None:
         velocities = [0.0] * n
@@ -274,3 +276,49 @@ def test_franka_model_node_joint_state_update(test_context, positions, velocitie
     np.testing.assert_allclose(model_node._last_q, positions, atol=1e-8)
     np.testing.assert_allclose(model_node._last_dq, velocities, atol=1e-8)
     np.testing.assert_allclose(model_node.tau, efforts, atol=1e-8)
+
+
+def test_franka_model_publishes_model(test_context):
+    """
+    Subscribes to the /fr3_model topic and verifies that at least 8 messages are received in 1 second of publishing.
+    """
+    model_node, test_node, pub = test_context
+    received_msgs = []
+    lock = threading.Lock()
+
+    def model_callback(msg):
+        with lock:
+            received_msgs.append(msg)
+
+    sub = test_node.create_subscription(FrankaModel, "/fr3_model", model_callback, 10)
+
+    # Publish robot state messages at 50 Hz for 1 second
+    publish_rate = 50  # Hz
+    duration = 1.0  # seconds
+    num_msgs = int(publish_rate * duration)
+    positions = [0.0] * 9
+    velocities = [0.0] * 9
+    efforts = [0.0] * 9
+
+    start_time = time.time()
+    for _ in range(num_msgs):
+        send_dummy_robot_state(test_node, pub, positions, velocities, efforts)
+        rclpy.spin_once(model_node, timeout_sec=0.01)
+        rclpy.spin_once(test_node, timeout_sec=0.01)
+        if time.time() - start_time > duration:
+            break
+
+    # Wait up to 1s for at least 8 messages, spinning the node
+    timeout = 1.0
+    poll_period = 0.05
+    waited = 0.0
+    while waited < timeout:
+        rclpy.spin_once(test_node, timeout_sec=poll_period)
+        waited += poll_period
+
+    with lock:
+        num_received = len(received_msgs)
+
+    assert num_received >= 8, f"Expected at least 8 messages, got {num_received}"
+
+    test_node.destroy_subscription(sub)
