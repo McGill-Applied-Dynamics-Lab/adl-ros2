@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+"""
+File to plot the bootstrap data from the network simulation.
+
+The histogram of the bootstrapped means is plotted (from the csv file), and the end-to-end, network simulation, and desired are shown as vertical lines on the histogram.
+"""
 
 import sys
 import numpy as np
@@ -12,7 +17,7 @@ from ament_index_python.packages import get_package_share_directory
 
 def bootstrap_data(df: pd.DataFrame) -> float:
     """
-    Bootstrap the data to get a mean and standard deviation of the delay.
+    Bootstrap the data to get a mean and standard deviation of the dataset.
     """
     num_bootstrap_samples = 10_000
     bootstrap_means = []

@@ -38,22 +38,26 @@ def test_node(rclpy_init_shutdown):
 
 def test_matrix_reconstruction_between_nodes(model_node: FrankaModelNode, rim_node: FrankaRIMNode, test_node):
     # Set known values in FrankaModelNode
-    n = 4
+    n = 9
     M = np.arange(n * n).reshape((n, n)).astype(float)
-    c = np.arange(n).astype(float)
+    c = np.arange(n).astype(float) + 0.1
     tau = np.arange(n).astype(float) + 10
-    Ai = np.arange(n).astype(float) + 20
-    Ai_dot = np.arange(n).astype(float) + 30
+    Ai = (np.arange(n).astype(float) + 20).reshape(1, n)
+    Ai_dot = (np.arange(n).astype(float) + 30).reshape(1, n)
+    dq = np.arange(n).astype(float) + 40
+    Ai_dot_q_dot = Ai_dot @ dq
 
     # Create and publish FrankaModel message
-    # TODO: Create a function in FrankaModelNode to generate this message and create the message w/ that function
-    msg = FrankaModel()
-    msg.mass_matrix = M.flatten().tolist()
-    msg.coriolis = c.tolist()
-    msg.tau = tau.tolist()
-    msg.ai = Ai.tolist()
-    msg.ai_dot_q_dot = Ai_dot.tolist()
-    msg.n = n
+    # # TODO: Create a function in FrankaModelNode to generate this message and create the message w/ that function
+    # msg = FrankaModel()
+    # msg.mass_matrix = M.flatten().tolist()
+    # msg.coriolis = c.tolist()
+    # msg.tau = tau.tolist()
+    # msg.ai = Ai.tolist()
+    # msg.ai_dot_q_dot = Ai_dot.tolist()
+    # msg.n = n
+
+    msg = model_node._build_model_message(M, c, tau, Ai, Ai_dot_q_dot)
 
     pub = test_node.create_publisher(FrankaModel, "/fr3_model", 10)
     pub.publish(msg)
@@ -67,7 +71,7 @@ def test_matrix_reconstruction_between_nodes(model_node: FrankaModelNode, rim_no
         or rim_node._c is None
         or rim_node._tau is None
         or rim_node._Ai is None
-        or rim_node._Ai_dot is None
+        or rim_node._Ai_dot_q_dot is None
     ) and waited < timeout:
         rclpy.spin_once(rim_node, timeout_sec=poll_period)
         rclpy.spin_once(test_node, timeout_sec=0.0)
@@ -77,5 +81,5 @@ def test_matrix_reconstruction_between_nodes(model_node: FrankaModelNode, rim_no
     np.testing.assert_allclose(rim_node._M, M)
     np.testing.assert_allclose(rim_node._c, c)
     np.testing.assert_allclose(rim_node._tau, tau)
-    np.testing.assert_allclose(rim_node._Ai, Ai.reshape(1, n))
-    np.testing.assert_allclose(rim_node._Ai_dot, Ai_dot.reshape(1, n))
+    np.testing.assert_allclose(rim_node._Ai, Ai)
+    np.testing.assert_allclose(rim_node._Ai_dot_q_dot, (Ai_dot @ dq))

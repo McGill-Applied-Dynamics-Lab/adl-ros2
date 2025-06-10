@@ -35,12 +35,12 @@ def make_franka_model_msg(n=9):
     msg.coriolis = [0.1] * n
     msg.tau = [0.2] * n
     msg.ai = [0.3] * n
-    msg.ai_dot_q_dot = [0.4] * n
+    msg.ai_dot_q_dot = [0.4]
     msg.n = n
     return msg
 
 
-def test_rim_node_receives_and_stores_matrices(rim_node, test_node):
+def test_rim_node_receives_and_stores_matrices(rim_node: FrankaRIMNode, test_node: Node):
     pub = test_node.create_publisher(FrankaModel, "/fr3_model", 10)
     msg = make_franka_model_msg()
     pub.publish(msg)
@@ -52,11 +52,12 @@ def test_rim_node_receives_and_stores_matrices(rim_node, test_node):
         rclpy.spin_once(rim_node, timeout_sec=poll_period)
         rclpy.spin_once(test_node, timeout_sec=0.0)
         waited += poll_period
+
     assert rim_node._M is not None
     assert rim_node._c is not None
     assert rim_node._tau is not None
     assert rim_node._Ai is not None
-    assert rim_node._Ai_dot is not None
+    assert rim_node._Ai_dot_q_dot is not None
 
     # Check matrix shapes
     n = 9
@@ -64,7 +65,7 @@ def test_rim_node_receives_and_stores_matrices(rim_node, test_node):
     assert rim_node._c.shape == (n,)
     assert rim_node._tau.shape == (n,)
     assert rim_node._Ai.shape == (1, n)
-    assert rim_node._Ai_dot.shape == (1, n)
+    assert rim_node._Ai_dot_q_dot.shape == (1,)
 
 
 @pytest.mark.xfail(reason="RIM computation not implemented yet")

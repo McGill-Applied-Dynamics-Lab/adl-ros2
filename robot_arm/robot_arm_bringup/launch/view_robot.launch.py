@@ -48,9 +48,7 @@ def robot_description_dependent_nodes_spawner(
     robot_ip_str = context.perform_substitution(robot_ip)
     arm_id_str = context.perform_substitution(arm_id)
     use_fake_hardware_str = "false"  # context.perform_substitution(use_fake_hardware)
-    fake_sensor_commands_str = (
-        "false"  # context.perform_substitution(fake_sensor_commands)
-    )
+    fake_sensor_commands_str = "false"  # context.perform_substitution(fake_sensor_commands)
     load_gripper_str = context.perform_substitution(load_gripper)
     hw_type_str = context.perform_substitution(hw_type)
 
@@ -74,9 +72,7 @@ def robot_description_dependent_nodes_spawner(
         },
     ).toprettyxml(indent="  ")
 
-    franka_controllers = PathJoinSubstitution(
-        [FindPackageShare("my_bringup"), "config", "controllers.yaml"]
-    )
+    franka_controllers = PathJoinSubstitution([FindPackageShare("robot_arm_bringup"), "config", "controllers.yaml"])
 
     return [
         Node(
@@ -162,8 +158,7 @@ def generate_launch_description():
     load_gripper_launch_arg = DeclareLaunchArgument(
         load_gripper_parameter_name,
         default_value="true",
-        description="Use Franka Gripper as an end-effector, otherwise, the robot is loaded "
-        "without an end-effector.",
+        description="Use Franka Gripper as an end-effector, otherwise, the robot is loaded without an end-effector.",
     )
 
     hw_type_launch_arg = DeclareLaunchArgument(

@@ -36,7 +36,7 @@ class FrankaRIMNode(Node):
         self._c = np.array(msg.coriolis)
         self._tau = np.array(msg.tau)
         self._Ai = np.array(msg.ai).reshape((1, n))
-        self._Ai_dot_q_dot = np.array(msg.ai_dot_q_dot).reshape((1, n))
+        self._Ai_dot_q_dot = np.array(msg.ai_dot_q_dot)
         self.get_logger().info(f"Received FrankaModel: M.shape={self._M.shape}, c.shape={self._c.shape}")
 
     def _compute_rim(self):
@@ -44,7 +44,7 @@ class FrankaRIMNode(Node):
         Compute the RIM based on the last received FrankaModel message. Called from `_rim_timer_callback` at a fixed rate of rim_period
         """
         if self._last_model_msg is None:
-            self.get_logger().warn("Cannot compute RIM: missing M or Ai.")
+            self.get_logger().warn("Cannot compute RIM: missing model.", throttle_duration_sec=2)
             return None
 
         try:

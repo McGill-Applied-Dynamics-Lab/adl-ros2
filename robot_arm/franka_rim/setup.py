@@ -38,6 +38,11 @@ meshes_dir = os.path.join("models", "meshes")
 if os.path.isdir(meshes_dir):
     add_data_files_recursive(data_files, meshes_dir, f"share/{package_name}/models/meshes")
 
+# Add launch files
+launch_dir = "launch"
+if os.path.isdir(launch_dir):
+    add_data_files_recursive(data_files, launch_dir, f"share/{package_name}/launch")
+
 setup(
     name=package_name,
     version="0.0.0",
