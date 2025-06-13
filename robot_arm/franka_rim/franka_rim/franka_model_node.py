@@ -55,12 +55,11 @@ class FrankaModelNode(Node):
         self.Ai_dot = None  # Derivative of interaction Jacobian (1 x n)
         self.Ai_dot_q_dot = None  # Ai_dot @ dq (1,)
 
+        self.p_i = np.array([-1, 0, 0])  # Interaction surface normal in base frame
+        self.Di = np.hstack([self.p_i, np.zeros(3)])
+
         # Timer for computing and publishing model matrices
         self._model_timer = self.create_timer(model_update_timer_period, self._compute_and_publish_model)
-
-        # TODO: Publisher for model matrices (to be defined)
-        # self._model_pub = self.create_publisher(...)
-        # Load URDF and build Pinocchio model
 
         # Declare URDF filename as a parameter
         self.declare_parameter("robot_urdf_filename", "fr3_franka_hand.urdf")
@@ -100,6 +99,30 @@ class FrankaModelNode(Node):
         self.tau = np.array(msg.measured_joint_state.effort)
 
     def _compute_model_matrices(self, q, dq):
+        """Compute the model matrices M, c, tau, Ai, Ai_dot, and Ai_dot_q_dot.
+        Args:
+            q: Joint positions (n,)
+            dq: Joint velocities (n,)
+        Returns:
+            M: Mass matrix (n x n)
+            c: Coriolis and nonlinear terms (n,)
+            tau: Joint torques (n,)
+            Ai: Interaction Jacobian (1 x n)
+            Ai_dot: Derivative of interaction Jacobian (1 x n)
+            Ai_dot_q_dot: Ai_dot @ dq (1,)
+        """
+        # Update Pinocchio data with current joint state
+        pin.forwardKinematics(self._robot_model, self._robot_data, q, dq)
+        pin.updateFramePlacements(self._robot_model, self._robot_data)
+
+        # Jacobian
+        ee_frame = self._robot_model.getFrameId("fr3_hand_tcp")
+        J_ee = pin.computeFrameJacobian(self._robot_model, self._robot_data, q, ee_frame, pin.WORLD)
+        J_dot_ee = pin.frameJacobianTimeVariation(self._robot_model, self._robot_data, q, dq, ee_frame, pin.WORLD)
+
+        Ai = self.Di @ J_ee  # Interaction Jacobian (1 x n)
+        Ai_dot = self.Di @ J_dot_ee
+
         # Mass matrix
         self.M = pin.crba(self._robot_model, self._robot_data, q)
         # Coriolis and nonlinear terms
@@ -107,13 +130,14 @@ class FrankaModelNode(Node):
 
         # Joint torques (placeholder, to be computed from control law or input)
         if self.tau is None:
-            self.tau = np.zeros_like(q)  # TODO: Replace with actual computation
+            self.tau = np.zeros_like(q)
+            self.get_logger().warn("Joint torques (tau) not set, using zeros")
 
         # Interaction Jacobian (placeholder, to be computed for a specific frame or task)
-        self.Ai = np.zeros((1, self._robot_model.nv))  # TODO: Replace with actual computation
+        self.Ai = Ai
 
         # Derivative of interaction Jacobian (placeholder)
-        self.Ai_dot = np.zeros((1, self._robot_model.nv))  # TODO: Replace with actual computation
+        self.Ai_dot = Ai_dot
 
         # Return computed matrices
         self.Ai_dot_q_dot = self.Ai_dot @ dq
