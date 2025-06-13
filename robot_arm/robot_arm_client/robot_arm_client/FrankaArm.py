@@ -11,14 +11,20 @@ from arm_interfaces.action import (
     GotoEEVelocity,
     GripperHoming,
     GripperToggle,
+    GripperOpen,
+    GripperClose,
 )
 from geometry_msgs.msg import PoseStamped
 
 import numpy as np
 from typing import List, Literal
+import pinocchio as pin
 
 # from robot_arm_interface.utils import SE32PoseStamped, PoseStamped2SE3, array2pose
-from robot_arm_interface.utils import array2pose
+from robot_arm_interface.utils import se32rospose
+
+from rclpy.parameter import Parameter
+from rcl_interfaces.srv import SetParameters
 
 
 class FrankaArm(Node):
@@ -27,14 +33,14 @@ class FrankaArm(Node):
         self.get_logger().info("Starting robot arm client")
 
         #! Action clients
-        self._action_client_list = []
+        self._action_client_list: list[ActionClient] = []
         self._init_action_clients()
         self._wait_for_action_servers()
 
     def _init_action_clients(self):
-        # goto_joints
-        self._goto_joints_ac = ActionClient(self, GotoJoints, "goto_joints")
-        self._action_client_list.append(self._goto_joints_ac)
+        # # goto_joints
+        # self._goto_joints_ac = ActionClient(self, GotoJoints, "goto_joints")
+        # self._action_client_list.append(self._goto_joints_ac)
 
         # goto_pose
         self._goto_pose_ac = ActionClient(self, GotoPose, "goto_pose")
@@ -55,10 +61,21 @@ class FrankaArm(Node):
         self._gripper_toggle_ac = ActionClient(self, GripperToggle, "gripper_toggle")
         self._action_client_list.append(self._gripper_toggle_ac)
 
+        self._gripper_open_ac = ActionClient(self, GripperOpen, "gripper_open")
+        self._action_client_list.append(self._gripper_open_ac)
+
+        self._gripper_close_ac = ActionClient(self, GripperClose, "gripper_close")
+        self._action_client_list.append(self._gripper_close_ac)
+
     def _wait_for_action_servers(self):
         self.get_logger().info("Waiting for action servers...")
         for ac in self._action_client_list:
-            ac.wait_for_server()
+            # ac_found = ac.wait_for_server(timeout_sec=1)
+            # if not ac_found:
+            #     self.get_logger().error(f"Action server {ac._action_name} not found!")
+
+            while not ac.wait_for_server(timeout_sec=1):
+                self.get_logger().warn(f"Action server {ac._action_name} not up...")
 
         self.get_logger().info("Action servers are up!")
 
@@ -94,6 +111,8 @@ class FrankaArm(Node):
     def goto_joints(self, joint_goal: np.ndarray, duration: Duration):
         self.get_logger().info(f"Moving joints to goal: {joint_goal}")
 
+        raise NotImplementedError("goto_joints not implemented yet")
+
         goal_msg = GotoJoints.Goal()
         goal_msg.joints_goal = joint_goal.tolist()
         goal_msg.duration = duration.to_msg()
@@ -123,18 +142,30 @@ class FrankaArm(Node):
             self.get_logger().error("Failed to send goal!")
             return False
 
-    def goto_home(self):
+    def home(self):
         self.get_logger().info("Moving to home position")
 
-        joint_home_position = np.deg2rad([0, -45, 0, -135, 0, 90, 45])
-        self.goto_joints(joint_home_position, Duration(seconds=3))
+        # joint_home_position = np.deg2rad([0, -45, 0, -135, 0, 90, 45])
+        # self.goto_joints(joint_home_position, Duration(seconds=3))
 
-    def goto_pose(self, pose_goal: np.ndarray, duration: Duration):
-        self.get_logger().info(f"Moving to cartesian goal:\n {pose_goal}")
+        home_t = np.array([0.30, 0.00, 0.5])
+        home_pose = pin.SE3(pin.rpy.rpyToMatrix(np.array([np.pi, 0, 0])), home_t)
+        self.goto_pose(home_pose, Duration(seconds=10))
+
+    def goto_pose(self, pose_goal: pin.SE3, duration: Duration, Kp=None, Kd=None):
+        # self.get_logger().info(f"Moving to cartesian goal:\n {pose_goal}")
+
+        if Kp is not None:
+            self.get_logger().info(f"Setting Kp: {Kp}")
+            self.set_robot_parameter("/fr3_interface", "Kp_gripper_trans", Kp)
+
+        if Kd is not None:
+            self.get_logger().info(f"Setting Kd: {Kd}")
+            self.set_robot_parameter("/fr3_interface", "Kd_gripper_trans", Kd)
 
         pose_goal_msg = PoseStamped()
         pose_goal_msg.header.stamp = self.get_clock().now().to_msg()
-        pose_goal_msg.pose = array2pose(pose_goal)
+        pose_goal_msg.pose = se32rospose(pose_goal)
 
         # T = PoseStamped2SE3(pose_goal_msg)
 
@@ -206,12 +237,52 @@ class FrankaArm(Node):
         future = self._gripper_toggle_ac.send_goal_async(goal_msg)
         return self._wait_for_action(future)
 
+    def gripper_open(self):
+        self.get_logger().info("Opening gripper")
+        goal_msg = GripperOpen.Goal()
+        future = self._gripper_open_ac.send_goal_async(goal_msg)
+        return self._wait_for_action(future)
+
+    def gripper_close(self):
+        self.get_logger().info("Closing gripper")
+        goal_msg = GripperClose.Goal()
+        future = self._gripper_close_ac.send_goal_async(goal_msg)
+        return self._wait_for_action(future)
+
     #! Services
     def get_robot_state(self): ...
 
     def get_joints(self): ...
 
     def get_pose(self): ...
+
+    #! Utility functions
+    def set_robot_parameter(self, target_node_name: str, param_name: str, param_value: float):
+        """
+        Update a parameter on another ROS2 node.
+
+        Args:
+            target_node_name: The name of the target node (e.g., '/fr3_interface').
+            param: The name of the parameter (str).
+            value: The new value for the parameter.
+        Returns:
+            True if successful, False otherwise.
+        """
+        client = self.create_client(SetParameters, f"{target_node_name}/set_parameters")
+        if not client.wait_for_service(timeout_sec=2.0):
+            self.get_logger().error(f"Service {target_node_name}/set_parameters not available.")
+            return False
+
+        param_msg = Parameter(param_name, Parameter.Type.DOUBLE, float(param_value)).to_parameter_msg()
+        req = SetParameters.Request()
+        req.parameters = [param_msg]
+
+        future = client.call_async(req)
+        import rclpy
+
+        rclpy.spin_until_future_complete(self, future)
+        result = future.result()
+        return result.results[0].successful if result and result.results else False
 
 
 def main(args=None):

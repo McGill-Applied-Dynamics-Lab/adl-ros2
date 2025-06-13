@@ -212,6 +212,7 @@ def generate_launch_description():
     controllers_list = [
         "joint_state_broadcaster",
         "cartesian_vel_controller",
+        # "model_example_controller",
     ]
 
     ros_controllers_nodes = []

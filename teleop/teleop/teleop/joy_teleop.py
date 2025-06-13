@@ -164,7 +164,7 @@ class JoyTeleop(Node):
         self.get_logger().info(f"Joystick offset: {self._axes_offset}")
 
         # --- robot ---
-        if self._n_robot_cal_msgs < 20:
+        if self._n_robot_cal_msgs < 5:
             self.get_logger().error("Robot calibration failed. Not enough messages received on '/robot'.")
             raise Exception("Robot calibration failed.")
 
@@ -248,7 +248,7 @@ class JoyTeleop(Node):
         If RT is pressed, the control mode is changed to velocity.
         """
         # print(f"RT: {self._axes_values[JoyAxisMap.RT.value]}")
-        trigger_thres = -1.0
+        trigger_thres = 1.0
         if self._control_mode == ControlModes.POSITION and self._axes_values[JoyAxisMap.RT.value] == trigger_thres:
             self.get_logger().info("Control mode changed to VELOCITY.")
             self._control_mode = ControlModes.VELOCITY

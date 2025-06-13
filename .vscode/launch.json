@@ -36,6 +36,34 @@
             "console": "integratedTerminal",
         },
         {
+            "name": "Task: fr3_insert",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "src/adg_ros2/robot_tasks/scripts/fr3_insert.py",
+            "console": "integratedTerminal",
+        },
+        {
+            "name": "Task: fr3_lift",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "src/adg_ros2/robot_tasks/scripts/fr3_lift.py",
+            "console": "integratedTerminal",
+        },
+        {
+            "name": "Agent Node: insert",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "src/adg_ros2/robot_tasks/robot_tasks/rl_agent/Insert.py",
+            "console": "integratedTerminal",
+        },
+        {
+            "name": "Agent Node: lift",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "src/adg_ros2/robot_tasks/robot_tasks/rl_agent/Lift.py",
+            "console": "integratedTerminal",
+        },
+        {
             "name": "Node: i3_teleop",
             "type": "debugpy",
             "request": "launch",
@@ -57,7 +85,7 @@
             "console": "integratedTerminal",
         },
         {
-            "name": "ROS2 Launch: i3_teleop.launch.py",
+            "name": "Launch: i3_teleop.launch.py",
             "type": "debugpy",
             "request": "launch",
             "program": "/opt/ros/humble/bin/ros2",  // Path to the ros2 executable
@@ -69,7 +97,7 @@
             "console": "integratedTerminal",
         },
         {
-            "name": "ROS2 Launch: joy_teleop.launch.py",
+            "name": "Launch: joy_teleop.launch.py",
             "type": "debugpy",
             "request": "launch",
             "program": "/opt/ros/humble/bin/ros2",  // Path to the ros2 executable
@@ -81,7 +109,7 @@
             "console": "integratedTerminal",
         },
         {
-            "name": "ROS2 Launch: fr3.launch.py",
+            "name": "Launch: fr3.launch.py",
             "type": "debugpy",
             "request": "launch",
             "program": "/opt/ros/humble/bin/ros2",  // Path to the ros2 executable

@@ -13,5 +13,10 @@ Supported arms:
 - `fr3_controllers`: `ros_control` controllers 
 - `arm_interfaces`: Message, action and service files
 - `isaac_sim_ros`: To convert joint names between Isaac Sim and Franka URDF model
+- `franka_rim`: To compute the RIM of the FR3
 
 ## Installation
+
+
+
+

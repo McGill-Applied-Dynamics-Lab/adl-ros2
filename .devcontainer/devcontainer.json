@@ -40,6 +40,9 @@
     ],
     "runArgs": [
         "--device=/dev/input/js0", // Pass the joystick device
+        // "--runtime=nvidia",
+        // "--gpus",
+        // "all"
       ],
     // "postCreateCommand": "pip install -e python/robotic_arm_controller"
 }

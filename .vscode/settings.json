@@ -118,11 +118,42 @@
         "typeindex": "cpp",
         "typeinfo": "cpp",
         "variant": "cpp",
-        "core": "cpp"
+        "core": "cpp",
+        "csetjmp": "cpp",
+        "barrier": "cpp",
+        "charconv": "cpp",
+        "coroutine": "cpp",
+        "cuchar": "cpp",
+        "netfwd": "cpp",
+        "source_location": "cpp",
+        "hash_map": "cpp",
+        "hash_set": "cpp",
+        "rope": "cpp",
+        "slist": "cpp",
+        "latch": "cpp",
+        "ranges": "cpp",
+        "scoped_allocator": "cpp",
+        "span": "cpp",
+        "syncstream": "cpp",
+        "valarray": "cpp"
     },
     "python.testing.pytestArgs": [
-        "src"
+        // "src/adg_ros2/",  // Specific package test folder
+        // "src/adg_ros2/teleop/network_sim/test",  // Specific package test folder
+        "src/adg_ros2",  // Specific package test folder
+        "--import-mode=importlib",  // Helps with import conflicts
+        "-s"
     ],
     "python.testing.unittestEnabled": false,
-    "python.testing.pytestEnabled": true
+    "python.testing.pytestEnabled": true,
+    "ros.distro": "humble",
+    "spellright.language": [
+        "en_CA"
+    ],
+    "spellright.documentTypes": [
+        "markdown",
+        "latex",
+        "plaintext"
+    ],
+    // "python.testing.pytestPath": "/usr/bin/pytest-3"
 }

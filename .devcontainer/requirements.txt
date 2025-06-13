@@ -1,1 +1,10 @@
+numpy==1.25.2
 HaplyHardwareAPI
+gymnasium
+pyyaml
+pandas
+torch
+torchvision
+torchaudio
+skrl[torch]
+robomimic
