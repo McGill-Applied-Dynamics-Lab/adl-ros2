@@ -5,7 +5,7 @@
         "label": "colcon build",
         "type": "shell",
         "command": [
-          "source /opt/ros/humble/setup.bash &&",
+          "source /opt/ros/humble/setup.zsh &&",
           "colcon build",
           "--symlink-install",
           "--cmake-args '-DCMAKE_BUILD_TYPE=Debug'"
