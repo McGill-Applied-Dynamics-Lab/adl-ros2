@@ -13,6 +13,7 @@ from rclpy.action import ActionServer
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.duration import Duration
 from rclpy.callback_groups import ReentrantCallbackGroup, MutuallyExclusiveCallbackGroup
+from rcl_interfaces.msg import SetParametersResult
 
 # import asyncio
 # import threading
@@ -195,8 +196,39 @@ class FR3Interface(Node):
         ...
 
         #! Set control mode
-        self.control_mode = ControlMode.PAUSE
+        self.control_mode = ControlMode.CART_VEL
         self.goal_source = GoalSource.TELEOP
+
+        # Declare dynamic PD gain parameters for gripper control
+        self.declare_parameter("Kp_gripper_trans", 2.0)
+        self.declare_parameter("Kd_gripper_trans", 0.1)
+        self.declare_parameter("Kp_gripper_rot", 1.0)
+        self.declare_parameter("Kd_gripper_rot", 0.05)
+
+        self.Kp_gripper_trans = self.get_parameter("Kp_gripper_trans").get_parameter_value().double_value
+        self.Kd_gripper_trans = self.get_parameter("Kd_gripper_trans").get_parameter_value().double_value
+        self.Kp_gripper_rot = self.get_parameter("Kp_gripper_rot").get_parameter_value().double_value
+        self.Kd_gripper_rot = self.get_parameter("Kd_gripper_rot").get_parameter_value().double_value
+
+        # Register parameter callback for dynamic updates
+        self.add_on_set_parameters_callback(self._on_set_parameters_callback)
+
+    def _on_set_parameters_callback(self, params):
+        for param in params:
+            if param.name == "Kp_gripper_trans":
+                self.Kp_gripper_trans = param.value
+                self.get_logger().info(f"Updated Kp_gripper_trans: {param.value}")
+            elif param.name == "Kd_gripper_trans":
+                self.Kd_gripper_trans = param.value
+                self.get_logger().info(f"Updated Kd_gripper_trans: {param.value}")
+            elif param.name == "Kp_gripper_rot":
+                self.Kp_gripper_rot = param.value
+                self.get_logger().info(f"Updated Kp_gripper_rot: {param.value}")
+            elif param.name == "Kd_gripper_rot":
+                self.Kd_gripper_rot = param.value
+                self.get_logger().info(f"Updated Kd_gripper_rot: {param.value}")
+
+        return SetParametersResult(successful=True)
 
     def _init_publishers(self):
         self.get_logger().info("Initializing publishers...")
@@ -318,6 +350,12 @@ class FR3Interface(Node):
         desired_vel_topic = "/robot_arm/gripper_vel_command"
         self._desired_gripper_vel_sub = self.create_subscription(
             TwistStamped, desired_vel_topic, self._desired_gripper_vel_callback, 10
+        )
+
+        # --- desired gripper pose ---
+        desired_pose_topic = "/robot_arm/gripper_pose_cmd"
+        self._desired_gripper_pose_sub = self.create_subscription(
+            PoseStamped, desired_pose_topic, self._desired_gripper_pose_callback, 10
         )
 
         self.get_logger().info("Subscribers initialized")
@@ -598,6 +636,12 @@ class FR3Interface(Node):
             return
         self.V_WG_goal = rostwist2motion(twist_msg.twist)
 
+    def _desired_gripper_pose_callback(self, pose_msg: PoseStamped):
+        # Only update goal if the goal source is topic and the control mode is cartesian pose
+        if self.goal_source != GoalSource.TOPIC or self.control_mode != ControlMode.CART_POSE:
+            return
+        self.X_WG_goal = rospose2se3(pose_msg.pose)
+
     # --- MARK: Publishers
     def _publish_ee_pose(self):
         if not self._is_state_initialized:
@@ -774,7 +818,20 @@ class FR3Interface(Node):
             error = self.X_WG_goal.translation - self.X_WG.translation
             error_norm = np.linalg.norm(error)
 
-            if error_norm < self._goto_goal_epsilon:
+            R_error = self.X_WG_goal.rotation.dot(self.X_WG.rotation.T)
+            so3_error_vec = pin.log3(R_error)  # This is the axis-angle vector (k*theta)
+
+            # The "norm" of the orientation error is the angle of this rotation
+            orientation_error_norm = np.linalg.norm(so3_error_vec)
+            # Alternatively, and often more direct for just the angle:
+            # For SO3, the angle of the rotation represented by R_error can also be directly obtained
+            # after converting to axis-angle.
+            # angle_error = pinocchio.AngleAxis(R_error).angle # This is a way if AngleAxis is readily available
+            # However, log3 gives k*theta, so its norm is |theta| * ||k||. Since k is a unit vector, norm is |theta|.
+
+            # self.get_logger().info(f"Orientation error: {orientation_error_norm}")
+
+            if error_norm < self._goto_goal_epsilon and orientation_error_norm < self._goto_goal_epsilon:
                 self._goal_reached = True
                 self.get_logger().info("Goal reached!")
                 break
@@ -1088,23 +1145,27 @@ class FR3Interface(Node):
         current_t = self.X_WG.translation
 
         # Linear
-        K = 0.5
-        gains = np.array([K, K, K])
+        Kp_gripper_trans = self.Kp_gripper_trans
+        Kd_gripper_trans = self.Kd_gripper_trans
+        Kp_trans_mat = np.diag(np.array([Kp_gripper_trans, Kp_gripper_trans, Kp_gripper_trans]))
+        Kd_trans_mat = np.diag(np.array([Kd_gripper_trans, Kd_gripper_trans, Kd_gripper_trans]))
+
+        # self.get_logger().info(f"Kp: {Kp_gripper_trans}\t\tKd: {Kd_gripper_trans}")
 
         error = goal_t - current_t
-
-        desired_lin_vel = np.diag(gains) @ error
+        # Optionally, if you have velocity error, you can use d_gains here
+        desired_lin_vel = Kp_trans_mat @ error - Kd_trans_mat @ self.V_WG.linear
 
         # Angular
-        # print(
-        #     f"RPY: {pin.rpy.matrixToRpy(self.X_WG.rotation)} \t\tRPY_g: {pin.rpy.matrixToRpy(self.X_WG_goal.rotation)}"
-        # )
+        Kp_ome = self.Kp_gripper_rot
+        # Kd_ome = self.Kd_gripper_rot
 
-        K_ome = 0.5
         R_error = self.X_WG_goal.rotation.dot(self.X_WG.rotation.T)
         S = 1 / 2 * (R_error - R_error.T)
+
         omega = np.array([S[2, 1], S[0, 2], S[1, 0]])
-        omega_des = K_ome * omega
+        omega_des = Kp_ome * omega
+        # Optionally, if you have angular velocity error, you can use D_ome here
 
         desired_motion = pin.Motion(desired_lin_vel, omega_des)
 
