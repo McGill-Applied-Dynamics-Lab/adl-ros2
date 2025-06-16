@@ -23,7 +23,7 @@ from launch.actions import (
     # OpaqueFunction,
     ExecuteProcess,
     Shutdown,
-    TimerAction,
+    TimerAction,  # noqa: F401
 )
 from launch.conditions import IfCondition
 
@@ -211,8 +211,11 @@ def generate_launch_description():
     # Spawn the ros2_control controllers
     controllers_list = [
         "joint_state_broadcaster",
-        "cartesian_vel_controller",
+        # "cartesian_vel_controller",
         # "model_example_controller",
+        # "my_controller",
+        # "joint_position_example_controller",
+        "joint_trajectory_controller",
     ]
 
     ros_controllers_nodes = []
@@ -241,13 +244,13 @@ def generate_launch_description():
         condition=IfCondition(PythonExpression(["'", hw_type, "' == 'real'"])),
     )
 
-    franka_interface_node = Node(
-        package="robot_arm_interface",
-        executable="fr3_interface",
-        name="fr3_interface",
-        output="screen",
-        # prefix=["gdbserver :3000"],
-    )
+    # franka_interface_node = Node(
+    #     package="robot_arm_interface",
+    #     executable="fr3_interface",
+    #     name="fr3_interface",
+    #     output="screen",
+    #     # prefix=["gdbserver :3000"],
+    # )
 
     # delayed_franka_interface_node = TimerAction(
     #     period=1.0,  # Delay in seconds

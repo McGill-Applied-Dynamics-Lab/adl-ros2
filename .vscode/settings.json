@@ -140,7 +140,7 @@
     "python.testing.pytestArgs": [
         // "src/adg_ros2/",  // Specific package test folder
         // "src/adg_ros2/teleop/network_sim/test",  // Specific package test folder
-        "src/adg_ros2",  // Specific package test folder
+        "src/adg_ros2/robot_arm",  // Specific package test folder
         "--import-mode=importlib",  // Helps with import conflicts
         "-s"
     ],
