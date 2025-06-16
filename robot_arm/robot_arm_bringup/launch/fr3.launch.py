@@ -211,11 +211,10 @@ def generate_launch_description():
     # Spawn the ros2_control controllers
     controllers_list = [
         "joint_state_broadcaster",
-        # "cartesian_vel_controller",
+        "cartesian_vel_controller",
         # "model_example_controller",
         # "my_controller",
-        # "joint_position_example_controller",
-        "joint_trajectory_controller",
+        # "joint_trajectory_controller",
     ]
 
     ros_controllers_nodes = []
