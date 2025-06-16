@@ -19,11 +19,12 @@ import time
 import argparse
 import json
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple  # noqa: F401
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.signal import butter, filtfilt
 from datetime import datetime
+from tqdm import tqdm
 
 import rclpy
 from rclpy.node import Node
@@ -47,12 +48,37 @@ except ImportError:
     sys.exit(1)
 
 
+DEFAULT_CONFIG = {
+    "trajectory": {
+        "duration": 30.0,
+        "frequencies": [0.1, 0.15, 0.08, 0.12, 0.18, 0.25, 0.3],
+        "amplitudes": [0.3, 0.4, 0.3, 0.5, 0.3, 0.4, 0.3],
+        # "amplitudes": [0.1, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        "max_amplitude": 0.4,
+        "dt": 0.01,
+        "buffer_time": 2.0,
+    },
+    "processing": {"sampling_freq": 1000.0, "cutoff_freq": 50.0},
+    "validation": {"criteria": {"max_rmse": 5.0, "min_correlation": 0.7}},
+}
+
+
 class ModelValidationNode(Node):
     """ROS2 node for collecting validation data from the robot."""
 
     def __init__(self, config: Dict):
         super().__init__("model_validation_node")
         self.config = config
+
+        self.home_position = [
+            0.0,  # Joint 1
+            -np.pi / 4,  # Joint 2
+            0.0,  # Joint 3
+            -3 * np.pi / 4,  # Joint 4
+            0.0,  # Joint 5
+            np.pi / 2,  # Joint 6
+            np.pi / 4,  # Joint 7
+        ]
 
         # Data storage
         self.validation_data = {
@@ -66,8 +92,6 @@ class ModelValidationNode(Node):
         # State tracking
         self.current_joint_state = None
         self.data_collection_active = False
-        self.pinocchio_model = None
-        self.pinocchio_data = None
 
         # Setup communication
         self._setup_communication()
@@ -77,6 +101,14 @@ class ModelValidationNode(Node):
 
     def _setup_communication(self):
         """Setup publishers and subscribers."""
+        # Check the interface is running
+        time.sleep(1.0)  # Allow time for nodes to start
+        nodes_alive = self.get_node_names()
+
+        if "fr3_interface" not in nodes_alive:
+            self.get_logger().error("'fr3_interface' node not found. Ensure the controller manager is running.")
+            sys.exit(1)
+
         # Subscribe to joint states
         self.joint_state_subscription = self.create_subscription(
             JointState, "/joint_states", self._joint_state_callback, 10
@@ -124,37 +156,6 @@ class ModelValidationNode(Node):
             # Store external wrench data if needed
             pass
 
-    def load_pinocchio_model(self) -> bool:
-        """Load the Pinocchio model for the FR3."""
-        try:
-            # Try to find the URDF file
-            urdf_path = None
-            possible_paths = [
-                "/home/csirois/workspaces/franka_ros2_ws/src/adg_ros2/robot_arm/robot_arm_description/urdf/fr3.urdf",
-                os.path.join(get_package_share_directory("robot_arm_description"), "urdf", "fr3.urdf"),
-            ]
-
-            for path in possible_paths:
-                if os.path.exists(path):
-                    urdf_path = path
-                    break
-
-            if urdf_path is None:
-                self.get_logger().error("Could not find FR3 URDF file")
-                return False
-
-            # Load model
-            self.pinocchio_model = pin.buildModelFromUrdf(urdf_path)
-            self.pinocchio_data = self.pinocchio_model.createData()
-
-            self.get_logger().info(f"Loaded Pinocchio model from: {urdf_path}")
-            self.get_logger().info(f"Model has {self.pinocchio_model.nq} DOF")
-            return True
-
-        except Exception as e:
-            self.get_logger().error(f"Failed to load Pinocchio model: {e}")
-            return False
-
     def generate_validation_trajectory(self) -> JointTrajectory:
         """Generate a rich multi-sine trajectory for exciting robot dynamics."""
         # Wait for current joint state
@@ -162,7 +163,7 @@ class ModelValidationNode(Node):
             time.sleep(0.1)
             self.get_logger().info("Waiting for joint states...")
 
-        start_positions = list(self.current_joint_state.position[:7])
+        start_positions = self.home_position
 
         # Multi-sine trajectory parameters (designed to excite different frequency modes)
         frequencies = self.config["trajectory"]["frequencies"]
@@ -184,13 +185,23 @@ class ModelValidationNode(Node):
 
         self.get_logger().info(f"Generating trajectory with {num_points} points over {duration}s")
 
+        # Start from home position
+        point = JointTrajectoryPoint()
+        point.positions = start_positions
+        point.velocities = [0.0] * 7  # Start with zero velocity
+        point.accelerations = [0.0] * 7  # Start with zero acceleration
+        point.time_from_start.sec = 0
+        point.time_from_start.nanosec = 0
+        msg.points.append(point)
+
         # Generate trajectory points
+        start_wait_time = 1.0  # Initial wait time before trajectory starts
         for i in range(num_points + 1):
             t = i * dt
             point = JointTrajectoryPoint()
 
             # Set timing
-            point.time_from_start.sec = int(t)
+            point.time_from_start.sec = int(t) + int(start_wait_time)
             point.time_from_start.nanosec = int((t - int(t)) * 1e9)
 
             # Calculate multi-sine motion for each joint
@@ -228,6 +239,12 @@ class ModelValidationNode(Node):
                 "external_torques": [],
             }
 
+            # Check robot is in correct position
+            current_position = self.current_joint_state.position[:7]
+            if not np.allclose(current_position, self.home_position, atol=1e-1):
+                self.get_logger().error("Robot is not in the home position.")
+                return False
+
             # Generate trajectory
             trajectory = self.generate_validation_trajectory()
             duration = self.config["trajectory"]["duration"]
@@ -245,10 +262,11 @@ class ModelValidationNode(Node):
             self.get_logger().info(f"Collecting data for {execution_time}s...")
 
             # Show progress
-            for i in range(int(execution_time)):
+            # for i in range(int(execution_time)):
+            for i in tqdm(range(int(execution_time)), desc="Collecting data", unit="seconds"):
                 time.sleep(1.0)
-                data_points = len(self.validation_data["timestamps"])
-                self.get_logger().info(f"Progress: {i + 1}/{int(execution_time)}s, collected {data_points} data points")
+                # data_points = len(self.validation_data["timestamps"])
+                # self.get_logger().info(f"Progress: {i + 1}/{int(execution_time)}s, collected {data_points} data points")
 
             # Stop data collection
             self.data_collection_active = False
@@ -295,7 +313,38 @@ class ModelValidator:
                 print("ERROR: Could not find FR3 URDF file")
                 return False
 
-            self.pinocchio_model, collision_model, visual_model = pin.buildModelsFromUrdf(urdf_path)
+            # model, collision_model, visual_model = pin.buildModelsFromUrdf(urdf_path)
+            model, _, _ = pin.buildModelsFromUrdf(urdf_path)
+
+            # Lock Fingers
+            # Create a list of joints to lock
+            jointsToLock = ["fr3_finger_joint1", "fr3_finger_joint2"]
+
+            # Get the ID of all existing joints
+            joints2lock_IDs = []
+            for jn in jointsToLock:
+                if model.existJointName(jn):
+                    joints2lock_IDs.append(model.getJointId(jn))
+                else:
+                    print("Warning: joint " + str(jn) + " does not belong to the model!")
+
+            initial_joint_config = np.array(
+                [
+                    0,
+                    -np.pi / 4,
+                    0,
+                    -3 * np.pi / 4,
+                    0,
+                    np.pi / 2,
+                    np.pi / 4,
+                    0,
+                    0,
+                ]
+            )
+
+            model_reduced = pin.buildReducedModel(model, joints2lock_IDs, initial_joint_config)
+
+            self.pinocchio_model = model_reduced
             self.pinocchio_data = self.pinocchio_model.createData()
 
             print(f"Loaded Pinocchio model from: {urdf_path}")
@@ -359,7 +408,7 @@ class ModelValidator:
             positions_filtered = np.zeros_like(positions)
             velocities_filtered = np.zeros_like(velocities)
 
-            for i in range(7):  # For each joint
+            for i in tqdm(range(7), desc="Filtering joint data", unit="joints"):  # For each joint
                 positions_filtered[:, i] = filtfilt(b, a, positions[:, i])
                 velocities_filtered[:, i] = filtfilt(b, a, velocities[:, i])
 
@@ -399,13 +448,8 @@ class ModelValidator:
             torques_predicted = []
 
             num_points = len(self.processed_data["timestamps"])
-            print_interval = max(1, num_points // 20)  # Print progress every 5%
 
-            for i in range(num_points):
-                if i % print_interval == 0:
-                    progress = (i / num_points) * 100
-                    print(f"Computing RNEA: {progress:.1f}% complete")
-
+            for i in tqdm(range(num_points), desc="Computing RNEA", unit="points"):
                 q = self.processed_data["positions"][i]
                 v = self.processed_data["velocities"][i]
                 a = self.processed_data["accelerations"][i]
@@ -584,7 +628,7 @@ class ModelValidator:
 
             # Add statistics
             mean_err = np.mean(error)
-            std_err = np.std(error)
+            std_err = np.std(error)  # noqa
             ax_hist.axvline(mean_err, color="red", linestyle="--", linewidth=2, label=f"Mean: {mean_err:.3f}")
             ax_hist.legend(fontsize=8)
 
@@ -693,18 +737,7 @@ class ModelValidator:
 
 def load_config(config_file: Optional[str] = None) -> Dict:
     """Load configuration from file or return default config."""
-    default_config = {
-        "trajectory": {
-            "duration": 15.0,
-            "frequencies": [0.1, 0.15, 0.08, 0.12, 0.18, 0.25, 0.3],
-            "amplitudes": [0.3, 0.4, 0.3, 0.5, 0.3, 0.4, 0.3],
-            "max_amplitude": 0.4,
-            "dt": 0.01,
-            "buffer_time": 2.0,
-        },
-        "processing": {"sampling_freq": 1000.0, "cutoff_freq": 50.0},
-        "validation": {"criteria": {"max_rmse": 5.0, "min_correlation": 0.7}},
-    }
+    default_config = DEFAULT_CONFIG
 
     if config_file and os.path.exists(config_file):
         with open(config_file, "r") as f:
@@ -729,14 +762,19 @@ def main():
     parser = argparse.ArgumentParser(description="Validate Franka Research 3 dynamics model")
     parser.add_argument("--duration", type=float, default=15.0, help="Trajectory duration (seconds)")
     parser.add_argument("--config", type=str, help="Configuration file path")
-    parser.add_argument(
-        "--output-dir", type=str, default="/tmp/validation_results", help="Output directory for results"
-    )
-    parser.add_argument("--save-data", type=str, help="Save raw data to file")
+    # parser.add_argument("--output-dir", type=str, default="results", help="Output directory for results")
+    parser.add_argument("--save-data", type=bool, default=True, help="Save raw data to file")
     parser.add_argument("--load-data", type=str, help="Load data from file (skip collection)")
     parser.add_argument("--no-plots", action="store_true", help="Skip generating plots")
 
     args = parser.parse_args()
+
+    results_dir = Path(__file__).parent.parent / "results"
+    output_dir = results_dir / "analysis" / datetime.now().strftime("%Y%m%d_%H%M%S")
+    load_dir = results_dir / "raw_data"
+
+    load_data = None
+    # load_data = "20250616_205638.npz"
 
     # Load configuration
     config = load_config(args.config)
@@ -755,10 +793,11 @@ def main():
         return 1
 
     # Load or collect data
-    if args.load_data:
-        print(f"Loading data from: {args.load_data}")
-        if not validator.load_data(args.load_data):
+    if load_data:
+        print(f"Loading data from: {load_data}")
+        if not validator.load_data(load_dir / load_data):
             return 1
+
     else:
         print("Collecting data from robot...")
 
@@ -776,17 +815,14 @@ def main():
             spin_thread.daemon = True
             spin_thread.start()
 
-            # Load Pinocchio model in node
-            if not node.load_pinocchio_model():
-                print("FATAL ERROR: Node could not load Pinocchio model")
-                return 1
-
             # Wait for system initialization
             print("Waiting for system initialization...")
             time.sleep(3.0)
 
+            traj_succs = node.execute_validation_trajectory()
+
             # Execute validation trajectory
-            if not node.execute_validation_trajectory():
+            if not traj_succs:
                 print("FATAL ERROR: Failed to collect validation data")
                 return 1
 
@@ -801,10 +837,11 @@ def main():
 
     # Save raw data if requested
     if args.save_data:
-        print(f"Saving raw data to: {args.save_data}")
-        os.makedirs(os.path.dirname(args.save_data), exist_ok=True)
+        save_dir = output_dir / "raw_data"
+        print(f"Saving raw data to: {save_dir}")
+        save_dir.parent.mkdir(parents=True, exist_ok=True)
         np.savez_compressed(
-            args.save_data,
+            save_dir,
             timestamps=validator.validation_data["timestamps"],
             joint_positions=validator.validation_data["joint_positions"],
             joint_velocities=validator.validation_data["joint_velocities"],
@@ -824,8 +861,8 @@ def main():
 
     # Generate report
     if not args.no_plots:
-        print(f"Generating validation report in: {args.output_dir}")
-        validator.generate_validation_report(results, args.output_dir)
+        print(f"Generating validation report in: {output_dir}")
+        validator.generate_validation_report(results, output_dir)
 
     # Print summary
     print("\nVALIDATION SUMMARY")
@@ -851,4 +888,4 @@ def main():
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    main()
