@@ -29,4 +29,5 @@ ignore = [
     "E402",  # Import not at the top of the file
     "E501",  # Line too long
     "C901",  # Function is too complex
+    "F541",  # f-string is missing placeholders
 ]
