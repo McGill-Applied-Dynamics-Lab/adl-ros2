@@ -21,7 +21,7 @@ from rclpy.subscription import Subscription
 from ament_index_python.packages import get_package_share_directory
 from sensor_msgs.msg import JointState
 from franka_msgs.msg import FrankaRobotState
-from geometry_msgs.msg import Pose, Point, Quaternion, PoseStamped, TwistStamped
+from geometry_msgs.msg import Pose, Point, Quaternion, PoseStamped, TwistStamped, WrenchStamped, Wrench, Vector3
 import std_msgs.msg
 
 # My pkg imports
@@ -30,6 +30,7 @@ from arm_interfaces.msg import FrankaModel
 
 
 PACKAGE_NAME = "franka_rim"
+N_DOF = 7
 
 
 #! ROS 2 Launch Fixture
@@ -91,6 +92,55 @@ def urdf_path():
     return os.path.join(pkg_share, "models", "fr3_franka_hand.urdf")
 
 
+@pytest.mark.parametrize(
+    "q,dq",
+    [
+        (np.zeros(N_DOF), np.zeros(N_DOF)),
+        (np.ones(N_DOF), np.ones(N_DOF)),
+        (np.random.uniform(-1, 1, N_DOF), np.random.uniform(-1, 1, N_DOF)),
+    ],
+)
+def test_compute_model_matrices(franka_model_node, q, dq):
+    """
+    To validate the computation of mass matrix and coriolis vector. Just a simple test to ensure the method runs without errors.
+    """
+    node: FrankaModelNode = franka_model_node
+    assert node._model_loaded
+
+    M, c, tau, Ai, Ai_dot, Ai_dot_q_dot, f_ext_estimated = node._compute_model_matrices(q, dq)
+
+    n = node._robot_model.nv
+
+    assert M.shape == (n, n)
+    assert np.allclose(M, M.T, atol=1e-8)
+    assert c.shape == (n,)
+
+    assert M.shape == (n, n)
+    assert c.shape == (n,)
+    assert tau.shape == (n,)
+    assert Ai.shape == (n,)
+    assert Ai_dot.shape == (n,)
+    assert Ai_dot_q_dot.shape == ()
+    assert f_ext_estimated.shape == (6,)  # 6D wrench
+
+
+def test_compute_contact_forces(franka_model_node):
+    """Test contact force computation."""
+    node: FrankaModelNode = franka_model_node
+    assert node._model_loaded
+
+    q = np.zeros(node._robot_model.nv)
+    dq = np.zeros(node._robot_model.nv)
+
+    # Set some dummy external torques
+    node.tau_ext = np.array([0.1, 0.2, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+
+    f_ext = node._compute_contact_forces(q, dq)
+
+    assert f_ext.shape == (6,)
+    assert np.isfinite(f_ext).all()
+
+
 def send_dummy_robot_state(node: Node, pub: Publisher, positions=None, velocities=None, efforts=None):
     msg = FrankaRobotState()
     n = 9
@@ -109,6 +159,17 @@ def send_dummy_robot_state(node: Node, pub: Publisher, positions=None, velocitie
         velocity=[float(v) for v in velocities],
         effort=[float(e) for e in efforts],
     )
+
+    # Add external torque estimates
+    msg.tau_ext_hat_filtered = JointState(
+        header=std_msgs.msg.Header(stamp=node.get_clock().now().to_msg()),
+        effort=[0.1, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],  # Some dummy external torques
+    )
+
+    msg.o_f_ext_hat_k = WrenchStamped()
+    msg.o_f_ext_hat_k.header = std_msgs.msg.Header(stamp=node.get_clock().now().to_msg())
+    msg.o_f_ext_hat_k.wrench = Wrench(force=Vector3(x=1.0, y=0.5, z=0.0), torque=Vector3(x=0.0, y=0.0, z=0.1))
+
     # Optionally fill in other fields as needed
     pub.publish(msg)
     time.sleep(0.05)
@@ -148,71 +209,6 @@ def test_franka_model_node_init(franka_model_node):
     assert node._model_loaded
 
 
-@pytest.mark.parametrize(
-    "q,dq",
-    [
-        (np.zeros(9), np.zeros(9)),
-        (np.ones(9), np.ones(9)),
-        (np.random.uniform(-1, 1, 9), np.random.uniform(-1, 1, 9)),
-    ],
-)
-def test_compute_model_matrices(franka_model_node, q, dq):
-    """
-    To validate the computation of mass matrix and coriolis vector. Just a simple test to ensure the method runs without errors.
-    """
-    node: FrankaModelNode = franka_model_node
-    assert node._model_loaded
-
-    M, c, tau, Ai, Ai_dot, Ai_dot_q_dot = node._compute_model_matrices(q, dq)
-
-    n = node._robot_model.nv
-
-    assert M.shape == (n, n)
-    assert np.allclose(M, M.T, atol=1e-8)
-    assert c.shape == (n,)
-
-    assert M.shape == (n, n)
-    assert c.shape == (n,)
-    assert tau.shape == (n,)
-    assert Ai.shape == (1, n)
-    assert Ai_dot.shape == (1, n)
-    assert Ai_dot_q_dot.shape == (1,)
-
-
-@pytest.mark.xfail(reason="Expected to fail until we define expected values")
-@pytest.mark.parametrize(
-    "q, dq, expected_M, expected_C",
-    [
-        # Fill in your expected values for each configuration
-        (
-            np.array([0, 0, 0, 0, 0, 0, 0]),
-            np.array([0, 0, 0, 0, 0, 0, 0]),
-            np.array(
-                [
-                    [0, 0, 0, 0, 0, 0, 0],
-                    [0, 0, 0, 0, 0, 0, 0],
-                    [0, 0, 0, 0, 0, 0, 0],
-                    [0, 0, 0, 0, 0, 0, 0],
-                    [0, 0, 0, 0, 0, 0, 0],
-                    [0, 0, 0, 0, 0, 0, 0],
-                    [0, 0, 0, 0, 0, 0, 0],
-                ]
-            ),  # Replace with actual expected mass matrix
-            np.array([0, 0, 0, 0, 0, 0, 0]),  # Replace with actual expected coriolis
-        ),
-        # Add more test cases as needed
-    ],
-)
-def test_compute_model_matrices_values(franka_model_node, q, dq, expected_M, expected_C):
-    """
-    To validate the computation of mass matrix and coriolis vector with expected values.
-    """
-    node = franka_model_node
-    M, C = node._compute_model_matrices(q, dq)
-    np.testing.assert_allclose(M, expected_M, atol=1e-6)
-    np.testing.assert_allclose(C, expected_C, atol=1e-6)
-
-
 #! Franka Model - ROS2 Tests
 
 
@@ -236,19 +232,19 @@ def test_franka_model_node_subscribes(test_context):
     "positions, velocities, efforts",
     [
         (
-            [0.1, -0.2, 0.3, -0.4, 0.5, -0.6, 0.7, 0.8, -0.9],
-            [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8],
-            [0.0, 0.0, 0.1, 0.1, 0.2, 0.2, 0.3, 0.4, 0.5],
+            [0.1, -0.2, 0.3, -0.4, 0.5, -0.6, 0.7],
+            [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6],
+            [0.0, 0.0, 0.1, 0.1, 0.2, 0.2, 0.3],
         ),
         (
-            [0.5, 0.4, 0.3, 0.2, 0.1, 0.0, -0.1, -0.2, -0.3],
-            [0.7, 0.6, 0.5, 0.4, 0.3, 0.2, 0.1, 0.0, -0.1],
-            [0.3, 0.2, 0.2, 0.1, 0.1, 0.0, 0.0, -0.1, -0.2],
+            [0.5, 0.4, 0.3, 0.2, 0.1, 0.0, -0.1],
+            [0.7, 0.6, 0.5, 0.4, 0.3, 0.2, 0.1],
+            [0.3, 0.2, 0.2, 0.1, 0.1, 0.0, 0.0],
         ),
         (
-            [0.123, -0.456, 0.789, -0.321, 0.654, -0.987, 0.111, 0.222, -0.333],
-            [0.222, 0.333, 0.444, 0.555, 0.666, 0.777, 0.888, 0.999, -0.111],
-            [0.999, 0.888, 0.777, 0.666, 0.555, 0.444, 0.333, 0.222, -0.111],
+            [0.123, -0.456, 0.789, -0.321, 0.654, -0.987, 0.111],
+            [0.222, 0.333, 0.444, 0.555, 0.666, 0.777, 0.888],
+            [0.999, 0.888, 0.777, 0.666, 0.555, 0.444, 0.333],
         ),
     ],
 )
@@ -297,9 +293,9 @@ def test_franka_model_publishes_model(test_context):
     publish_rate = 50  # Hz
     duration = 1.0  # seconds
     num_msgs = int(publish_rate * duration)
-    positions = [0.0] * 9
-    velocities = [0.0] * 9
-    efforts = [0.0] * 9
+    positions = [0.0] * N_DOF
+    velocities = [0.0] * N_DOF
+    efforts = [0.0] * N_DOF
 
     start_time = time.time()
     for _ in range(num_msgs):
@@ -321,5 +317,50 @@ def test_franka_model_publishes_model(test_context):
         num_received = len(received_msgs)
 
     assert num_received >= 8, f"Expected at least 8 messages, got {num_received}"
+
+    test_node.destroy_subscription(sub)
+
+
+def test_franka_model_publishes_model_with_forces(test_context):
+    """
+    Subscribes to the /fr3_model topic and verifies that force data is included.
+    """
+    model_node, test_node, pub = test_context
+    received_msgs = []
+    lock = threading.Lock()
+
+    def model_callback(msg):
+        with lock:
+            received_msgs.append(msg)
+
+    sub = test_node.create_subscription(FrankaModel, "/fr3_model", model_callback, 10)
+
+    # Publish robot state messages with force data
+    positions = [0.0] * N_DOF
+    velocities = [0.0] * N_DOF
+    efforts = [0.0] * N_DOF
+
+    for _ in range(5):
+        send_dummy_robot_state(test_node, pub, positions, velocities, efforts)
+        rclpy.spin_once(model_node, timeout_sec=0.01)
+        rclpy.spin_once(test_node, timeout_sec=0.01)
+
+    # Wait for messages
+    timeout = 1.0
+    poll_period = 0.05
+    waited = 0.0
+    while waited < timeout:
+        rclpy.spin_once(test_node, timeout_sec=poll_period)
+        waited += poll_period
+
+    with lock:
+        num_received = len(received_msgs)
+        if num_received > 0:
+            latest_msg = received_msgs[-1]
+            # Verify force data is present
+            assert len(latest_msg.f_ext_estimated) == 6
+            assert len(latest_msg.f_ext_robot) == 6
+
+    assert num_received >= 1, f"Expected at least 1 message, got {num_received}"
 
     test_node.destroy_subscription(sub)
