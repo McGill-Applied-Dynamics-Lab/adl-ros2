@@ -15,6 +15,7 @@ Usage:
 
 import os
 import sys
+import time
 import argparse
 import json
 from pathlib import Path
@@ -24,13 +25,12 @@ import matplotlib.pyplot as plt
 from scipy.signal import butter, filtfilt
 from datetime import datetime
 from tqdm import tqdm
-
 from ament_index_python.packages import get_package_share_directory
-from franka_msgs.msg import FrankaRobotState
 
 # Pinocchio for model validation
 try:
     import pinocchio as pin
+    from pinocchio.visualize import MeshcatVisualizer
 
     PINOCCHIO_AVAILABLE = True
 except ImportError:
@@ -51,21 +51,41 @@ class DynamicsModelValidator:
         self.config = config
         self.validation_data = None
         self.processed_data = None
-        self.pinocchio_model = None
-        self.pinocchio_data = None
+        self.pin_model = None
+        self.pin_data = None
+        self.pin_collision = None
+        self.pin_visual = None
+        self.visualizer = None
+
+        self.initial_joint_config = np.array(
+            [
+                0,
+                -np.pi / 4,
+                0,
+                -3 * np.pi / 4,
+                0,
+                np.pi / 2,
+                np.pi / 4,
+                0,
+                0,
+            ]
+        )
 
     def load_pinocchio_model(self) -> bool:
         """Load Pinocchio model for validation."""
         try:
             urdf_filename = "fr3_franka_hand.urdf"
             pkg_share = get_package_share_directory("franka_rim")
+            # pkg_share = Path("/home/charles/Documents/git/my-phd/dynamics")
+            # packages_dir = pkg_share / "models" / "meshes"
             urdf_path = os.path.join(pkg_share, "models", urdf_filename)
 
             if not os.path.exists(urdf_path):
                 print("ERROR: Could not find FR3 URDF file")
                 return False
 
-            model, _, _ = pin.buildModelsFromUrdf(urdf_path)
+            model, collision_model, visual_model = pin.buildModelsFromUrdf(urdf_path)
+            # model, collision_model, visual_model = pin.buildModelsFromUrdf(urdf_path, package_dirs=packages_dir)
 
             # Lock Fingers
             jointsToLock = ["fr3_finger_joint1", "fr3_finger_joint2"]
@@ -76,27 +96,16 @@ class DynamicsModelValidator:
                 else:
                     print("Warning: joint " + str(jn) + " does not belong to the model!")
 
-            initial_joint_config = np.array(
-                [
-                    0,
-                    -np.pi / 4,
-                    0,
-                    -3 * np.pi / 4,
-                    0,
-                    np.pi / 2,
-                    np.pi / 4,
-                    0,
-                    0,
-                ]
-            )
+            model_reduced = pin.buildReducedModel(model, joints2lock_IDs, self.initial_joint_config)
 
-            model_reduced = pin.buildReducedModel(model, joints2lock_IDs, initial_joint_config)
+            self.pin_model = model  # model_reduced
+            self.pin_data = self.pin_model.createData()
 
-            self.pinocchio_model = model_reduced
-            self.pinocchio_data = self.pinocchio_model.createData()
+            self.pin_collision = collision_model
+            self.pin_visual = visual_model
 
             print(f"Loaded Pinocchio model from: {urdf_path}")
-            print(f"Model has {self.pinocchio_model.nq} DOF")
+            print(f"Model has {self.pin_model.nq} DOF")
             return True
 
         except Exception as e:
@@ -113,30 +122,14 @@ class DynamicsModelValidator:
                     "joint_positions": data["joint_positions"],
                     "joint_velocities": data["joint_velocities"],
                     "joint_torques": data["joint_torques"],
+                    "joint_positions_desired": data["joint_positions_desired"],
+                    "joint_velocities_desired": data["joint_velocities_desired"],
+                    "joint_torques_desired": data["joint_torques_desired"],
+                    "tau_ext_filtered": data["tau_ext_filtered"],
+                    "robot_mode": data["robot_mode"],
+                    "ee_position": data["ee_position"],
+                    "ee_orientation": data["ee_orientation"],
                 }
-
-                # Load additional fields if available (from new FrankaRobotState format)
-                if "joint_positions_desired" in data:
-                    self.validation_data.update(
-                        {
-                            "joint_positions_desired": data["joint_positions_desired"],
-                            "joint_velocities_desired": data["joint_velocities_desired"],
-                            "joint_torques_desired": data["joint_torques_desired"],
-                            "tau_ext_filtered": data["tau_ext_filtered"],
-                            "robot_mode": data["robot_mode"],
-                        }
-                    )
-                    print("Loaded additional FrankaRobotState data fields")
-
-                # Load end-effector data if available
-                if "ee_position" in data:
-                    self.validation_data.update(
-                        {
-                            "ee_position": data["ee_position"],
-                            "ee_orientation": data["ee_orientation"],
-                        }
-                    )
-                    print("Loaded end-effector pose data")
 
                 # Load config if available
                 if "trajectory_config" in data:
@@ -235,6 +228,34 @@ class DynamicsModelValidator:
             print(f"ERROR: Data processing failed: {e}")
             return False
 
+    def validate_model(self) -> Dict:
+        """Main method to validate the dynamics model."""
+        if not self.pin_model:
+            print("ERROR: Pinocchio model not loaded")
+            return {"valid": False, "error": "Pinocchio model not loaded"}
+
+        if not self.validation_data:
+            print("ERROR: Validation data not loaded")
+            return {"valid": False, "error": "Validation data not loaded"}
+
+        if not self.processed_data:
+            if not self.filter_and_process_data():
+                return {"valid": False, "error": "Data processing failed"}
+
+        print("\n======= Starting model validation =======")
+
+        results = {}
+
+        # Forward kinematics validation
+        results_fk = self.validate_forward_kinematics()
+        results.update(results_fk)
+
+        # Dynamics model validation
+        results_dyn = self.validate_dynamics_model()
+        results.update(results_dyn)
+
+        return results
+
     def validate_dynamics_model(self) -> Dict:
         """Validate the Pinocchio model against processed data."""
         try:
@@ -249,9 +270,15 @@ class DynamicsModelValidator:
                 v = self.processed_data["velocities"][i]
                 a = self.processed_data["accelerations"][i]
 
+                # Add fingers coord if not present
+                if len(q) < self.pin_model.nq:
+                    q = np.concatenate([q, np.zeros(self.pin_model.nq - len(q))])
+                    v = np.concatenate([v, np.zeros(self.pin_model.nv - len(v))])
+                    a = np.concatenate([a, np.zeros(self.pin_model.nv - len(a))])
+
                 # Compute torques using inverse dynamics (RNEA)
-                tau_pred = pin.rnea(self.pinocchio_model, self.pinocchio_data, q, v, a)
-                torques_predicted.append(tau_pred.copy())
+                tau_pred = pin.rnea(self.pin_model, self.pin_data, q, v, a)
+                torques_predicted.append(tau_pred[:7].copy())
 
             torques_predicted = np.array(torques_predicted)
             torques_measured = self.processed_data["torques_measured"]
@@ -271,10 +298,6 @@ class DynamicsModelValidator:
                 "timestamps": self.processed_data["timestamps"],
             }
 
-            # Add forward kinematics validation if end-effector data is available
-            fk_results = self._validate_forward_kinematics()
-            results.update(fk_results)
-
             print("Dynamics model validation complete!")
             return results
 
@@ -282,9 +305,9 @@ class DynamicsModelValidator:
             print(f"ERROR: Validation failed: {e}")
             return {"valid": False, "error": str(e)}
 
-    def _validate_forward_kinematics(self) -> Dict:
+    def validate_forward_kinematics(self) -> Dict:
         """Validate forward kinematics by comparing measured vs computed end-effector poses."""
-        print("Validating forward kinematics...")
+        print("--- Validating forward kinematics ---")
 
         ee_positions_measured = np.array(self.validation_data["ee_position"])
         ee_positions_computed = []
@@ -293,12 +316,12 @@ class DynamicsModelValidator:
 
         # Get end-effector frame ID
         ee_frame_name = "fr3_hand_tcp"  # or "panda_hand" depending on your URDF
-        if not self.pinocchio_model.existFrame(ee_frame_name):
+        if not self.pin_model.existFrame(ee_frame_name):
             # Try alternative frame names
             possible_frames = ["panda_hand", "fr3_link8", "panda_link8"]
             ee_frame_name = None
             for frame_name in possible_frames:
-                if self.pinocchio_model.existFrame(frame_name):
+                if self.pin_model.existFrame(frame_name):
                     ee_frame_name = frame_name
                     break
 
@@ -306,17 +329,21 @@ class DynamicsModelValidator:
                 print("WARNING: Could not find end-effector frame in model")
                 return {"fk_valid": False, "fk_metrics": {}}
 
-        ee_frame_id = self.pinocchio_model.getFrameId(ee_frame_name)
+        ee_frame_id = self.pin_model.getFrameId(ee_frame_name)
 
         # Compute forward kinematics for each joint configuration
         for i in tqdm(range(num_points), desc="Computing FK", unit="points"):
             q = self.processed_data["positions"][i]
 
+            # Pad with zeros if necessary
+            if len(q) < self.pin_model.nq:
+                q = np.concatenate([q, np.zeros(self.pin_model.nq - len(q))])
+
             # Update model with current joint positions
-            pin.framesForwardKinematics(self.pinocchio_model, self.pinocchio_data, q)
+            pin.framesForwardKinematics(self.pin_model, self.pin_data, q)
 
             # Get end-effector transform
-            ee_transform = self.pinocchio_data.oMf[ee_frame_id]
+            ee_transform = self.pin_data.oMf[ee_frame_id]
             ee_position_computed = ee_transform.translation
 
             ee_positions_computed.append(ee_position_computed.copy())
@@ -470,15 +497,18 @@ class DynamicsModelValidator:
 
     def _plot_torque_comparison(self, results: Dict, output_file: Path):
         """Plot predicted vs measured torques for all joints."""
-        fig, axes = plt.subplots(7, 1, figsize=(14, 16))
+        fig, axes = plt.subplots(3, 1, figsize=(14, 16))
         fig.suptitle("Dynamics Model Validation: Predicted vs Measured Torques", fontsize=16)
 
         timestamps = results["timestamps"]
         torques_pred = results["torques_predicted"]
         torques_meas = results["torques_measured"]
 
+        j = 0
         for i in range(7):
-            ax = axes[i]
+            if i not in [1, 2, 6]:
+                continue
+            ax = axes[j]
 
             ax.plot(timestamps, torques_meas[:, i], "b-", label="Measured", linewidth=1, alpha=0.8)
             ax.plot(timestamps, torques_pred[:, i], "r--", label="Predicted", linewidth=1)
@@ -486,6 +516,8 @@ class DynamicsModelValidator:
             ax.set_ylabel(f"Joint {i + 1}\nTorque (Nm)", fontsize=10)
             ax.grid(True, alpha=0.3)
             ax.legend(fontsize=8)
+
+            j += 1
 
             # Add metrics
             rmse = results["metrics"]["rmse"][i]
@@ -893,6 +925,214 @@ class DynamicsModelValidator:
         plt.savefig(output_file, dpi=300, bbox_inches="tight")
         plt.close()
 
+    def setup_visualizer(self) -> bool:
+        """Setup MeshcatVisualizer for trajectory replay."""
+        try:
+            if not self.pin_model:
+                print("ERROR: Pinocchio model not loaded")
+                return False
+
+            # Setup pinocchio visualizer
+            self.visualizer = MeshcatVisualizer(
+                self.pin_model, collision_model=self.pin_collision, visual_model=self.pin_visual
+            )
+
+            # Initialize the viewer
+            self.visualizer.initViewer(open=True)
+
+            # Load the robot meshes
+            try:
+                self.visualizer.loadViewerModel()
+                print("Robot model loaded successfully in visualizer")
+            except Exception as e:
+                print(f"Warning: Could not load visual meshes: {e}")
+                print("Using basic geometric shapes for visualization")
+
+            # self.visualizer.displayCollisions(False)
+            # self.visualizer.displayVisuals(True)
+            # self.visualizer.displayFrames(True)
+
+            self.visualizer.display(self.initial_joint_config)
+
+            return True
+
+        except Exception as e:
+            print(f"ERROR: Failed to setup visualizer: {e}")
+            return False
+
+    def replay_trajectory(self, playback_speed: float = 1.0) -> bool:
+        """Replay the recorded trajectory using MeshcatVisualizer."""
+        try:
+            if not self.validation_data:
+                print("ERROR: No trajectory data loaded")
+                return False
+
+            if not self.visualizer:
+                if not self.setup_visualizer():
+                    return False
+
+            print(f"\n--- Replaying trajectory ---")
+            print(f"Playback speed: {playback_speed}x")
+            print(f"Data points: {len(self.validation_data['timestamps'])}")
+            print(f"Duration: {self.validation_data['timestamps'][-1]:.2f}s")
+
+            timestamps = np.array(self.validation_data["timestamps"])
+            positions = np.array(self.validation_data["joint_positions"])
+
+            # Calculate playback timing
+            n_skip = 10
+            dt_original = np.mean(np.diff(timestamps))
+            dt_playback = dt_original / playback_speed * n_skip
+
+            print(f"Original dt: {dt_original:.4f}s, Playback dt: {dt_playback:.4f}s")
+            print("\nStarting replay in 3 seconds...")
+            time.sleep(3.0)
+
+            start_time = time.time()
+
+            # Select every 100th point for replay
+            replay_positions = positions[::n_skip]
+
+            for i in tqdm(range(len(replay_positions)), desc="Replaying trajectory", unit="frames"):
+                # Get joint configuration
+                q = replay_positions[i]
+
+                # Pad with zeros for finger joints if necessary
+                if len(q) < self.pin_model.nq:
+                    q_full = np.concatenate([q, np.zeros(self.pin_model.nq - len(q))])
+                else:
+                    q_full = q
+
+                # Update visualization
+                self.visualizer.display(q_full)
+
+                # Calculate sleep time to maintain playback speed
+                expected_time = start_time + (i * dt_playback)
+                current_time = time.time()
+                sleep_time = expected_time - current_time
+
+                if sleep_time > 0:
+                    time.sleep(sleep_time)
+                elif sleep_time < -0.1:  # If we're more than 100ms behind
+                    print(f"Warning: Playback falling behind by {-sleep_time:.3f}s")
+
+            print("\nReplay completed!")
+
+            return True
+
+        except Exception as e:
+            print(f"ERROR: Replay failed: {e}")
+            return False
+
+    def replay_interactive(self) -> bool:
+        """Interactive replay with user controls."""
+        try:
+            if not self.validation_data:
+                print("ERROR: No trajectory data loaded")
+                return False
+
+            if not self.visualizer:
+                if not self.setup_visualizer():
+                    return False
+
+            timestamps = np.array(self.validation_data["timestamps"])
+            positions = np.array(self.validation_data["joint_positions"])
+
+            print(f"\n--- Interactive Replay ---")
+            print(f"Data points: {len(timestamps)}")
+            print(f"Duration: {timestamps[-1]:.2f}s")
+            print(f"Visualizer URL: {self.visualizer.url()}")
+            print("\nControls:")
+            print("  Enter: Next frame")
+            print("  'p': Play/Pause automatic playback")
+            print("  's <speed>': Set playback speed (e.g., 's 0.5')")
+            print("  'j <index>': Jump to frame index")
+            print("  'q': Quit")
+
+            frame_index = 0
+            playing = False
+            speed = 1.0
+            last_time = time.time()
+
+            while True:
+                # Display current frame
+                q = positions[frame_index]
+                if len(q) < self.pin_model.nq:
+                    q_full = np.concatenate([q, np.zeros(self.pin_model.nq - len(q))])
+                else:
+                    q_full = q
+
+                self.visualizer.display(q_full)
+
+                # Show current status
+                current_time = timestamps[frame_index]
+                print(
+                    f"\rFrame {frame_index}/{len(positions) - 1} | Time: {current_time:.3f}s | "
+                    f"{'Playing' if playing else 'Paused'} | Speed: {speed}x",
+                    end="",
+                    flush=True,
+                )
+
+                if playing:
+                    # Auto advance
+                    current_real_time = time.time()
+                    dt = (current_real_time - last_time) * speed
+
+                    # Find next frame based on time
+                    target_time = current_time + dt
+                    next_frame = frame_index
+                    for i in range(frame_index + 1, len(timestamps)):
+                        if timestamps[i] >= target_time:
+                            next_frame = i
+                            break
+                    else:
+                        next_frame = len(positions) - 1
+                        playing = False  # End of trajectory
+
+                    frame_index = next_frame
+                    last_time = current_real_time
+
+                    time.sleep(0.01)  # Small delay for smooth playback
+                else:
+                    # Wait for user input
+                    try:
+                        user_input = input("\n> ").strip().lower()
+
+                        if user_input == "":
+                            frame_index = min(frame_index + 1, len(positions) - 1)
+                        elif user_input == "p":
+                            playing = not playing
+                            last_time = time.time()
+                        elif user_input.startswith("s "):
+                            try:
+                                speed = float(user_input.split()[1])
+                                print(f"Speed set to {speed}x")
+                            except (IndexError, ValueError):
+                                print("Invalid speed format. Use 's <number>'")
+                        elif user_input.startswith("j "):
+                            try:
+                                new_index = int(user_input.split()[1])
+                                if 0 <= new_index < len(positions):
+                                    frame_index = new_index
+                                else:
+                                    print(f"Index out of range [0, {len(positions) - 1}]")
+                            except (IndexError, ValueError):
+                                print("Invalid index format. Use 'j <number>'")
+                        elif user_input == "q":
+                            break
+                        else:
+                            print("Unknown command")
+
+                    except KeyboardInterrupt:
+                        break
+
+            print("\nInteractive replay ended")
+            return True
+
+        except Exception as e:
+            print(f"ERROR: Interactive replay failed: {e}")
+            return False
+
 
 def get_available_trajectories() -> List[str]:
     """Get list of available recorded trajectories."""
@@ -931,6 +1171,9 @@ def main():
     parser.add_argument("--traj", type=str, help="Trajectory name to validate (e.g., traj1, validation_30s)")
     parser.add_argument("--list-trajectories", action="store_true", help="List available recorded trajectories")
     parser.add_argument("--config", type=str, help="Configuration file path")
+    parser.add_argument("--replay", action="store_true", help="Replay trajectory in 3D visualizer")
+    parser.add_argument("--replay-speed", type=float, default=1.0, help="Replay speed multiplier")
+    parser.add_argument("--interactive", action="store_true", help="Interactive replay with user controls")
 
     args = parser.parse_args()
 
@@ -967,7 +1210,7 @@ def main():
         return 0
 
     if not args.traj:
-        args.traj = "traj1"
+        args.traj = "high_freq"
 
     if not args.traj:
         print("ERROR: No trajectory specified. Use --traj to select one.")
@@ -1013,13 +1256,22 @@ def main():
         print("FATAL ERROR: Could not load trajectory data")
         return 1
 
-    # Process data
-    if not validator.filter_and_process_data():
-        print("FATAL ERROR: Failed to process data")
-        return 1
+    # Handle replay mode
+    if args.replay or args.interactive:
+        if args.interactive:
+            success = validator.replay_interactive()
+        else:
+            success = validator.replay_trajectory(args.replay_speed)
+
+        if not success:
+            print("Replay failed")
+            return 1
+
+        print("Replay completed successfully")
+        return 0
 
     # Validate model
-    results = validator.validate_dynamics_model()
+    results = validator.validate_model()
     if "error" in results:
         print(f"FATAL ERROR: {results['error']}")
         return 1
@@ -1067,7 +1319,8 @@ if __name__ == "__main__":
 
     except KeyboardInterrupt:
         print("\nValidation interrupted by user.")
+        sys.exit(1)
 
-    # except Exception as e:
-    #     print(f"FATAL ERROR: {e}")
-    #     sys.exit(1)
+    except Exception as e:
+        print(f"FATAL ERROR: {e}")
+        sys.exit(1)
