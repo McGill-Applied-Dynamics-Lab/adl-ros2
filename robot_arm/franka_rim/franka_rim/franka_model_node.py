@@ -51,6 +51,7 @@ class FrankaModelNode(Node):
         self.M = None  # Mass matrix (n x n)
         self.c = None  # Coriolis and nonlinear terms (n,)
         self.tau = None  # Joint torques (n,)
+        self.fa = None  # Applied forces (n,)
         self.Ai = None  # Interaction Jacobian (1 x n)
         self.Ai_dot = None  # Derivative of interaction Jacobian (1 x n)
         self.Ai_dot_q_dot = None  # Ai_dot @ dq (1,)
@@ -142,7 +143,11 @@ class FrankaModelNode(Node):
         # Return computed matrices
         self.Ai_dot_q_dot = self.Ai_dot @ dq
 
-        return self.M, self.c, self.tau, self.Ai, self.Ai_dot, self.Ai_dot_q_dot
+        # Applied forces
+        # TODO: Compute applied forces
+        self.fa = np.zeros_like(q)
+
+        return self.M, self.c, self.tau, self.Ai, self.Ai_dot, self.Ai_dot_q_dot, self.fa
 
     def _compute_and_publish_model(self):
         if not self._model_loaded or self._last_q is None or self._last_dq is None:
@@ -150,9 +155,9 @@ class FrankaModelNode(Node):
 
         q = self._last_q
         dq = self._last_dq
-        M, c, tau, Ai, Ai_dot, Ai_dot_q_dot = self._compute_model_matrices(q, dq)
+        M, c, tau, Ai, Ai_dot, Ai_dot_q_dot, fa = self._compute_model_matrices(q, dq)
 
-        msg = self._build_model_message(M, c, tau, Ai, Ai_dot_q_dot)
+        msg = self._build_model_message(M, c, tau, Ai, Ai_dot_q_dot, fa)
         self._model_pub.publish(msg)
         self.get_logger().info("Published FrankaModel message to fr3_model topic")
 
@@ -171,6 +176,9 @@ class FrankaModelNode(Node):
         """
         # Prepare FrankaModel message
         msg = FrankaModel()
+
+        msg.header.stamp = self.get_clock().now().to_msg()
+
         n = self._robot_model.nv
         msg.n = n
         msg.mass_matrix = M.flatten().tolist()
@@ -178,6 +186,7 @@ class FrankaModelNode(Node):
         msg.tau = tau.tolist()
         msg.ai = Ai.flatten().tolist()
         msg.ai_dot_q_dot = Ai_dot_q_dot.flatten().tolist()
+        msg.applied_forces = self.fa.tolist()
 
         return msg
 

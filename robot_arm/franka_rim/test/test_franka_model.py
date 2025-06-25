@@ -163,7 +163,7 @@ def test_compute_model_matrices(franka_model_node, q, dq):
     node: FrankaModelNode = franka_model_node
     assert node._model_loaded
 
-    M, c, tau, Ai, Ai_dot, Ai_dot_q_dot = node._compute_model_matrices(q, dq)
+    M, c, tau, Ai, Ai_dot, Ai_dot_q_dot, fa = node._compute_model_matrices(q, dq)
 
     n = node._robot_model.nv
 
@@ -174,6 +174,7 @@ def test_compute_model_matrices(franka_model_node, q, dq):
     assert M.shape == (n, n)
     assert c.shape == (n,)
     assert tau.shape == (n,)
+    assert fa.shape == (n,)
     assert Ai.shape == (1, n)
     assert Ai_dot.shape == (1, n)
     assert Ai_dot_q_dot.shape == (1,)
