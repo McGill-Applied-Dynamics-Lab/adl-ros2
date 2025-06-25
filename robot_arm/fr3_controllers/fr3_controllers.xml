@@ -43,5 +43,14 @@
         To move to the start position.
     </description>
   </class>
+
+  <!-- My Controller -->
+  <class name="fr3_controllers/MyController"
+          type="fr3_controllers::RobotController"
+          base_class_type="controller_interface::ControllerInterface">
+    <description>
+        My custom controller.
+    </description>
+  </class>
 </library>
 

@@ -7,6 +7,8 @@ from arm_interfaces.msg import FrankaModel
 from franka_rim.franka_model_node import FrankaModelNode
 from franka_rim.franka_rim_node import FrankaRIMNode
 
+N_DOF = 7
+
 
 @pytest.fixture(scope="module")
 def rclpy_init_shutdown():
@@ -38,7 +40,7 @@ def test_node(rclpy_init_shutdown):
 
 def test_matrix_reconstruction_between_nodes(model_node: FrankaModelNode, rim_node: FrankaRIMNode, test_node):
     # Set known values in FrankaModelNode
-    n = 9
+    n = N_DOF
     M = np.arange(n * n).reshape((n, n)).astype(float)
     c = np.arange(n).astype(float) + 0.1
     tau = np.arange(n).astype(float) + 10
@@ -46,18 +48,9 @@ def test_matrix_reconstruction_between_nodes(model_node: FrankaModelNode, rim_no
     Ai_dot = (np.arange(n).astype(float) + 30).reshape(1, n)
     dq = np.arange(n).astype(float) + 40
     Ai_dot_q_dot = Ai_dot @ dq
+    f_ext_estimated = np.zeros(6)
 
-    # Create and publish FrankaModel message
-    # # TODO: Create a function in FrankaModelNode to generate this message and create the message w/ that function
-    # msg = FrankaModel()
-    # msg.mass_matrix = M.flatten().tolist()
-    # msg.coriolis = c.tolist()
-    # msg.tau = tau.tolist()
-    # msg.ai = Ai.tolist()
-    # msg.ai_dot_q_dot = Ai_dot.tolist()
-    # msg.n = n
-
-    msg = model_node._build_model_message(M, c, tau, Ai, Ai_dot_q_dot)
+    msg = model_node._build_model_message(M, c, tau, Ai, Ai_dot_q_dot, f_ext_estimated)
 
     pub = test_node.create_publisher(FrankaModel, "/fr3_model", 10)
     pub.publish(msg)

@@ -24,6 +24,9 @@ controller_manager:
     move_to_start_controller:
       type: fr3_controllers/MoveToStartController
 
+    my_controller:
+      type: fr3_controllers/MyController
+
     # Example Controllers
     gravity_compensation_example_controller:
       type: franka_example_controllers/GravityCompensationExampleController
@@ -89,8 +92,15 @@ joint_velocity_controller:
       - fr3_joint6
       - fr3_joint7
 
+
 joint_trajectory_controller:
   ros__parameters:
+    command_interfaces:
+      - effort
+    state_interfaces:
+      - position
+      - velocity
+
     joints:
       - fr3_joint1
       - fr3_joint2
@@ -99,14 +109,7 @@ joint_trajectory_controller:
       - fr3_joint5
       - fr3_joint6
       - fr3_joint7
-
-    command_interfaces:
-      - position
-
-    state_interfaces:
-      - position
-      - velocity
-
+      
     gains:
       fr3_joint1: { p: 600., d: 30., i: 0., i_clamp: 1. }
       fr3_joint2: { p: 600., d: 30., i: 0., i_clamp: 1. }
@@ -115,6 +118,7 @@ joint_trajectory_controller:
       fr3_joint5: { p: 250., d: 10., i: 0., i_clamp: 1. }
       fr3_joint6: { p: 150., d: 10., i: 0., i_clamp: 1. }
       fr3_joint7: { p: 50., d: 5., i: 0., i_clamp: 1. }
+
 
 cartesian_pose_controller:
   ros__parameters:
@@ -170,6 +174,25 @@ move_to_start_controller:
       - 10.0
       - 10.0
       - 5.
+
+my_controller:
+  ros__parameters:
+    joints:
+      - fr3_joint1
+      - fr3_joint2
+      - fr3_joint3
+      - fr3_joint4
+      - fr3_joint5
+      - fr3_joint6
+      - fr3_joint7
+
+    command_interfaces:
+      - position
+      # - velocity
+
+    state_interfaces:
+      - position
+      - velocity
 
 # FRANKA CONTROLLERS
 joint_impedance_with_ik_example_controller:
