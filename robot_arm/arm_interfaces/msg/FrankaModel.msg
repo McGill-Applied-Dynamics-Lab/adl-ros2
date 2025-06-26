@@ -3,6 +3,12 @@
 
 std_msgs/Header header
 
+# System coordinates (joint positions)
+float64[] q
+
+# System velocity (joint velocities)
+float64[] q_dot
+
 # Mass matrix (flattened row-major)
 float64[] mass_matrix
 

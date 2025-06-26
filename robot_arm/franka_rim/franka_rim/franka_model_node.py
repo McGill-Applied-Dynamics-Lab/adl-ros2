@@ -63,7 +63,7 @@ class FrankaModelNode(Node):
         self.fa = None  # Applied forces (n,)
         self.Ai = None  # Interaction Jacobian (1 x n)
         self.Ai_dot = None  # Derivative of interaction Jacobian (1 x n)
-        self.Ai_dot_q_dot = None  # Ai_dot @ dq (1,)
+        self.Ai_dot_q_dot = None  # Ai_dot @ q_dot (1,)
 
         self.J_ee = None  # End-effector Jacobian in base frame (6 x n)
         self.J_dot_ee = None  # Derivative of end-effector Jacobian in base frame (6 x n)
@@ -162,13 +162,13 @@ class FrankaModelNode(Node):
         self.v_ee = np.array([msg.o_dp_ee_d.twist.linear.x, msg.o_dp_ee_d.twist.linear.y, msg.o_dp_ee_d.twist.linear.z])
         # print(f"Vee: {self.v_ee[0]:>10.3f} | {self.v_ee[1]:>10.3f} | {self.v_ee[2]:>10.3f}")
 
-    def _compute_external_forces(self, q, dq, ddq=None):
+    def _compute_external_forces(self, q, q_dot, q_ddot=None):
         """Compute estimated external forces at end-effector.
 
         Args:
             q: Joint positions (n,)
-            dq: Joint velocities (n,)
-            ddq: Joint accelerations (n,)
+            q_dot: Joint velocities (n,)
+            q_ddot: Joint accelerations (n,)
 
         Returns:
             f_ext_estimated: Estimated external wrench in base frame (6,)
@@ -193,13 +193,13 @@ class FrankaModelNode(Node):
                 tau_grav = pin.computeGeneralizedGravity(self._robot_model, self._robot_data, q)
                 J_ee_T_pinv = np.linalg.pinv(J_ee.T)
 
-                # dq = np.array([1,  0.5,  2,  0.001, -0.   , -0.001,  0.002])
-                # c = pin.nle(self._robot_model, self._robot_data, q, dq)
+                # q_dot = np.array([1,  0.5,  2,  0.001, -0.   , -0.001,  0.002])
+                # c = pin.nle(self._robot_model, self._robot_data, q, q_dot)
                 # print(c)
-                if ddq is None:
-                    self.get_logger().error("Joint accelerations (ddq) not provided for force estimation")
+                if q_ddot is None:
+                    self.get_logger().error("Joint accelerations (q_ddot) not provided for force estimation")
 
-                tau_inertial = self.M @ ddq
+                tau_inertial = self.M @ q_ddot
                 tau_nle = self.c - tau_grav
 
                 tau_ext = self.tau - tau_grav - tau_inertial - tau_nle
@@ -226,12 +226,12 @@ class FrankaModelNode(Node):
 
         return f_ext
 
-    def _compute_applied_forces(self, q, dq):
+    def _compute_applied_forces(self, q, q_dot):
         """Compute applied forces at end-effector.
 
         Args:
             q: Joint positions (n,)
-            dq: Joint velocities (n,)
+            q_dot: Joint velocities (n,)
         """
         if np.abs(self.v_ee[0]) > self._vel_thres:
             # Only friction in x for now
@@ -263,29 +263,31 @@ class FrankaModelNode(Node):
         est_msg.wrench.torque.z = float(f_ext_estimated[5])
         self._f_ext_est_pub.publish(est_msg)
 
-    def _update_model(self, q, dq, ddq=None):
+    def _update_model(self, q, q_dot, q_ddot=None):
         """Compute the model matrices M, c, tau, Ai, Ai_dot, and Ai_dot_q_dot.
         Args:
             q: Joint positions (n,)
-            dq: Joint velocities (n,)
-            ddq: Joint accelerations (n,)
+            q_dot: Joint velocities (n,)
+            q_ddot: Joint accelerations (n,)
         Returns:
             M: Mass matrix (n x n)
             c: Coriolis and nonlinear terms (n,)
             tau: Joint torques (n,)
             Ai: Interaction Jacobian (1 x n)
             Ai_dot: Derivative of interaction Jacobian (1 x n)
-            Ai_dot_q_dot: Ai_dot @ dq (1,)
+            Ai_dot_q_dot: Ai_dot @ q_dot (1,)
             fa: Applied forces (n,)
         """
         # Update Pinocchio data with current joint state
-        pin.forwardKinematics(self._robot_model, self._robot_data, q, dq)
+        pin.forwardKinematics(self._robot_model, self._robot_data, q, q_dot)
         pin.updateFramePlacements(self._robot_model, self._robot_data)
 
         # Jacobian
         ee_frame = self._robot_model.getFrameId("fr3_hand_tcp")
         self.J_ee = pin.computeFrameJacobian(self._robot_model, self._robot_data, q, ee_frame, pin.WORLD)
-        self.J_dot_ee = pin.frameJacobianTimeVariation(self._robot_model, self._robot_data, q, dq, ee_frame, pin.WORLD)
+        self.J_dot_ee = pin.frameJacobianTimeVariation(
+            self._robot_model, self._robot_data, q, q_dot, ee_frame, pin.WORLD
+        )
 
         Ai = self.Di @ self.J_ee  # Interaction Jacobian (1 x n)
         Ai_dot = self.Di @ self.J_dot_ee
@@ -293,7 +295,7 @@ class FrankaModelNode(Node):
         # Mass matrix
         self.M = pin.crba(self._robot_model, self._robot_data, q)
         # Coriolis and nonlinear terms
-        self.c = pin.nle(self._robot_model, self._robot_data, q, dq)
+        self.c = pin.nle(self._robot_model, self._robot_data, q, q_dot)
 
         # Joint torques (placeholder, to be computed from control law or input)
         if self.tau is None:
@@ -307,12 +309,12 @@ class FrankaModelNode(Node):
         self.Ai_dot = Ai_dot
 
         # Return computed matrices
-        self.Ai_dot_q_dot = self.Ai_dot @ dq
+        self.Ai_dot_q_dot = self.Ai_dot @ q_dot
 
         # Forces
-        self._compute_external_forces(q, dq, ddq)
-        self._compute_applied_forces(q, dq)
-        # self.f_ext_estimated = self._compute_contact_forces(q, dq)
+        self._compute_external_forces(q, q_dot, q_ddot)
+        self._compute_applied_forces(q, q_dot)
+        # self.f_ext_estimated = self._compute_contact_forces(q, q_dot)
         self.fa = np.zeros_like(q)
 
     def _compute_and_publish_model(self):
@@ -320,16 +322,16 @@ class FrankaModelNode(Node):
             return
 
         q = self._last_q
-        dq = self._last_dq
-        ddq = self._last_ddq
+        q_dot = self._last_dq
+        q_ddot = self._last_ddq
 
-        self._update_model(q, dq, ddq)
+        self._update_model(q, q_dot, q_ddot)
 
-        msg = self._build_model_message(self.M, self.c, self.tau, self.Ai, self.Ai_dot_q_dot, self.fa)
+        msg = self._build_model_message(q, q_dot, self.M, self.c, self.tau, self.Ai, self.Ai_dot_q_dot, self.fa)
         self._model_pub.publish(msg)
         # self.get_logger().info("Published FrankaModel message to fr3_model topic")
 
-    def _build_model_message(self, M, c, tau, Ai, Ai_dot_q_dot, fa):
+    def _build_model_message(self, q, q_dot, M, c, tau, Ai, Ai_dot_q_dot, fa):
         """Build a FrankaModel message from the computed model matrices.
 
         Args:
@@ -337,7 +339,7 @@ class FrankaModelNode(Node):
             c: Coriolis vector (n,)
             tau: Torque vector (n,)
             Ai: Analytical Jacobian matrix (1 x n)
-            Ai_dot_q_dot: Ai_dot @ dq (1,)
+            Ai_dot_q_dot: Ai_dot @ q_dot (1,)
             fa: Applied forces (n,)
 
         Returns:
@@ -350,13 +352,16 @@ class FrankaModelNode(Node):
 
         n = self._robot_model.nv
         msg.n = n
+        msg.q = q.tolist()
+        msg.q_dot = q_dot.tolist()
+
         msg.mass_matrix = M.flatten().tolist()
         msg.coriolis = c.tolist()
         msg.tau = tau.tolist()
         msg.ai = Ai.flatten().tolist()
         msg.ai_dot_q_dot = Ai_dot_q_dot.flatten().tolist()
 
-        msg.fa = self.fa.tolist()
+        msg.fa = fa.tolist()
 
         # # Add force estimation data
         # msg.f_ext_estimated = f_ext_estimated.tolist()

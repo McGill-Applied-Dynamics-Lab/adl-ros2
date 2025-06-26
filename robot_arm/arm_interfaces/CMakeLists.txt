@@ -27,6 +27,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/Teleop.msg"
   "msg/Delayed.msg"
   "msg/FrankaModel.msg"
+  "msg/FrankaRIM.msg"
   "action/Empty.action"
   "action/GotoJoints.action"
   "action/GotoPose.action"
