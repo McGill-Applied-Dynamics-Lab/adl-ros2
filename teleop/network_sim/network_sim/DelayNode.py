@@ -25,16 +25,16 @@ class DelayedMessage:
         return self.scheduled_time < other.scheduled_time
 
 
-class Delay5G(Node):
+class DelayNode(Node):
     def __init__(self):
-        super().__init__("network_sim_5g")
-        self.get_logger().info("Delay5G node started")
+        super().__init__("network_sim_node")
+        self.get_logger().info("Network simulation node started")
 
         #! Declare parameters
-        self.declare_parameter("delay", 0.1)  # Delay in seconds. Default 100ms
-        self.delay = self.get_parameter("delay").get_parameter_value().double_value
+        self.declare_parameter("delay", 100)  # Delay in ms. Default 100ms
+        self.delay = self.get_parameter("delay").get_parameter_value().integer_value
 
-        self.declare_parameter("delay_type", "5g")  # default to 5g
+        self.declare_parameter("delay_type", "5g")  # '5g' or 'fixed'
         self.delay_type = self.get_parameter("delay_type").get_parameter_value().string_value
 
         self.declare_parameter("message_type", "arm_interfaces/msg/Delayed")  # default message type
@@ -87,7 +87,7 @@ class Delay5G(Node):
         self.timer = self.create_timer(0.0001, self.timer_callback)  # check every 1ms
 
         self.get_logger().info(
-            f"Network Delay Simulator started with message_type: {self.message_type_str}, delay_type: {self.delay_type}, delay: {self.delay}s from {self._input_topic} to {self._output_topic}"
+            f"Network Delay Simulator started with message_type: {self.message_type_str}, delay_type: {self.delay_type}, delay: {self.delay}ms from {self._input_topic} to {self._output_topic}"
         )
 
     def _load_message_type(self, message_type_str: str):
@@ -123,7 +123,7 @@ class Delay5G(Node):
             ]  # Randomly sample latency from the data
             latency_ns = int(latency_ms * 1e6)  # Convert to nanoseconds
         else:  # fixed delay
-            latency_ns = int(self.delay * 1e9)  # Convert seconds to nanoseconds
+            latency_ns = int(self.delay * 1e6)  # Convert milliseconds to nanoseconds
 
         scheduled_time = current_time + rclpy.time.Duration(nanoseconds=latency_ns)
 
@@ -151,7 +151,7 @@ class Delay5G(Node):
 
 def main(args=None):
     rclpy.init(args=args)
-    node = Delay5G()
+    node = DelayNode()
     try:
         rclpy.spin(node)
     except KeyboardInterrupt:

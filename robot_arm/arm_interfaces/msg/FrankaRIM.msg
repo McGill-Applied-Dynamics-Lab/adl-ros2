@@ -16,5 +16,8 @@ float64[] effective_mass
 # Effective force vector (flattened row-major)
 float64[] effective_force
 
-# Interface velocity (flattened row-major)
-float64[] interface_velocity
+# RIM position
+float64[] rim_position
+
+# RIM velocity (flattened row-major)
+float64[] rim_velocity

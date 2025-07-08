@@ -20,7 +20,7 @@ setup(
     tests_require=["pytest"],
     entry_points={
         "console_scripts": [
-            "network_sim_5g = network_sim.Delay5G:main",
+            "network_sim_node = network_sim.DelayNode:main",
         ],
     },
 )

@@ -59,6 +59,7 @@ setup(
         "console_scripts": [
             "franka_model_node = franka_rim.franka_model_node:main",
             "franka_rim_node = franka_rim.franka_rim_node:main",
+            "delay_rim_node = franka_rim.delay_rim_node:main",
         ],
     },
     package_data={"franka_rim": ["models/*.urdf"]},

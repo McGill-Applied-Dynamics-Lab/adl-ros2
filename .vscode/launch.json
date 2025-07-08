@@ -126,5 +126,17 @@
             // },
             // "cwd": "${workspaceFolder}"  // Set the working directory
         },
+        {
+            "name": "Launch: franka_rim.launch.py",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "/opt/ros/humble/bin/ros2",  // Path to the ros2 executable
+            "args": [
+              "launch",
+              "franka_rim",
+              "franka_rim.launch.py",
+            ],
+            "console": "integratedTerminal",
+        },
     ]
 }

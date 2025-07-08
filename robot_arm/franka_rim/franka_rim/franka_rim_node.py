@@ -22,6 +22,8 @@ class FrankaRIMNode(Node):
         # Model matrices
         self.q = None
         self.q_dot = None
+        self.x_ee = None
+        self.v_ee = None
         self.M = None
         self.c = None
         self.tau = None
@@ -59,10 +61,15 @@ class FrankaRIMNode(Node):
         self.Ai_dot_q_dot = np.array(msg.ai_dot_q_dot)
         self.fa = np.array(msg.fa)
 
+        self.x_ee = np.array(msg.x_ee)
+        self.v_ee = np.array(msg.v_ee)
+
         if self.Ai.shape[0] != self.m:
             self.get_logger().error(f"Received Ai with shape {self.Ai.shape}, expected (1, {self.m}).")
 
-        self.get_logger().info(f"Received FrankaModel: M.shape={self.M.shape}, c.shape={self.c.shape}")
+        # self.get_logger().info(f"Received FrankaModel: M.shape={self.M.shape}, c.shape={self.c.shape}")
+
+        # print(f"Xee: {self.x_ee[0]:>10.3f} | {self.x_ee[1]:>10.3f} | {self.x_ee[2]:>10.3f}")
 
     def _compute_rim(self):
         """
@@ -92,14 +99,15 @@ class FrankaRIMNode(Node):
             # Compute effective force: f_eff = M_eff * (Ai * inv(M) * (tau - c) + Ai_dot * q_dot)
             effective_force = M_eff @ [self.Ai @ M_inv @ (self.fa - self.c) + self.Ai_dot_q_dot]
 
-            # Interface velocity: v_interface = Ai * q_dot (assuming we have joint velocities)
-            # For now, set to zero if we don't have velocity information
-            interface_velocity = self.Ai @ self.q_dot
+            # RIM state
+            rim_position = self.x_ee
+            rim_velocity = self.v_ee
 
             # Fill message fields
             self._rim_msg.effective_mass = M_eff.flatten().tolist()
             self._rim_msg.effective_force = effective_force.flatten().tolist()
-            self._rim_msg.interface_velocity = interface_velocity.flatten().tolist()
+            self._rim_msg.rim_position = rim_position.flatten().tolist()
+            self._rim_msg.rim_velocity = rim_velocity.flatten().tolist()
 
         except Exception as e:
             self.get_logger().error(f"RIM computation failed: {e}")
@@ -121,3 +129,7 @@ def main(args=None):
     rclpy.spin(node)
     node.destroy_node()
     rclpy.shutdown()
+
+
+if __name__ == "__main__":
+    main()

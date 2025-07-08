@@ -158,9 +158,12 @@ class FrankaModelNode(Node):
             [wrench.force.x, wrench.force.y, wrench.force.z, wrench.torque.x, wrench.torque.y, wrench.torque.z]
         )
 
-        # EE Vel
+        # End-effector position and velocity
+
+        self.x_ee = np.array([msg.o_t_ee.pose.position.x, msg.o_t_ee.pose.position.y, msg.o_t_ee.pose.position.z])
         self.v_ee = np.array([msg.o_dp_ee_d.twist.linear.x, msg.o_dp_ee_d.twist.linear.y, msg.o_dp_ee_d.twist.linear.z])
         # print(f"Vee: {self.v_ee[0]:>10.3f} | {self.v_ee[1]:>10.3f} | {self.v_ee[2]:>10.3f}")
+        # print(f"Xee: {self.x_ee[0]:>10.3f} | {self.x_ee[1]:>10.3f} | {self.x_ee[2]:>10.3f}")
 
     def _compute_external_forces(self, q, q_dot, q_ddot=None):
         """Compute estimated external forces at end-effector.
@@ -237,6 +240,9 @@ class FrankaModelNode(Node):
             # Only friction in x for now
             f_friction = np.array([self.f_ext_robot[0], 0, 0])  # Friction force in x direction
 
+            # friction_val = 10 * np.sign(self.v_ee[0])  # Friction proportional to velocity
+            # f_friction = np.array([friction_val, 0, 0])  # Friction force in x direction
+
             # print("Slip")
             fa_slip = self.J_ee.T[:, :3] @ f_friction
 
@@ -246,6 +252,8 @@ class FrankaModelNode(Node):
             # print("Stick")
             fa_stick = np.zeros_like(q)  # Placeholder for stick forces
             self.fa = fa_stick
+
+        self.fa = np.zeros_like(q)
 
     def _publish_external_forces(self, f_ext_estimated):
         """Publish external force estimates to separate topics for visualization."""
@@ -282,34 +290,37 @@ class FrankaModelNode(Node):
         pin.forwardKinematics(self._robot_model, self._robot_data, q, q_dot)
         pin.updateFramePlacements(self._robot_model, self._robot_data)
 
-        # Jacobian
+        # --- Jacobians ---
         ee_frame = self._robot_model.getFrameId("fr3_hand_tcp")
         self.J_ee = pin.computeFrameJacobian(self._robot_model, self._robot_data, q, ee_frame, pin.WORLD)
         self.J_dot_ee = pin.frameJacobianTimeVariation(
             self._robot_model, self._robot_data, q, q_dot, ee_frame, pin.WORLD
         )
 
-        Ai = self.Di @ self.J_ee  # Interaction Jacobian (1 x n)
-        Ai_dot = self.Di @ self.J_dot_ee
+        # Interaction Jacobian (placeholder, to be computed for a specific frame or task)
+        self.Ai = self.Di @ self.J_ee  # Interaction Jacobian (1 x n)
 
+        # Derivative of interaction Jacobian
+        self.Ai_dot = self.Di @ self.J_dot_ee
+
+        # Return computed matrices
+        self.Ai_dot_q_dot = self.Ai_dot @ q_dot
+
+        v_ee_jaco = self.J_ee @ q_dot  # Interaction velocity in x direction
+        v_ee_x_int = self.Ai @ q_dot  # Interaction velocity in x direction
+
+        # print(f"Vx: {self.v_ee[0]:>10.3f} | {v_ee_jaco[0]:>10.3f} | {v_ee_x_int:>10.3f}")
+
+        # --- Dynamics ---
         # Mass matrix
         self.M = pin.crba(self._robot_model, self._robot_data, q)
         # Coriolis and nonlinear terms
         self.c = pin.nle(self._robot_model, self._robot_data, q, q_dot)
 
-        # Joint torques (placeholder, to be computed from control law or input)
+        # Joint torques
         if self.tau is None:
             self.tau = np.zeros_like(q)
             self.get_logger().warn("Joint torques (tau) not set, using zeros")
-
-        # Interaction Jacobian (placeholder, to be computed for a specific frame or task)
-        self.Ai = Ai
-
-        # Derivative of interaction Jacobian (placeholder)
-        self.Ai_dot = Ai_dot
-
-        # Return computed matrices
-        self.Ai_dot_q_dot = self.Ai_dot @ q_dot
 
         # Forces
         self._compute_external_forces(q, q_dot, q_ddot)
@@ -319,6 +330,8 @@ class FrankaModelNode(Node):
 
     def _compute_and_publish_model(self):
         if not self._model_loaded or self._last_q is None or self._last_dq is None:
+            self.get_logger().warn("Cannot update model: missing robot state.", throttle_duration_sec=2)
+
             return
 
         q = self._last_q
@@ -327,11 +340,13 @@ class FrankaModelNode(Node):
 
         self._update_model(q, q_dot, q_ddot)
 
-        msg = self._build_model_message(q, q_dot, self.M, self.c, self.tau, self.Ai, self.Ai_dot_q_dot, self.fa)
+        msg = self._build_model_message(
+            q, q_dot, self.x_ee, self.v_ee, self.M, self.c, self.tau, self.Ai, self.Ai_dot_q_dot, self.fa
+        )
         self._model_pub.publish(msg)
         # self.get_logger().info("Published FrankaModel message to fr3_model topic")
 
-    def _build_model_message(self, q, q_dot, M, c, tau, Ai, Ai_dot_q_dot, fa):
+    def _build_model_message(self, q, q_dot, x_ee, v_ee, M, c, tau, Ai, Ai_dot_q_dot, fa):
         """Build a FrankaModel message from the computed model matrices.
 
         Args:
@@ -354,6 +369,9 @@ class FrankaModelNode(Node):
         msg.n = n
         msg.q = q.tolist()
         msg.q_dot = q_dot.tolist()
+
+        msg.x_ee = x_ee.tolist()  # End-effector position
+        msg.v_ee = v_ee.tolist()  # End-effector velocity
 
         msg.mass_matrix = M.flatten().tolist()
         msg.coriolis = c.tolist()

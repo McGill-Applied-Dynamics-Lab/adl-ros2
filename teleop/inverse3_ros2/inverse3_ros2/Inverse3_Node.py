@@ -15,6 +15,7 @@ import serial.tools.list_ports
 # import math
 
 # TODO: Clean the node. Remove velocity stuff
+# TODO: Get data from websocket instead of serial port
 
 import numpy as np
 
@@ -158,6 +159,13 @@ class Inverse3Node(Node):
         super().__init__("inverse3_node")
         self.get_logger().info("Initializing inverse3_node...")
 
+        #! Declare parameters
+        self.declare_parameter("pos_radius", 0.04)  # radius of the pos-ctl region
+        self.declare_parameter("restitution_stiffness", 100.0)  # stiffness for restitution force
+        self.declare_parameter("force_cap", 1.0)  # maximum force cap
+        self.declare_parameter("scale", 1.0)  # scale between i3 position and published position
+        self.declare_parameter("max_velocity", 0.0005)  # maximum velocity in vel-ctl region
+
         #! Attributes
         self._i3: HaplyHardwareAPI.Inverse3 = None
         self._is_initialized = False
@@ -174,12 +182,23 @@ class Inverse3Node(Node):
         self._apply_contact_forces = APPLY_CONTACT_FORCES
 
         self._workspace_center = np.array([0.04, -0.17, 0.16])  # center of the ws
-        self._pos_radius = 0.04  # radius of the pos-ctl region. When to start "stretching" the spring
-        self._ks = 100  # stiffness for the restitution force
-        self._scale = 1  # scale between the i3 position and the published position
+        self._pos_radius = self.get_parameter("pos_radius").get_parameter_value().double_value
+        self._ks = self.get_parameter("restitution_stiffness").get_parameter_value().double_value
+
+        self._scale = self.get_parameter("scale").get_parameter_value().double_value
         self._velocity_ball_center = np.array([0, 0, 0])  # the center of velocity_ball
-        self._maxVa = 0.0005  # maximum velocity in the vel-ctl region
-        self._force_cap = 1
+        self._maxVa = self.get_parameter("max_velocity").get_parameter_value().double_value
+        self._force_cap = self.get_parameter("force_cap").get_parameter_value().double_value
+
+        # Log parameter values
+        self.get_logger().info(
+            f"Parameters\n"
+            f"- pos_radius: {self._pos_radius}, \n"
+            f"- restitution_stiffness: {self._ks}, \n"
+            f"- force_cap: {self._force_cap}, \n"
+            f"- scale: {self._scale}, \n"
+            f"- max_velocity: {self._maxVa}"
+        )
 
         #! Init functions
         self._init_i3()
@@ -235,7 +254,8 @@ class Inverse3Node(Node):
 
             # ? Log
             self._ws_position = self._scale * (self._raw_position - self._workspace_center)
-            self._log_infos()
+            # self._log_infos()
+            self.get_logger().info("Move device to the center of the pos-ctl region...", throttle_duration_sec=2.0)
 
         self._is_initialized = True
         self.get_logger().info("Inverse3 initialized!")

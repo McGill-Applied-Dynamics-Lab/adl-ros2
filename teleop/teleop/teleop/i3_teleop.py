@@ -5,7 +5,7 @@ from rclpy.node import Node  # node class makes a ROS2 Node
 
 from arm_interfaces.msg import Teleop
 from teleop_interfaces.msg import Inverse3State
-from geometry_msgs.msg import PoseStamped, Pose, TwistStamped, Twist, WrenchStamped, Vector3, Point
+from geometry_msgs.msg import PoseStamped, Pose, TwistStamped, Twist, WrenchStamped, Vector3, Point, Quaternion
 
 # Other
 import numpy as np
@@ -29,8 +29,8 @@ def np2ros(array: np.ndarray, msg_type: Literal["Vector3", "Point"] = "Vector3")
     Returns:
         Vector3: ROS message.
     """
-    if len(array) != 3:
-        raise ValueError("Array must have 3 elements.")
+    # if len(array) != 3:
+    #     raise ValueError("Array must have 3 elements.")
     if not isinstance(array, np.ndarray):
         raise ValueError("Input must be a numpy array.")
 
@@ -44,6 +44,12 @@ def np2ros(array: np.ndarray, msg_type: Literal["Vector3", "Point"] = "Vector3")
         msg.x = array[0]
         msg.y = array[1]
         msg.z = array[2]
+    elif msg_type == "Quaternion":
+        msg = Quaternion()
+        msg.x = array[0]
+        msg.y = array[1]
+        msg.z = array[2]
+        msg.w = array[3]
     else:
         raise ValueError("Invalid message type.")
 
@@ -93,7 +99,7 @@ class I3Teleop(Node):
 
         # Robot
         self._control_mode = ControlModes.POSITION
-        self._ee_pose = np.zeros(3)  # End effector position for the robot
+        self._ee_pos = np.zeros(3)  # End effector position for the robot
 
         self._ee_center = np.zeros(3)  # Center position for the ee
         self._ee_des = np.zeros(3)  # Desired end effector position
@@ -174,13 +180,15 @@ class I3Teleop(Node):
         msg : PoseStamped
             Message received from the '/robot' topic.
         """
-        # self._ee_pose = np.array([msg.pose.position.x, msg.pose.position.y, msg.pose.position.z])
-        self._ee_pose = ros2np(msg.pose.position)
+        self._ee_pos = ros2np(msg.pose.position)
+        self._ee_quat = np.array(
+            [msg.pose.orientation.x, msg.pose.orientation.y, msg.pose.orientation.z, msg.pose.orientation.w]
+        )
 
         # self.get_logger().info(f"Robot EE: {self._ee_des}")
 
         if not self._is_initialized:
-            self._ee_center = self._ee_pose
+            self._ee_center = self._ee_pos
             # self._n_robot_cal_msgs += 1
             self._is_initialized = True
             self.get_logger().info(f"Robot center: {self._ee_center}")
@@ -235,6 +243,8 @@ class I3Teleop(Node):
         Publish the desired end effector position to the '/teleop/ee_des_pose' topic.
         """
         if not self._is_initialized:
+            self.get_logger().warn("Robot not initialized, skipping publishing ee command.", throttle_duration_sec=2.0)
+
             return
 
         self._compute_ee_command()
@@ -283,7 +293,7 @@ class I3Teleop(Node):
             self._control_mode = ControlModes.POSITION
 
             # Update ee center
-            self._ee_center = self._ee_pose - self._i3_position * self._i3_position_scale
+            self._ee_center = self._ee_pos - self._i3_position * self._i3_position_scale
 
     def _compute_ee_command(self):
         """
@@ -297,10 +307,11 @@ class I3Teleop(Node):
         self._ee_cmd_msg.header.stamp = self.get_clock().now().to_msg()
 
         if self._control_mode == ControlModes.POSITION:
-            ee_des = self._compute_ee_des()
+            ee_pose_des, ee_quat_des = self._compute_ee_des()
 
             self._ee_cmd_msg.control_mode = ControlModes.POSITION.value
-            self._ee_cmd_msg.ee_des.position = np2ros(ee_des, msg_type="Point")
+            self._ee_cmd_msg.ee_des.position = np2ros(ee_pose_des, msg_type="Point")
+            self._ee_cmd_msg.ee_des.orientation = np2ros(ee_quat_des, msg_type="Quaternion")
 
             self._ee_cmd_msg.ee_vel_des = Twist()
 
@@ -325,9 +336,11 @@ class I3Teleop(Node):
         # js_axes = np.where(np.abs(js_axes) < self._js_deadzone_thres, 0, js_axes)
 
         # Compute the desired end effector position
-        ee_des = self._ee_center + self._i3_position * self._i3_position_scale
+        ee_pos_des = self._ee_center + self._i3_position * self._i3_position_scale
 
-        return ee_des
+        ee_quat_des = self._ee_quat.copy()
+
+        return ee_pos_des, ee_quat_des
 
     def _compute_ee_vel(self) -> np.ndarray:
         """Compute the desired end effector velocity based on the inverse 3 position."""

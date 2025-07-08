@@ -42,6 +42,10 @@ def make_franka_model_msg(n=7):
     msg.ai = [0.3] * n
     msg.ai_dot_q_dot = [0.4]
     msg.fa = [0.5] * n  # Applied forces
+
+    msg.x_ee = [0.6, 0.7, 0.8]  # End-effector position
+    msg.v_ee = [0.9, 1.0, 1.1]  # End-effector velocity
+
     return msg
 
 
@@ -105,7 +109,8 @@ def test_rim_node_computes_rim(rim_node, test_node):
 
     M_eff = np.array(rim_msg.effective_mass).reshape((m, m))
     f_eff = np.array(rim_msg.effective_force)
-    phi_dot = np.array(rim_msg.interface_velocity)
+    rim_velocity = np.array(rim_msg.rim_velocity)
+    rim_position = np.array(rim_msg.rim_position)
 
     interface_stiffness = rim_msg.interface_stiffness
     interface_damping = rim_msg.interface_damping
@@ -119,5 +124,5 @@ def test_rim_node_computes_rim(rim_node, test_node):
     # Effective force vector (3x1)
     assert f_eff.shape == (m,)
 
-    # Interface velocity (3x1)
-    assert phi_dot.shape == (m,)
+    # RIM velocity (3x1)
+    assert rim_velocity.shape == (3,)
