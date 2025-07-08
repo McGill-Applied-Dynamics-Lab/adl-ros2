@@ -32,7 +32,9 @@ class DelayRIMNode(Node):
         self.get_logger().info("Initializing DelayRIMNode")
 
         # Parameters
-        self.declare_parameter("input_topic", "/fr3_rim")
+        self.declare_parameter("rim_topic", "/fr3_rim")
+        self.declare_parameter("cmd_topic", "/teleop/ee_des")
+
         self.declare_parameter("control_period", 0.01)  # 1kHz control rate
         self.declare_parameter("delay_compensation_method", "DelayRIM")
         self.declare_parameter("interface_stiffness", 3000.0)
@@ -46,7 +48,8 @@ class DelayRIMNode(Node):
         self._interface_damping = self.get_parameter("interface_damping").get_parameter_value().double_value
         self._force_scaling = self.get_parameter("force_scaling").get_parameter_value().double_value
 
-        input_topic = self.get_parameter("input_topic").get_parameter_value().string_value
+        rim_topic = self.get_parameter("rim_topic").get_parameter_value().string_value
+        cmd_topic = self.get_parameter("cmd_topic").get_parameter_value().string_value
 
         # Validate and set delay compensation method
         try:
@@ -66,12 +69,12 @@ class DelayRIMNode(Node):
         self._reduced_model.hl = self.control_period  # hl is the control period
 
         # Subscribers
-        self._rim_sub = self.create_subscription(FrankaRIM, input_topic, self._rim_callback, 10)
+        self._rim_sub = self.create_subscription(FrankaRIM, rim_topic, self._rim_callback, 10)
         self._inverse3_sub = self.create_subscription(Inverse3State, "/inverse3/state", self._inverse3_callback, 10)
 
         # Publishers
         self._force_pub = self.create_publisher(WrenchStamped, "/inverse3/wrench_des", 10)
-        self._teleop_pub = self.create_publisher(Teleop, "/teleop/ee_cmd", 10)
+        self._teleop_pub = self.create_publisher(Teleop, cmd_topic, 10)
 
         # Control timer
         self._control_timer = self.create_timer(self.control_period, self._control_timer_callback)
@@ -80,7 +83,8 @@ class DelayRIMNode(Node):
             f"DelayRIMNode started with method={self._delay_method.value}, "
             f"control_period={self.control_period}s, K={self._interface_stiffness}, "
             f"D={self._interface_damping}, "
-            f"Listening on topic: {input_topic}"
+            f"RIM topic: {rim_topic} ,"
+            f"Command topic: {cmd_topic}"
         )
 
     def _rim_callback(self, msg: FrankaRIM):
@@ -153,9 +157,10 @@ class DelayRIMNode(Node):
                 - self._reduced_model.damping * self._reduced_model.phi_velocity
             )
 
-        self.get_logger().info(
-            f"Xee: {self._reduced_model.rim_position[0, 0]:>10.3f} | Xi3: {self._haptic_position[0, 0]:>10.3f} | phi: {self._reduced_model.phi_position[0]:>10.3f} | F: {self._reduced_model.interface_force[0]:>10.3f}|"
-        )
+        # ? Print debug information
+        # self.get_logger().info(
+        #     f"Xee: {self._reduced_model.rim_position[0, 0]:>10.3f} | Xi3: {self._haptic_position[0, 0]:>10.3f} | phi: {self._reduced_model.phi_position[0]:>10.3f} | F: {self._reduced_model.interface_force[0]:>10.3f}|"
+        # )
 
         # Apply force scaling (negative for haptic feedback direction)
         rendered_force = -self._force_scaling * self._reduced_model.interface_force

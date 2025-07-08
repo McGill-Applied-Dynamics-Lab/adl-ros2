@@ -11,6 +11,8 @@ import importlib
 
 from arm_interfaces.msg import Delayed
 
+from rcl_interfaces.msg import ParameterDescriptor
+
 
 class DelayedMessage:
     def __init__(self, msg, current_time: rclpy.time.Time, scheduled_time: rclpy.time.Time, latency_ns: float):
@@ -31,25 +33,37 @@ class DelayNode(Node):
         self.get_logger().info("Network simulation node started")
 
         #! Declare parameters
-        self.declare_parameter("delay", 100)  # Delay in ms. Default 100ms
-        self.delay = self.get_parameter("delay").get_parameter_value().integer_value
+        # Declare as string parameter but handle both string and potential integer inputs
+        delay_param_desc = ParameterDescriptor(
+            description="Delay parameter: '5g' for 5G model or integer for fixed delay in ms", dynamic_typing=True
+        )
+        self.declare_parameter(
+            "delay", 100, delay_param_desc
+        )  # Delay: either '5g' for 5G model or integer for fixed delay in ms
 
-        self.declare_parameter("delay_type", "5g")  # '5g' or 'fixed'
-        self.delay_type = self.get_parameter("delay_type").get_parameter_value().string_value
+        # Get the parameter value and handle type conversion
+        delay_param_value = self.get_parameter("delay").get_parameter_value()
+
+        # Check if string is '5g'
+        if delay_param_value.string_value.lower() == "5g":
+            self.delay_type = "5g"
+            self.delay = None  # Will be sampled from dataset
+            self.network_delay = 0.5  # Delay in ms, of the network itself, not the latency
+            self.get_logger().info("Using 5G delay model")
+
+        else:
+            try:
+                self.delay = int(delay_param_value.string_value)
+                self.delay_type = "fixed"
+                self.get_logger().info(f"Using fixed delay: {self.delay}ms")
+
+            except ValueError:
+                self.delay = int(delay_param_value.integer_value)
+                self.delay_type = "fixed"
+                self.get_logger().info(f"Using fixed delay: {self.delay}ms")
 
         self.declare_parameter("message_type", "arm_interfaces/msg/Delayed")  # default message type
         self.message_type_str = self.get_parameter("message_type").get_parameter_value().string_value
-
-        # Validate delay_type parameter
-        if self.delay_type not in ["5g", "fixed"]:
-            self.get_logger().error(
-                f"Invalid delay_type: {self.delay_type}. Must be '5g' or 'fixed'. Using '5g' as default."
-            )
-            self.delay_type = "5g"
-
-        if self.delay_type == "5g":
-            self.delay = None  # Set delay to None for 5G, as it will be sampled from the dataset
-            self.network_delay = 0.5  # Delay in ms, of the network itself, not the latency
 
         self.declare_parameter("input_topic", "input_topic")
         self._input_topic = self.get_parameter("input_topic").get_parameter_value().string_value
@@ -87,7 +101,7 @@ class DelayNode(Node):
         self.timer = self.create_timer(0.0001, self.timer_callback)  # check every 1ms
 
         self.get_logger().info(
-            f"Network Delay Simulator started with message_type: {self.message_type_str}, delay_type: {self.delay_type}, delay: {self.delay}ms from {self._input_topic} to {self._output_topic}"
+            f"Delay Simulator started. message_type: {self.message_type_str}, delay_type: {self.delay_type}, delay: {self.delay}ms from {self._input_topic} to {self._output_topic}"
         )
 
     def _load_message_type(self, message_type_str: str):

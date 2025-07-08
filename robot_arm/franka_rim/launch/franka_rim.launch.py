@@ -16,13 +16,7 @@ def generate_launch_description():
     )
 
     # Delay parameters
-    delay_type_arg = DeclareLaunchArgument(
-        "delay_type", default_value="fixed", description="Type of delay simulation: 5g or fixed"
-    )
-
-    fixed_delay_arg = DeclareLaunchArgument(
-        "fixed_delay", default_value="100", description="Fixed delay value in ms (used when delay_type=fixed)"
-    )
+    delay_arg = DeclareLaunchArgument("delay", default_value="100", description="5g or fixed delay value in ms")
 
     #! Nodes
     # Inverse3Node
@@ -68,9 +62,23 @@ def generate_launch_description():
             {
                 "input_topic": "/fr3_rim",
                 "output_topic": "/fr3_rim_delayed",
-                "delay_type": LaunchConfiguration("delay_type"),
-                "delay": LaunchConfiguration("fixed_delay"),
+                "delay": LaunchConfiguration("delay"),
                 "message_type": "arm_interfaces/msg/FrankaRIM",
+            }
+        ],
+        output="screen",
+    )
+
+    ee_cmd_delay_node = Node(
+        package="network_sim",
+        executable="network_sim_node",
+        name="ee_cmd_delay",
+        parameters=[
+            {
+                "input_topic": "/teleop/ee_cmd_no_delay",
+                "output_topic": "/teleop/ee_cmd",
+                "delay": LaunchConfiguration("delay"),
+                "message_type": "arm_interfaces/msg/Teleop",
             }
         ],
         output="screen",
@@ -83,8 +91,9 @@ def generate_launch_description():
         name="delay_rim_node",
         parameters=[
             {
-                "input_topic": "/fr3_rim_delayed",
-                # "control_period": 0.001,  # 1kHz control rate
+                "rim_topic": "/fr3_rim_delayed",
+                "cmd_topic": "/teleop/ee_cmd_no_delay",
+                "control_period": 0.001,  # 1kHz control rate
                 # "delay_compensation_method": "DelayRIM",
                 "interface_stiffness": 3000.0,
                 "interface_damping": 2.0,
@@ -99,13 +108,13 @@ def generate_launch_description():
             # Args
             model_update_freq_arg,
             robot_urdf_filename_arg,
-            delay_type_arg,
-            fixed_delay_arg,
+            delay_arg,
             # Nodes
             inverse3_node,
             rim_msg_delay_node,
-            # franka_model_node,
-            # franka_rim_node,
-            # delay_rim_node,
+            ee_cmd_delay_node,
+            franka_model_node,
+            franka_rim_node,
+            delay_rim_node,
         ]
     )
