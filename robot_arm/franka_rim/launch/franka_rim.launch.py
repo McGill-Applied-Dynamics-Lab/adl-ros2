@@ -116,6 +116,6 @@ def generate_launch_description():
             ee_cmd_delay_node,
             franka_model_node,
             franka_rim_node,
-            # delay_rim_node,
+            delay_rim_node,  # Re-enable the DelayRIM node
         ]
     )

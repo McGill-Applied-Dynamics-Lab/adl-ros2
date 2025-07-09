@@ -113,7 +113,7 @@ class Inverse3Node(Node):
 
         #! Declare parameters
         self.declare_parameter("pos_radius", 0.04)  # radius of the pos-ctl region
-        self.declare_parameter("restitution_stiffness", 100.0)  # stiffness for restitution force
+        self.declare_parameter("restitution_stiffness", 1.0)  # stiffness for restitution force
         self.declare_parameter("force_cap", 1.0)  # maximum force cap
         self.declare_parameter("scale", 1.0)  # scale between i3 position and published position
         self.declare_parameter("max_velocity", 0.0005)  # maximum velocity in vel-ctl region

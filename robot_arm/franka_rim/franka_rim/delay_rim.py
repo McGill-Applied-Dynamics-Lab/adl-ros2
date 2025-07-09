@@ -189,13 +189,20 @@ class DelayRIM:
                 node_logger.warn(f"No haptic states for catch-up, packet {packet.packet_id}")
                 return None
 
-            # Perform DelayRIM computation
-            if packet.method == DelayCompensationMethod.DELAY_RIM:
-                result = self._compute_delay_rim(packet, haptic_states, node_logger)
-            elif packet.method == DelayCompensationMethod.ZOH:
-                result = self._compute_zoh(packet, haptic_states)
-            else:  # ZOH_PHI
-                result = self._compute_zoh_phi(packet, haptic_states)
+            # --- Perform DelayRIM computation
+            # if packet.method == DelayCompensationMethod.DELAY_RIM:
+            #     rendered_forces = self._compute_force_delay_rim(packet, haptic_states, node_logger)
+
+            # elif packet.method == DelayCompensationMethod.ZOH:
+            #     rendered_forces = self._compute_force_zoh(packet, haptic_states)
+
+            # elif packet.method == DelayCompensationMethod.ZOH_PHI:
+            #     rendered_forces = self._compute_force_zoh_phi(packet, haptic_states)
+
+            # else:
+            #     raise ValueError(f"Unknown DelayCompensationMethod: {packet.method}")
+
+            rendered_forces = None
 
             # # Calculate total delay from robot state capture to force computation
             # force_computation_time = time.perf_counter()
@@ -209,7 +216,7 @@ class DelayRIM:
             #     f"computation={computation_time_ms:.1f}ms)"
             # )
 
-            return result
+            return rendered_forces
 
         except Exception as e:
             node_logger.error(f"Error processing DelayRIM packet {packet.packet_id}: {e}")
@@ -231,7 +238,9 @@ class DelayRIM:
 
         return relevant_states
 
-    def _compute_delay_rim(self, packet: DelayedRIMPacket, haptic_states: List[HapticState], node_logger) -> np.ndarray:
+    def _compute_force_delay_rim(
+        self, packet: DelayedRIMPacket, haptic_states: List[HapticState], node_logger
+    ) -> np.ndarray:
         """Compute DelayRIM force with catch-up integration (oneStep method)"""
         if not haptic_states:
             return np.zeros((3, 1))
@@ -315,7 +324,7 @@ class DelayRIM:
         )
         reduced_model.rim_position = reduced_model.rim_position + reduced_model.hl * reduced_model.rim_velocity
 
-    def _compute_zoh(self, packet: DelayedRIMPacket, haptic_states: List[HapticState]) -> np.ndarray:
+    def _compute_force_zoh(self, packet: DelayedRIMPacket, haptic_states: List[HapticState]) -> np.ndarray:
         """Compute Zero-Order Hold force"""
         if not haptic_states:
             return np.zeros((3, 1))
@@ -335,7 +344,7 @@ class DelayRIM:
 
         return interface_force
 
-    def _compute_zoh_phi(self, packet: DelayedRIMPacket, haptic_states: List[HapticState]) -> np.ndarray:
+    def _compute_force_zoh_phi(self, packet: DelayedRIMPacket, haptic_states: List[HapticState]) -> np.ndarray:
         """Compute ZOH with current haptic state (ZOHPhi)"""
         if not haptic_states:
             return np.zeros((3, 1))

@@ -1,0 +1,116 @@
+from launch import LaunchDescription
+from launch_ros.actions import Node
+from launch.actions import DeclareLaunchArgument
+from launch.substitutions import LaunchConfiguration
+
+import os
+from ament_index_python.packages import get_package_share_directory
+
+K_INT = 3000.0
+D_INT = 100.0
+
+K_SPRING = 1000.0
+D_SPRING = 50.0
+
+F_SCALE = 0.02
+
+
+def generate_launch_description():
+    #! Launch arguments
+    delay_arg = DeclareLaunchArgument("delay", default_value="100", description="5g or fixed delay value in ms")
+
+    rviz_config_file = os.path.join(
+        get_package_share_directory("franka_rim"),
+        "rviz",
+        "simple_system.rviz",
+    )
+
+    #! Nodes
+    # Inverse3 Node
+    inverse3_node = Node(
+        package="inverse3_ros2",
+        executable="inverse3_node",
+        name="inverse3_node",
+        output="screen",
+        parameters=[
+            {
+                "restitution_stiffness": 1.0,
+            }
+        ],
+    )
+
+    # Simple Mass System
+    simple_mass_system_node = Node(
+        package="franka_rim",
+        executable="simple_mass_system_node",
+        name="simple_mass_system_node",
+        output="screen",
+        parameters=[
+            {
+                "mass": 1.0,
+                "spring_constant": K_SPRING,
+                "damping_coefficient": D_SPRING,
+                "simulation_frequency": 1000.0,
+                "rim_publish_frequency": 100.0,
+                "interface_stiffness": K_INT,
+                "interface_damping": D_INT,
+            }
+        ],
+    )
+
+    # Network delay simulator for RIM messages
+    rim_delay_node = Node(
+        package="network_sim",
+        executable="network_sim_node",
+        name="rim_delay_sim",
+        parameters=[
+            {
+                "input_topic": "/rim_msg",
+                "output_topic": "/rim_msg_delayed",
+                "delay": LaunchConfiguration("delay"),
+                "message_type": "arm_interfaces/msg/FrankaRIM",
+            }
+        ],
+        output="screen",
+    )
+
+    # DelayRIM Node
+    delay_rim_node = Node(
+        package="franka_rim",
+        executable="delay_rim_node",
+        name="delay_rim_node",
+        parameters=[
+            {
+                "rim_topic": "/rim_msg_delayed",
+                "cmd_topic": "/simple_system/cmd",
+                "control_period": 0.001,  # 1kHz
+                "delay_compensation_method": "ZOH",  # Start with ZOH for debugging
+                "interface_stiffness": K_INT,
+                "interface_damping": D_INT,
+                "force_scaling": F_SCALE,  # No scaling for simple system
+            }
+        ],
+        output="screen",
+    )
+
+    # RViz
+    rviz_node = Node(
+        package="rviz2",
+        executable="rviz2",
+        name="rviz2",
+        arguments=["-d", rviz_config_file],
+        output="screen",
+    )
+
+    return LaunchDescription(
+        [
+            # Args
+            delay_arg,
+            # Nodes
+            # inverse3_node,
+            simple_mass_system_node,
+            rim_delay_node,
+            delay_rim_node,
+            rviz_node,
+        ]
+    )

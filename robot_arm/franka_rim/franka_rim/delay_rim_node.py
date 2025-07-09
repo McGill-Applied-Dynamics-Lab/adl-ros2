@@ -16,8 +16,8 @@ class DelayRIMNode(Node):
         self.get_logger().info("Initializing DelayRIMNode")
 
         # Parameters
-        self.declare_parameter("rim_topic", "/fr3_rim_delayed")  # Now using delayed topic
-        self.declare_parameter("cmd_topic", "/teleop/ee_cmd_no_delay")
+        self.declare_parameter("rim_topic", "/rim_msg_delayed")  #  'fr3_rim_delayed'
+        self.declare_parameter("cmd_topic", "/simple_system/cmd")  # '/teleop/ee_cmd_no_delay
         self.declare_parameter("control_period", 0.001)  # 1kHz control rate
         self.declare_parameter("delay_compensation_method", "ZOH")  # 'DelayRIM', 'ZOH', or 'ZOHPhi
         self.declare_parameter("interface_stiffness", 3000.0)
@@ -96,34 +96,48 @@ class DelayRIMNode(Node):
         """Get the latest DelayRIM computation result"""
         if self._last_rim_msg is None or self._last_inverse3_msg is None:
             self.get_logger().debug("No RIM or Inverse3 state available, returning zero force")
-            return np.zeros((3, 1))
+            return np.zeros((3,))
+
+        m = self._last_rim_msg.m
 
         # Update phi (constraint deviation)
-        rim_position = np.array(self._last_rim_msg.rim_position).reshape((3, 1))
-        rim_velocity = np.array(self._last_rim_msg.rim_velocity).reshape((3, 1))
+        rim_position = np.array(self._last_rim_msg.rim_position).reshape((m,))
+        rim_velocity = np.array(self._last_rim_msg.rim_velocity).reshape((m,))
 
         _haptic_position = np.array(
             [
                 self._last_inverse3_msg.pose.position.y,
-                -self._last_inverse3_msg.pose.position.x,
-                self._last_inverse3_msg.pose.position.z,
+                # -self._last_inverse3_msg.pose.position.x,
+                # self._last_inverse3_msg.pose.position.z,
             ]
-        ).reshape((3, 1))
-        _haptic_position[0] += 0.4253
+        ).reshape((m,))
+        # _haptic_position[0] += 0.4253 # TODO: Uncomment for robot
+        _haptic_position = _haptic_position * 5  # TODO: Comment for robot
 
         # Extract linear velocity from twist
         _haptic_velocity = np.array(
             [
                 self._last_inverse3_msg.twist.linear.y,
-                -self._last_inverse3_msg.twist.linear.x,
-                self._last_inverse3_msg.twist.linear.z,
+                # -self._last_inverse3_msg.twist.linear.x,
+                # self._last_inverse3_msg.twist.linear.z,
             ]
-        ).reshape((3, 1))
+        ).reshape((m,))
 
-        phi_position = rim_position[0] - _haptic_position[0]
-        phi_velocity = rim_velocity[0] - _haptic_velocity[0]
+        phi_position = rim_position - _haptic_position
+        phi_velocity = rim_velocity - _haptic_velocity
 
-        forces = -2000 * phi_position - 2 * phi_velocity
+        forces = -self._interface_stiffness * phi_position - self._interface_damping * phi_velocity  # (m, )
+
+        info_str = (
+            f"x_rim={rim_position[0]:>4.3f} | "
+            f"x_i3={_haptic_position[0]:>4.3f} | "
+            f"x_error={phi_position[0]:>4.3f} | "
+            f"F={forces[0]:>4.3f}N"
+        )
+        self.get_logger().info(
+            info_str,
+            throttle_duration_sec=0.5,
+        )
 
         return forces
 
@@ -205,12 +219,12 @@ class DelayRIMNode(Node):
             actual_frequency = 1.0 / loop_period if loop_period > 0 else 0.0
             frequency_error = abs(actual_frequency - self._desired_frequency) / self._desired_frequency
 
-            if frequency_error > 0.1:  # More than 10% error
-                self.get_logger().warn(
-                    f"Control loop frequency deviation: {actual_frequency:.1f}Hz "
-                    f"(expected {self._desired_frequency:.1f}Hz, error: {frequency_error * 100:.1f}%)",
-                    throttle_duration_sec=1.0,
-                )
+            # if frequency_error > 0.1:  # More than 10% error
+            #     self.get_logger().warn(
+            #         f"Control loop frequency deviation: {actual_frequency:.1f}Hz "
+            #         f"(expected {self._desired_frequency:.1f}Hz, error: {frequency_error * 100:.1f}%)",
+            #         throttle_duration_sec=1.0,
+            #     )
 
             # self.get_logger().info(f"Control loop frequency: {actual_frequency:.1f}Hz")
 

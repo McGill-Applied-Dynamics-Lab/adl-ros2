@@ -11,6 +11,11 @@ data_files = [
         "share/" + package_name + "/models",
         [f"models/{f}" for f in os.listdir("models") if os.path.isfile(os.path.join("models", f))],
     ),
+    # rviz configuration files
+    (
+        "share/" + package_name + "/rviz",
+        [f"rviz/{f}" for f in os.listdir("rviz") if os.path.isfile(os.path.join("rviz", f))],
+    ),
 ]
 
 
@@ -60,6 +65,7 @@ setup(
             "franka_model_node = franka_rim.franka_model_node:main",
             "franka_rim_node = franka_rim.franka_rim_node:main",
             "delay_rim_node = franka_rim.delay_rim_node:main",
+            "simple_mass_system_node = franka_rim.simple_mass_system_node:main",
         ],
     },
     package_data={"franka_rim": ["models/*.urdf"]},
