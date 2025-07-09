@@ -163,8 +163,8 @@ def catchUpProcess(connection, key):
         # [instruction_type, i3_position, i3_velocity, packet: Packet, hl, delay, RIMType]
         if instruction[0] == CatchUpCommand.CATCHUP:
             # packet: instruction[3], hl: instruction[4], delay: instruction[5], RIMType: instruction[6]
-            position_queue.append(instruction[1])
-            velocity_queue.append(instruction[2])
+            position_queue.append(instruction[1])  # i3 position queue
+            velocity_queue.append(instruction[2])  # i3 velocity queue
             mPacket = RIMPacket(instruction[3], instruction[4], instruction[5], instruction[6], key)
 
             while len(position_queue) > (mPacket.delay + 1):

@@ -98,6 +98,7 @@ def generate_launch_description():
                 "interface_stiffness": 3000.0,
                 "interface_damping": 2.0,
                 # "force_scaling": 0.02,  # Force scaling factor
+                "delay_compensation_method": "ZOH",  # 'DelayRIM', 'ZOH', or 'ZOHPhi
             }
         ],
         output="screen",
@@ -115,6 +116,6 @@ def generate_launch_description():
             ee_cmd_delay_node,
             franka_model_node,
             franka_rim_node,
-            delay_rim_node,
+            # delay_rim_node,
         ]
     )

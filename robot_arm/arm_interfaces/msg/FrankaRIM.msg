@@ -10,14 +10,12 @@ uint32 m
 float64 interface_stiffness
 float64 interface_damping
 
-# Effective mass matrix (flattened row-major)
+# Effective mass matrix (flattened row-major, m x m)
 float64[] effective_mass
 
-# Effective force vector (flattened row-major)
+# Effective force vector (m x 1)
 float64[] effective_force
 
-# RIM position
+# RIM state (interface position and velocity)
 float64[] rim_position
-
-# RIM velocity (flattened row-major)
 float64[] rim_velocity
