@@ -6,6 +6,7 @@ from geometry_msgs.msg import WrenchStamped, Twist, Point, Quaternion
 import numpy as np
 import time
 from collections import deque
+from typing import Optional
 
 from franka_rim.delay_rim import DelayRIM, DelayCompensationMethod
 
@@ -46,12 +47,18 @@ class DelayRIMNode(Node):
         interface_dim = 1  # Dimension of the interface (denoted as 'm')
 
         # Initialize DelayRIM manager
-        self.delay_rim_manager = DelayRIM(interface_dim=interface_dim, max_workers=max_workers)
+        self.delay_rim_manager = DelayRIM(self, interface_dim=interface_dim, max_workers=max_workers)
 
         # State variables
         self._last_rim_msg = None
         self._last_inverse3_msg = None
-        self._fallback_force = np.zeros((3, 1))
+        self._interface_forces = np.zeros((3, 1))
+
+        # Persistent state for continuous 1kHz stepping
+        # self._persistent_reduced_model: Optional[ReducedModelState] = None
+        # self._persistent_state_initialized = False
+        # self._last_delayrim_result_id = -1  # Track which DelayRIM result we last processed
+        self._persistent_initialized = False
 
         # Frequency monitoring
         self._control_loop_times = deque(maxlen=100)  # Store last 100 loop times
@@ -94,67 +101,51 @@ class DelayRIMNode(Node):
         self._last_inverse3_msg = msg
         self.delay_rim_manager.add_haptic_state(msg)
 
-    def _compute_rendered_force(self) -> np.ndarray:
-        """Get the latest DelayRIM computation result"""
+    def _compute_interface_forces(self) -> np.ndarray:
+        """Get the latest DelayRIM computation result or step persistent model"""
         if self._last_rim_msg is None or self._last_inverse3_msg is None:
             self.get_logger().debug("No RIM or Inverse3 state available, returning zero force")
             return np.zeros((3,))
 
-        # #! Old method
-        # m = self._last_rim_msg.m
-
-        # # Update phi (constraint deviation)
-        # rim_position = np.array(self._last_rim_msg.rim_position).reshape((m,))
-        # rim_velocity = np.array(self._last_rim_msg.rim_velocity).reshape((m,))
-
-        # _haptic_position = np.array(
-        #     [
-        #         self._last_inverse3_msg.pose.position.y,
-        #         # -self._last_inverse3_msg.pose.position.x,
-        #         # self._last_inverse3_msg.pose.position.z,
-        #     ]
-        # ).reshape((m,))
-        # # _haptic_position[0] += 0.4253 # TODO: Uncomment for robot
-        # _haptic_position = _haptic_position * 5  # TODO: Comment for robot
-
-        # # Extract linear velocity from twist
-        # _haptic_velocity = np.array(
-        #     [
-        #         self._last_inverse3_msg.twist.linear.y,
-        #         # -self._last_inverse3_msg.twist.linear.x,
-        #         # self._last_inverse3_msg.twist.linear.z,
-        #     ]
-        # ).reshape((m,))
-
-        # phi_position = rim_position - _haptic_position
-        # phi_velocity = rim_velocity - _haptic_velocity
-
-        # forces = -self._interface_stiffness * phi_position - self._interface_damping * phi_velocity  # (m, )
-
-        # info_str = (
-        #     f"x_rim={rim_position[0]:>4.3f} | "
-        #     f"x_i3={_haptic_position[0]:>4.3f} | "
-        #     f"x_error={phi_position[0]:>4.3f} | "
-        #     f"F={forces[0]:>4.3f}N"
-        # )
-        # self.get_logger().info(
-        #     info_str,
-        #     throttle_duration_sec=0.5,
-        # )
-
-        # return forces
-
-        #! Thread algo - Get latest result from DelayRIM manager
         interface_forces = self.delay_rim_manager.get_latest_forces()
 
         if interface_forces is not None:
-            self._fallback_force = interface_forces
+            self._interface_forces = interface_forces
             return interface_forces
 
         else:
             # Use fallback if no result available
             self.get_logger().debug("No DelayRIM result available, using fallback")
-            return self._fallback_force
+            self._interface_forces = np.zeros((3, 1))  # Reset to zero if no forces available
+            return self._interface_forces
+
+        # # Get current haptic state
+        # haptic_position, haptic_velocity = self._get_current_haptic_state()
+
+        # # Get latest DelayRIM result or step persistent model
+        # interface_forces = self.delay_rim_manager.get_latest_forces_or_step_persistent(haptic_position, haptic_velocity)
+
+        # # Update fallback force
+        # if interface_forces is not None:
+        #     self._fallback_force = interface_forces
+        #     return interface_forces.flatten()
+        # else:
+        #     return self._fallback_force.flatten()
+
+    def _get_current_haptic_state(self) -> tuple[np.ndarray, np.ndarray]:
+        """Get current haptic position and velocity"""
+        if self._last_inverse3_msg is None:
+            return np.zeros((1, 1)), np.zeros((1, 1))
+
+        # Extract haptic position (1D interface - y-axis)
+        haptic_position = (
+            np.array([self._last_inverse3_msg.pose.position.y]).reshape((1, 1)) * 5
+        )  # Apply scaling for simple system
+
+        # Extract haptic velocity
+        haptic_velocity = np.array([self._last_inverse3_msg.twist.linear.y]).reshape((1, 1))
+
+        return haptic_position, haptic_velocity
 
     def _publish_force(self, force):
         """Publish computed force to haptic device"""
@@ -163,8 +154,8 @@ class DelayRIMNode(Node):
         force_msg.header.frame_id = "haptic_device"
 
         # Apply force scaling and coordinate transform
-        scaled_force = -self._force_scaling * force
-        force_msg.wrench.force.y = float(scaled_force[0])
+        rendered_forces = -self._force_scaling * force
+        force_msg.wrench.force.y = float(rendered_forces[0])
         force_msg.wrench.force.x = 0.0
         force_msg.wrench.force.z = 0.0
 
@@ -246,10 +237,10 @@ class DelayRIMNode(Node):
             return
 
         # Get latest DelayRIM result
-        rendered_force = self._compute_rendered_force()
+        interface_forces = self._compute_interface_forces()
 
         # Publish force and teleop commands
-        self._publish_force(rendered_force)
+        self._publish_force(interface_forces)
         self._publish_teleop_command()
 
     def _log_performance_stats(self):

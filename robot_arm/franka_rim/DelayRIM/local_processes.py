@@ -364,6 +364,7 @@ class delayRIMModel:
             catchUpData.inverse3_velocity = recent_velocity
             oneStep(catchUpData)
             getForce(catchUpData)
+
         tic = time.perf_counter()
         self.myState = catchUpData
         # print(f'copy time: {time.perf_counter() - tic}')
