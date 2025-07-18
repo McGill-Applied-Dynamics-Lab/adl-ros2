@@ -33,6 +33,8 @@ class SimpleMassSystemNode(Node):
         self.declare_parameter("interface_stiffness", 3000.0)  # N/m
         self.declare_parameter("interface_damping", 2.0)  # N*s/m
 
+        self.declare_parameter("i3_state_topic", "/inverse3/state")  # Topic for Inverse3State messages
+
         # Get parameters
         self.mass = self.get_parameter("mass").get_parameter_value().double_value
         self.spring_k = self.get_parameter("spring_constant").get_parameter_value().double_value
@@ -41,6 +43,8 @@ class SimpleMassSystemNode(Node):
         rim_freq = self.get_parameter("rim_publish_frequency").get_parameter_value().double_value
         self.interface_stiffness = self.get_parameter("interface_stiffness").get_parameter_value().double_value
         self.interface_damping = self.get_parameter("interface_damping").get_parameter_value().double_value
+
+        i3_state_topic = self.get_parameter("i3_state_topic").get_parameter_value().string_value
 
         # Simulation timestep
         self.dt = 1.0 / sim_freq
@@ -59,7 +63,7 @@ class SimpleMassSystemNode(Node):
         self.last_haptic_time = None
 
         # Subscribers
-        self._inverse3_sub = self.create_subscription(Inverse3State, "/inverse3/state", self._inverse3_callback, 10)
+        self._inverse3_sub = self.create_subscription(Inverse3State, i3_state_topic, self._inverse3_callback, 10)
 
         # Publishers
         self._rim_pub = self.create_publisher(FrankaRIM, "/rim_msg", 10)

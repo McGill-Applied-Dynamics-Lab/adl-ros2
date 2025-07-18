@@ -89,6 +89,13 @@
             "type": "debugpy",
             "request": "launch",
             "program": "src/adg_ros2/robot_arm/franka_rim/franka_rim/delay_rim_node.py",
+            "args": [
+                "--ros-args",
+                "-p",
+                "delay_compensation_method:=ZOH", // 'DelayRIM', 'ZOH', or 'ZOHPhi
+                "-p",
+                "control_period:=0.001",
+            ],
             "console": "integratedTerminal",
         },
         {

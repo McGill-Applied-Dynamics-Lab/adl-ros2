@@ -8,6 +8,14 @@ Developed for ROS2 Humble with Ubuntu 22.04.
 * **[teleop](teleop/README.md)**: To teleoperate a robotic arm with the inverse 3 or a joystick
 * **[robot_tasks](robot_tasks/README.md)**: To execute task w/ the robot arm
 
+## Usage
+
+Connecting to the docker container in a terminal
+```
+docker exec -it franka_ros2 /bin/bash
+```
+
+
 ## Installing
 1. Create a ros2 workspace
 2. In `src`, clone `adg_ros2`, `franka_ros2`, `isaac_ros2_messages`(?)

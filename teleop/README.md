@@ -30,3 +30,8 @@ Teleop with Inverse 3:
 ```
 ros2 launch teleop i3_teleop.launch.py
 ```
+
+Inverse 3 node
+```
+ros2 run inverse3_ros2 inverse3_node
+```

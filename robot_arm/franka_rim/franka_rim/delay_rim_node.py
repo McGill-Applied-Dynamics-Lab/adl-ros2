@@ -3,11 +3,13 @@ from rclpy.node import Node
 from arm_interfaces.msg import FrankaRIM, Teleop
 from teleop_interfaces.msg import Inverse3State
 from geometry_msgs.msg import WrenchStamped, Twist, Point, Quaternion
+from visualization_msgs.msg import MarkerArray  # Add missing import
 import numpy as np
 import time
 from collections import deque
 
 from franka_rim.delay_rim import DelayRIM, DelayCompensationMethod
+from franka_rim.delay_rim_debug import DelayRIMDebugger
 
 
 class DelayRIMNode(Node):
@@ -19,11 +21,14 @@ class DelayRIMNode(Node):
         self.declare_parameter("rim_topic", "/rim_msg_delayed")  #  'fr3_rim_delayed'
         self.declare_parameter("cmd_topic", "/simple_system/cmd")  # '/teleop/ee_cmd_no_delay
         self.declare_parameter("control_period", 0.001)  # 1kHz control rate
-        self.declare_parameter("delay_compensation_method", "ZOH")  # 'DelayRIM', 'ZOH', or 'ZOHPhi
+        self.declare_parameter("delay_compensation_method", "DelayRIM")  # 'DelayRIM', 'ZOH', or 'ZOHPhi
         self.declare_parameter("interface_stiffness", 3000.0)
-        self.declare_parameter("interface_damping", 2.0)
+        self.declare_parameter("interface_damping", 100.0)
         self.declare_parameter("force_scaling", 0.02)
-        self.declare_parameter("max_workers", 8)  # Threading parameter
+        self.declare_parameter("max_workers", 1)  # Threading parameter
+        self.declare_parameter("enable_debug", True)  # Enable debugging
+        self.declare_parameter("debug_csv", True)  # Enable CSV logging
+        self.declare_parameter("debug_rviz", True)  # Enable RViz visualization
 
         # Get parameters
         self.control_period = self.get_parameter("control_period").get_parameter_value().double_value
@@ -32,6 +37,9 @@ class DelayRIMNode(Node):
         self._interface_damping = self.get_parameter("interface_damping").get_parameter_value().double_value
         self._force_scaling = self.get_parameter("force_scaling").get_parameter_value().double_value
         max_workers = self.get_parameter("max_workers").get_parameter_value().integer_value
+        enable_debug = self.get_parameter("enable_debug").get_parameter_value().bool_value
+        debug_csv = self.get_parameter("debug_csv").get_parameter_value().bool_value
+        debug_rviz = self.get_parameter("debug_rviz").get_parameter_value().bool_value
 
         rim_topic = self.get_parameter("rim_topic").get_parameter_value().string_value
         cmd_topic = self.get_parameter("cmd_topic").get_parameter_value().string_value
@@ -43,8 +51,26 @@ class DelayRIMNode(Node):
             self.get_logger().warn(f"Invalid delay compensation method: {method_str}, using DelayRIM")
             self._delay_method = DelayCompensationMethod.DELAY_RIM
 
+        interface_dim = 1  # Dimension of the interface (denoted as 'm')
+
         # Initialize DelayRIM manager
-        self.delay_rim_manager = DelayRIM(max_workers=max_workers)
+        self.delay_rim_manager = DelayRIM(interface_dim=interface_dim, max_workers=max_workers)
+
+        # Initialize debugger
+        if enable_debug:
+            self.debugger = DelayRIMDebugger(self, enable_csv=debug_csv, enable_rviz=debug_rviz)
+            self.delay_rim_manager.set_debugger(self.debugger)
+
+            # Real mass position tracking for debugging
+            self._current_mass_position = 0.0
+            self._current_mass_velocity = 0.0
+
+            # Add the real mass position to the DelayRIM manager
+            self.delay_rim_manager.set_real_mass_getter(
+                lambda: self._current_mass_position, lambda: self._current_mass_velocity
+            )
+        else:
+            self.debugger = None
 
         # State variables
         self._last_rim_msg = None
@@ -61,6 +87,12 @@ class DelayRIMNode(Node):
         self._rim_sub = self.create_subscription(FrankaRIM, rim_topic, self._rim_callback, 10)
         self._inverse3_sub = self.create_subscription(Inverse3State, "/inverse3/state", self._inverse3_callback, 10)
 
+        # Subscribe to simple mass system state for debugging (if enabled)
+        if enable_debug:
+            self._mass_state_sub = self.create_subscription(
+                MarkerArray, "/simple_system/visualization", self._mass_state_callback, 10
+            )
+
         # Publishers
         self._force_pub = self.create_publisher(WrenchStamped, "/inverse3/wrench_des", 10)
         self._teleop_pub = self.create_publisher(Teleop, cmd_topic, 10)
@@ -69,7 +101,7 @@ class DelayRIMNode(Node):
         self._control_timer = self.create_timer(self.control_period, self._control_timer_callback)
 
         # Performance monitoring timer
-        self._stats_timer = self.create_timer(5.0, self._log_performance_stats)
+        self._stats_timer = self.create_timer(2.0, self._log_performance_stats)
 
         self.get_logger().info(
             f"DelayRIMNode started with method={self._delay_method.value}, "
@@ -98,55 +130,56 @@ class DelayRIMNode(Node):
             self.get_logger().debug("No RIM or Inverse3 state available, returning zero force")
             return np.zeros((3,))
 
-        m = self._last_rim_msg.m
+        # #! Old method
+        # m = self._last_rim_msg.m
 
-        # Update phi (constraint deviation)
-        rim_position = np.array(self._last_rim_msg.rim_position).reshape((m,))
-        rim_velocity = np.array(self._last_rim_msg.rim_velocity).reshape((m,))
+        # # Update phi (constraint deviation)
+        # rim_position = np.array(self._last_rim_msg.rim_position).reshape((m,))
+        # rim_velocity = np.array(self._last_rim_msg.rim_velocity).reshape((m,))
 
-        _haptic_position = np.array(
-            [
-                self._last_inverse3_msg.pose.position.y,
-                # -self._last_inverse3_msg.pose.position.x,
-                # self._last_inverse3_msg.pose.position.z,
-            ]
-        ).reshape((m,))
-        # _haptic_position[0] += 0.4253 # TODO: Uncomment for robot
-        _haptic_position = _haptic_position * 5  # TODO: Comment for robot
+        # _haptic_position = np.array(
+        #     [
+        #         self._last_inverse3_msg.pose.position.y,
+        #         # -self._last_inverse3_msg.pose.position.x,
+        #         # self._last_inverse3_msg.pose.position.z,
+        #     ]
+        # ).reshape((m,))
+        # # _haptic_position[0] += 0.4253 # TODO: Uncomment for robot
+        # _haptic_position = _haptic_position * 5  # TODO: Comment for robot
 
-        # Extract linear velocity from twist
-        _haptic_velocity = np.array(
-            [
-                self._last_inverse3_msg.twist.linear.y,
-                # -self._last_inverse3_msg.twist.linear.x,
-                # self._last_inverse3_msg.twist.linear.z,
-            ]
-        ).reshape((m,))
+        # # Extract linear velocity from twist
+        # _haptic_velocity = np.array(
+        #     [
+        #         self._last_inverse3_msg.twist.linear.y,
+        #         # -self._last_inverse3_msg.twist.linear.x,
+        #         # self._last_inverse3_msg.twist.linear.z,
+        #     ]
+        # ).reshape((m,))
 
-        phi_position = rim_position - _haptic_position
-        phi_velocity = rim_velocity - _haptic_velocity
+        # phi_position = rim_position - _haptic_position
+        # phi_velocity = rim_velocity - _haptic_velocity
 
-        forces = -self._interface_stiffness * phi_position - self._interface_damping * phi_velocity  # (m, )
+        # forces = -self._interface_stiffness * phi_position - self._interface_damping * phi_velocity  # (m, )
 
-        info_str = (
-            f"x_rim={rim_position[0]:>4.3f} | "
-            f"x_i3={_haptic_position[0]:>4.3f} | "
-            f"x_error={phi_position[0]:>4.3f} | "
-            f"F={forces[0]:>4.3f}N"
-        )
-        self.get_logger().info(
-            info_str,
-            throttle_duration_sec=0.5,
-        )
+        # info_str = (
+        #     f"x_rim={rim_position[0]:>4.3f} | "
+        #     f"x_i3={_haptic_position[0]:>4.3f} | "
+        #     f"x_error={phi_position[0]:>4.3f} | "
+        #     f"F={forces[0]:>4.3f}N"
+        # )
+        # self.get_logger().info(
+        #     info_str,
+        #     throttle_duration_sec=0.5,
+        # )
 
-        return forces
+        # return forces
 
         #! Thread algo - Get latest result from DelayRIM manager
-        result = self.delay_rim_manager.get_latest_result()
+        interface_forces = self.delay_rim_manager.get_latest_forces()
 
-        if result is not None:
-            self._fallback_force = result
-            return result
+        if interface_forces is not None:
+            self._fallback_force = interface_forces
+            return interface_forces
 
         else:
             # Use fallback if no result available
@@ -164,6 +197,11 @@ class DelayRIMNode(Node):
         force_msg.wrench.force.y = float(scaled_force[0])
         force_msg.wrench.force.x = 0.0
         force_msg.wrench.force.z = 0.0
+
+        # self.get_logger().info(
+        #     f"I3 force: {force_msg.wrench.force.y:.3f}N",
+        #     throttle_duration_sec=0.1,
+        # )
 
         self._force_pub.publish(force_msg)
 
@@ -263,30 +301,34 @@ class DelayRIMNode(Node):
             frequency_jitter = std_period / avg_period * 100 if avg_period > 0 else 0.0
 
             self.get_logger().info(
-                f"DelayRIM Stats - Total packets: {stats.total_packets}, "
+                f"DelayRIM Stats - "
+                # f"Total packets: {stats.total_packets}, "
                 f"Avg comp time: {stats.avg_computation_time:.1f}ms, "
                 f"Max comp time: {stats.max_computation_time:.1f}ms, "
-                f"Active threads: {stats.active_threads}, "
-                f"Queue length: {stats.queue_length}, "
-                f"Dropped: {stats.dropped_packets}"
+                f"Avg total delay: {stats.avg_total_delay:.1f}ms, "
+                f"Queue: {stats.packet_queue}, "
+                # f"Queue length: {stats.queue_length}, "
+                # f"Dropped: {stats.dropped_packets}, "
             )
 
-            self.get_logger().info(
-                f"Control Loop Stats - Total calls: {self._control_loop_count}, "
-                f"Avg freq: {avg_frequency:.1f}Hz "
-                f"(target: {self._desired_frequency:.1f}Hz), "
-                f"Freq range: {min_frequency:.1f}-{max_frequency:.1f}Hz, "
-                f"Jitter: {frequency_jitter:.1f}%"
-            )
+            # self.get_logger().info(
+            #     f"Control Loop Stats - "
+            #     # f"Total calls: {self._control_loop_count}, "
+            #     f"Avg freq: {avg_frequency:.1f}Hz "
+            #     f"(target: {self._desired_frequency:.1f}Hz), "
+            #     f"Freq range: {min_frequency:.1f}-{max_frequency:.1f}Hz, "
+            #     # f"Jitter: {frequency_jitter:.1f}%"
+            # )
         else:
             self.get_logger().info(
-                f"DelayRIM Stats - Total packets: {stats.total_packets}, "
+                f"DelayRIM Stats - "
+                f"Total packets: {stats.total_packets}, "
                 f"Avg comp time: {stats.avg_computation_time:.1f}ms, "
                 f"Max comp time: {stats.max_computation_time:.1f}ms, "
-                f"Active threads: {stats.active_threads}, "
-                f"Queue length: {stats.queue_length}, "
-                f"Dropped: {stats.dropped_packets}, "
-                f"Control loops: {self._control_loop_count} (freq monitoring starting...)"
+                f"Active threads: {stats.packet_queue}, "
+                # f"Queue length: {stats.queue_length}, "
+                # f"Dropped: {stats.dropped_packets}, "
+                # f"Control loops: {self._control_loop_count} (freq monitoring starting...)"
             )
 
     def destroy_node(self):
@@ -294,13 +336,40 @@ class DelayRIMNode(Node):
         self.delay_rim_manager.shutdown()
         super().destroy_node()
 
+    def _mass_state_callback(self, msg: MarkerArray):
+        """Extract real mass position from visualization markers for debugging"""
+        if not self.debugger:
+            return
+
+        # Find the mass marker (id=0)
+        for marker in msg.markers:
+            if marker.id == 0 and marker.ns == "simple_system":
+                prev_position = self._current_mass_position
+                self._current_mass_position = marker.pose.position.x
+
+                # Simple velocity estimation from position difference
+                if hasattr(self, "_last_mass_update_time"):
+                    dt = time.time() - self._last_mass_update_time
+                    if dt > 0:
+                        self._current_mass_velocity = (self._current_mass_position - prev_position) / dt
+
+                self._last_mass_update_time = time.time()
+                break
+
 
 def main(args=None):
     rclpy.init(args=args)
     node = DelayRIMNode()
-    rclpy.spin(node)
-    node.destroy_node()
-    rclpy.shutdown()
+
+    try:
+        node.get_logger().info(f"DelayRIMNode launched, end with CTRL-C")
+        rclpy.spin(node)
+
+    except KeyboardInterrupt:
+        node.get_logger().info("KeyboardInterrupt, shutting down.\n")
+
+    finally:
+        node.destroy_node()
 
 
 if __name__ == "__main__":

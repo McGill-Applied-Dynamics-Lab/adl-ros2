@@ -12,6 +12,7 @@ import rclpy
 from rclpy.node import Node
 from arm_interfaces.msg import FrankaRIM
 from teleop_interfaces.msg import Inverse3State
+from franka_rim.delay_rim_debug import DelayRIMDebugger
 
 
 class DelayCompensationMethod(Enum):
@@ -66,6 +67,8 @@ class ReducedModelState:
     mass_factor: np.ndarray = field(default_factory=lambda: np.eye(3))
     inverse_augmented_mass_matrix: np.ndarray = field(default_factory=lambda: np.eye(3))
 
+    A_inv: np.ndarray = field(default_factory=lambda: np.eye(3))
+
 
 @dataclass
 class PerformanceStats:
@@ -74,17 +77,20 @@ class PerformanceStats:
     total_packets: int = 0
     avg_computation_time: float = 0.0  # in milliseconds
     max_computation_time: float = 0.0  # in milliseconds
+    avg_total_delay: float = 0.0  # in milliseconds
     dropped_packets: int = 0
-    active_threads: int = 0
+    packet_queue: int = 0
     queue_length: int = 0
 
 
 class DelayRIM:
     """Thread-based DelayRIM computation manager"""
 
-    def __init__(self, max_workers: int = 8, max_haptic_history: int = 1000):
+    def __init__(self, interface_dim: int = 1, max_workers: int = 8, max_haptic_history: int = 1000):
         self.max_workers = max_workers
         self.max_haptic_history = max_haptic_history
+
+        self._interface_dim = interface_dim  # Dimension of the interface ('m')
 
         # Threading infrastructure
         self.executor = ThreadPoolExecutor(max_workers=max_workers)
@@ -98,24 +104,55 @@ class DelayRIM:
         # Performance monitoring
         self.stats = PerformanceStats()
         self._computation_times: deque[float] = deque(maxlen=100)
+        self._total_delay_times: deque[float] = deque(maxlen=100)
 
         # Current state
         self.current_haptic_state: Optional[HapticState] = None
-        self.latest_result: Optional[np.ndarray] = None
+        self.latest_forces: Optional[np.ndarray] = None  # Most recent computed interface forces
+
+        # Debug system
+        self.debugger: Optional[DelayRIMDebugger] = None
+        self._real_mass_position_getter = None
+        self._real_mass_velocity_getter = None
+
+    def set_debugger(self, debugger):
+        """Set the debugger for trajectory logging"""
+        self.debugger = debugger
+
+    def set_real_mass_getter(self, position_getter, velocity_getter):
+        """Set functions to get real mass position and velocity for debugging"""
+        self._real_mass_position_getter = position_getter
+        self._real_mass_velocity_getter = velocity_getter
 
     def add_haptic_state(self, inverse3_msg: Inverse3State) -> None:
-        """Add new haptic state to history"""
+        """
+        Add new haptic state to history.
+
+        Only add the state in along the interfaces.
+
+        For the 1D systems, this corresponds to the y-axis of the haptic device.
+
+        """
         timestamp = time.perf_counter()
 
         # Extract position and velocity (coordinate transform as needed)
         position = np.array(
-            [inverse3_msg.pose.position.y, -inverse3_msg.pose.position.x, inverse3_msg.pose.position.z]
-        ).reshape((3, 1))
-        position[0] += 0.4253  # Offset as in current implementation
+            [
+                inverse3_msg.pose.position.y,
+                # -inverse3_msg.pose.position.x,
+                # inverse3_msg.pose.position.z
+            ]
+        ).reshape((self._interface_dim,))
+        # position[0] += 0.4253  # Offset as in current implementation
+        position = position * 5
 
         velocity = np.array(
-            [inverse3_msg.twist.linear.y, -inverse3_msg.twist.linear.x, inverse3_msg.twist.linear.z]
-        ).reshape((3, 1))
+            [
+                inverse3_msg.twist.linear.y,
+                # -inverse3_msg.twist.linear.x,
+                # inverse3_msg.twist.linear.z
+            ]
+        ).reshape((self._interface_dim,))
 
         haptic_state = HapticState(timestamp, position, velocity)
 
@@ -136,13 +173,15 @@ class DelayRIM:
         delay_duration = current_time.nanoseconds - msg_timestamp.nanoseconds
         delay_seconds = delay_duration / 1e9
 
+        # node.get_logger().info(f"Received RIM packet {packet_id} with delay: {delay_seconds * 1000:.3f}ms")
+
         # Convert ROS timestamp to perf_counter equivalent for delay tracking
         packet_creation_time = arrival_time - delay_seconds
 
         # Calculate integration steps needed
         integration_steps = math.ceil(delay_seconds / 0.001)  # 1ms timesteps TODO: From attribute
 
-        node.get_logger().debug(f"Packet {packet_id}: delay={delay_seconds:.3f}s, steps={integration_steps}")
+        node.get_logger().debug(f"Packet {packet_id}: delay={delay_seconds * 1000:.3f}ms, steps={integration_steps}")
 
         # Check if we have enough haptic history
         with self.lock:
@@ -190,31 +229,34 @@ class DelayRIM:
                 return None
 
             # --- Perform DelayRIM computation
-            # if packet.method == DelayCompensationMethod.DELAY_RIM:
-            #     rendered_forces = self._compute_force_delay_rim(packet, haptic_states, node_logger)
+            if packet.method == DelayCompensationMethod.DELAY_RIM:
+                rendered_forces = self._compute_force_delay_rim(packet, haptic_states, node_logger)
 
-            # elif packet.method == DelayCompensationMethod.ZOH:
-            #     rendered_forces = self._compute_force_zoh(packet, haptic_states)
+            elif packet.method == DelayCompensationMethod.ZOH:
+                rendered_forces = self._compute_force_zoh(packet, haptic_states)
 
-            # elif packet.method == DelayCompensationMethod.ZOH_PHI:
-            #     rendered_forces = self._compute_force_zoh_phi(packet, haptic_states)
+            elif packet.method == DelayCompensationMethod.ZOH_PHI:
+                rendered_forces = self._compute_force_zoh_phi(packet, haptic_states)
 
-            # else:
-            #     raise ValueError(f"Unknown DelayCompensationMethod: {packet.method}")
+            else:
+                raise ValueError(f"Unknown DelayCompensationMethod: {packet.method}")
 
-            rendered_forces = None
+            # rendered_forces = None
 
-            # # Calculate total delay from robot state capture to force computation
-            # force_computation_time = time.perf_counter()
-            # total_delay_ms = (force_computation_time - packet.packet_creation_time) * 1000
-            # computation_time_ms = (force_computation_time - start_time) * 1000
+            # Calculate total delay from robot state capture to force computation
+            force_computation_time = time.perf_counter()
+            total_delay_ms = (force_computation_time - packet.packet_creation_time) * 1000
+            computation_time_ms = (force_computation_time - start_time) * 1000
 
             # node_logger.info(
             #     f"Packet {packet.packet_id} [{packet.method.value}]: "
             #     f"Total delay={total_delay_ms:.1f}ms "
             #     f"(network={packet.delay_seconds * 1000:.1f}ms + "
-            #     f"computation={computation_time_ms:.1f}ms)"
+            #     f"computation={computation_time_ms:.1f}ms)",
+            #     throttle_duration_sec=1.0,
             # )
+
+            self._update_performance_stats(computation_time_ms, total_delay=total_delay_ms)
 
             return rendered_forces
 
@@ -241,53 +283,89 @@ class DelayRIM:
     def _compute_force_delay_rim(
         self, packet: DelayedRIMPacket, haptic_states: List[HapticState], node_logger
     ) -> np.ndarray:
-        """Compute DelayRIM force with catch-up integration (oneStep method)"""
+        """Compute DelayRIM force with catch-up integration"""
         if not haptic_states:
             return np.zeros((3, 1))
 
         # Initialize reduced model from RIM packet
         reduced_model = ReducedModelState()
-        reduced_model.rim_position = np.array(packet.rim_msg.rim_position[:3]).reshape((3, 1))
-        reduced_model.rim_velocity = np.array(packet.rim_msg.rim_velocity[:3]).reshape((3, 1))
+        reduced_model.rim_position = np.array(packet.rim_msg.rim_position).reshape((self._interface_dim, 1))
+        reduced_model.rim_velocity = np.array(packet.rim_msg.rim_velocity).reshape((self._interface_dim, 1))
+
         reduced_model.stiffness = packet.rim_msg.interface_stiffness
         reduced_model.damping = packet.rim_msg.interface_damping
 
         # Extract effective parameters from RIM message
         effective_mass_flat = packet.rim_msg.effective_mass
-        if len(effective_mass_flat) == 9:  # 3x3 matrix
-            reduced_model.effective_mass = np.array(effective_mass_flat).reshape((3, 3))
-        elif len(effective_mass_flat) == 1:  # scalar
-            reduced_model.effective_mass = np.eye(3) * effective_mass_flat[0]
-        else:
-            node_logger.warn(f"Unexpected effective_mass size: {len(effective_mass_flat)}")
-            reduced_model.effective_mass = np.eye(3)
-
-        reduced_model.effective_force = np.array(packet.rim_msg.effective_force[:3]).reshape((3, 1))
+        reduced_model.effective_mass = np.array(effective_mass_flat).reshape((self._interface_dim, self._interface_dim))
+        reduced_model.effective_force = np.array(packet.rim_msg.effective_force).reshape((self._interface_dim, 1))
 
         # Compute DelayRIM integration matrices (from oneStep method)
         hl = reduced_model.hl
-        Id3 = np.eye(3)
+        Id_m = np.eye(self._interface_dim)
         augmented_mass_matrix = (
-            reduced_model.effective_mass + hl * (reduced_model.damping + hl * reduced_model.stiffness) * Id3
+            reduced_model.effective_mass + hl * (reduced_model.damping + hl * reduced_model.stiffness) * Id_m
         )
         reduced_model.inverse_augmented_mass_matrix = np.linalg.inv(augmented_mass_matrix)
         reduced_model.mass_factor = reduced_model.inverse_augmented_mass_matrix @ reduced_model.effective_mass
 
-        # Catch-up integration through haptic state history
-        prev_haptic_state = haptic_states[0]
-        haptic_position = prev_haptic_state.position
-        haptic_velocity = prev_haptic_state.velocity
+        # Calculate the exact number of integration steps needed for the delay
+        delay_seconds = packet.delay_seconds
+        num_integration_steps = int(math.ceil(delay_seconds / hl))  # e.g., 100ms / 1ms = 100 steps
 
-        # Integrate through catch-up period using oneStep method
-        for i in range(1, len(haptic_states)):
-            current_haptic = haptic_states[i]
-            haptic_acceleration = (current_haptic.velocity - haptic_velocity) / hl
+        # Get initial haptic state (oldest available)
+        if not haptic_states:
+            return np.zeros((self._interface_dim, 1))
+
+        initial_haptic = haptic_states[0]
+        haptic_position = initial_haptic.position.reshape((self._interface_dim, 1))
+        haptic_velocity = initial_haptic.velocity.reshape((self._interface_dim, 1))
+
+        # Initialize debugging if enabled
+        if self.debugger:
+            self.debugger.start_trajectory(packet.packet_id, delay_seconds * 1000, num_integration_steps)
+
+        # Interpolate haptic data over the delay period for integration
+        for step in range(num_integration_steps):
+            # Calculate current time within the delay period
+            current_time_in_delay = step * hl
+
+            # Interpolate haptic state at this time step
+            haptic_position, haptic_velocity, haptic_acceleration = self._interpolate_haptic_state(
+                haptic_states, initial_haptic.timestamp + current_time_in_delay, hl
+            )
 
             # One-step DelayRIM integration (from local_processes.py oneStep)
             self._one_step_delay_rim(reduced_model, haptic_position, haptic_velocity, haptic_acceleration)
 
-            haptic_position = current_haptic.position
-            haptic_velocity = current_haptic.velocity
+            # Debug logging
+            if self.debugger:
+                # Get real mass position (we'll need to access this from the simple mass system)
+                real_mass_position = self._get_real_mass_position()
+                real_mass_velocity = self._get_real_mass_velocity()
+
+                # Compute interface force at this step
+                phi_position = reduced_model.rim_position - haptic_position
+                phi_velocity = reduced_model.rim_velocity - haptic_velocity
+                step_interface_force = (
+                    -reduced_model.stiffness * phi_position
+                    - (hl * reduced_model.stiffness + reduced_model.damping) * phi_velocity
+                )
+
+                self.debugger.log_step(
+                    packet_id=packet.packet_id,
+                    step_number=step,
+                    total_steps=num_integration_steps,
+                    delay_ms=delay_seconds * 1000,
+                    haptic_position=float(haptic_position[0, 0]),
+                    real_mass_position=real_mass_position,
+                    estimated_rim_position=float(reduced_model.rim_position[0, 0]),
+                    haptic_velocity=float(haptic_velocity[0, 0]),
+                    real_mass_velocity=real_mass_velocity,
+                    estimated_rim_velocity=float(reduced_model.rim_velocity[0, 0]),
+                    interface_force=float(step_interface_force[0, 0]),
+                    is_final_step=(step == num_integration_steps - 1),
+                )
 
         # Compute final interface force (from getForce method)
         reduced_model.phi_position = reduced_model.rim_position - haptic_position
@@ -298,7 +376,81 @@ class DelayRIM:
             - (hl * reduced_model.stiffness + reduced_model.damping) * reduced_model.phi_velocity
         )
 
+        # Finish debugging
+        if self.debugger:
+            self.debugger.finish_trajectory()
+
         return interface_force
+
+    def _get_real_mass_position(self) -> float:
+        """Get the real mass position from the simple mass system"""
+        if self._real_mass_position_getter:
+            return self._real_mass_position_getter()
+        return 0.0
+
+    def _get_real_mass_velocity(self) -> float:
+        """Get the real mass velocity from the simple mass system"""
+        if self._real_mass_velocity_getter:
+            return self._real_mass_velocity_getter()
+        return 0.0
+
+    def _interpolate_haptic_state(self, haptic_states: List[HapticState], target_time: float, hl: float):
+        """
+        Interpolate haptic position, velocity, and acceleration at target_time
+        """
+        # Find the two haptic states that bracket the target time
+        before_state = None
+        after_state = None
+
+        for i, state in enumerate(haptic_states):
+            if state.timestamp <= target_time:
+                before_state = state
+            else:
+                after_state = state
+                break
+
+        # If we only have one state or target_time is outside our data range
+        if before_state is None:
+            # Use first available state
+            state = haptic_states[0]
+            position = state.position.reshape((self._interface_dim, 1))
+            velocity = state.velocity.reshape((self._interface_dim, 1))
+            acceleration = np.zeros((self._interface_dim, 1))
+            return position, velocity, acceleration
+
+        if after_state is None:
+            # Use last available state
+            state = haptic_states[-1]
+            position = state.position.reshape((self._interface_dim, 1))
+            velocity = state.velocity.reshape((self._interface_dim, 1))
+            acceleration = np.zeros((self._interface_dim, 1))
+            return position, velocity, acceleration
+
+        # Linear interpolation between before_state and after_state
+        dt = after_state.timestamp - before_state.timestamp
+        if dt <= 0:
+            # States have same timestamp, use before_state
+            position = before_state.position.reshape((self._interface_dim, 1))
+            velocity = before_state.velocity.reshape((self._interface_dim, 1))
+            acceleration = np.zeros((self._interface_dim, 1))
+            return position, velocity, acceleration
+
+        # Interpolation factor (0 = before_state, 1 = after_state)
+        alpha = (target_time - before_state.timestamp) / dt
+        alpha = np.clip(alpha, 0.0, 1.0)
+
+        # Interpolate position and velocity
+        position = (1 - alpha) * before_state.position + alpha * after_state.position
+        velocity = (1 - alpha) * before_state.velocity + alpha * after_state.velocity
+
+        # Compute acceleration from velocity difference
+        acceleration = (after_state.velocity - before_state.velocity) / hl
+
+        position = position.reshape((self._interface_dim, 1))
+        velocity = velocity.reshape((self._interface_dim, 1))
+        acceleration = acceleration.reshape((self._interface_dim, 1))
+
+        return position, velocity, acceleration
 
     def _one_step_delay_rim(
         self, reduced_model: ReducedModelState, haptic_pos: np.ndarray, haptic_vel: np.ndarray, haptic_acc: np.ndarray
@@ -309,34 +461,74 @@ class DelayRIM:
         reduced_model.phi_position = reduced_model.rim_position - haptic_pos
         reduced_model.phi_velocity = reduced_model.rim_velocity - haptic_vel
 
-        # Force terms from oneStep method
+        # #! Code from Joe
+        # # Force terms from oneStep method
+        # regular_force_terms = (
+        #     reduced_model.effective_mass @ haptic_acc / reduced_model.hl
+        #     + reduced_model.effective_force
+        #     - reduced_model.stiffness * reduced_model.phi_position
+        #     + (reduced_model.damping + reduced_model.hl * reduced_model.stiffness) * haptic_vel
+        # )
+
+        # # Update reduced model state (from oneStep method)
+        # reduced_model.rim_velocity = (
+        #     reduced_model.mass_factor @ reduced_model.rim_velocity
+        #     + reduced_model.hl * reduced_model.inverse_augmented_mass_matrix @ regular_force_terms
+        # )
+        # reduced_model.rim_position = reduced_model.rim_position + reduced_model.hl * reduced_model.rim_velocity
+
+        # #! V2
+        # forces_term = reduced_model.effective_force - reduced_model.stiffness * reduced_model.phi_position
+        # rim_velocity_p = (
+        #     reduced_model.A_inv @ reduced_model.rim_velocity
+        #     + reduced_model.A_inv * (1 / reduced_model.hl) * reduced_model.effective_mass * forces_term
+        # )
+        # reduced_model.rim_velocity = rim_velocity_p
+
+        # rim_position_p = reduced_model.rim_position + reduced_model.hl * reduced_model.rim_velocity
+        # reduced_model.rim_position = rim_position_p
+
+        #! V3
+        hl = reduced_model.hl
+        Di = reduced_model.damping
+        Ki = reduced_model.stiffness
+
+        # wi = reduced_model.phi_velocity
+
         regular_force_terms = (
-            reduced_model.effective_mass @ haptic_acc / reduced_model.hl
-            + reduced_model.effective_force
-            - reduced_model.stiffness * reduced_model.phi_position
-            + (reduced_model.damping + reduced_model.hl * reduced_model.stiffness) * haptic_vel
+            reduced_model.effective_force - Ki * reduced_model.phi_position + (Di + hl * Ki) * haptic_vel
         )
 
-        # Update reduced model state (from oneStep method)
-        reduced_model.rim_velocity = (
+        rim_velocity_p = (
             reduced_model.mass_factor @ reduced_model.rim_velocity
-            + reduced_model.hl * reduced_model.inverse_augmented_mass_matrix @ regular_force_terms
+            + hl * reduced_model.inverse_augmented_mass_matrix @ regular_force_terms
         )
-        reduced_model.rim_position = reduced_model.rim_position + reduced_model.hl * reduced_model.rim_velocity
+        reduced_model.rim_velocity = rim_velocity_p
+
+        rim_position_p = reduced_model.rim_position + reduced_model.hl * reduced_model.rim_velocity
+        reduced_model.rim_position = rim_position_p
 
     def _compute_force_zoh(self, packet: DelayedRIMPacket, haptic_states: List[HapticState]) -> np.ndarray:
-        """Compute Zero-Order Hold force"""
+        """
+        Compute interface force using Zero-Order Hold.
+
+        Returns:
+            np.ndarray (m,): Interface force computed using ZOH method
+        """
         if not haptic_states:
             return np.zeros((3, 1))
 
         # Use first (oldest) haptic state for ZOH
-        old_haptic = haptic_states[0]
+        old_haptic = haptic_states[0]  # (m,)
 
-        rim_position = np.array(packet.rim_msg.rim_position[:3]).reshape((3, 1))
-        rim_velocity = np.array(packet.rim_msg.rim_velocity[:3]).reshape((3, 1))
+        rim_msg: FrankaRIM = packet.rim_msg
+        m = rim_msg.m
 
-        phi_position = rim_position - old_haptic.position
-        phi_velocity = rim_velocity - old_haptic.velocity  # Use old velocity for ZOH
+        rim_position = np.array(rim_msg.rim_position).reshape((m,))
+        rim_velocity = np.array(rim_msg.rim_velocity).reshape((m,))
+
+        phi_position = rim_position - old_haptic.position  # (m,)
+        phi_velocity = rim_velocity - old_haptic.velocity  # (m,)
 
         interface_force = (
             -packet.rim_msg.interface_stiffness * phi_position - packet.rim_msg.interface_damping * phi_velocity
@@ -364,8 +556,9 @@ class DelayRIM:
 
         return interface_force
 
-    def get_latest_result(self) -> Optional[np.ndarray]:
-        """Get the most recent DelayRIM computation result"""
+    def get_latest_forces(self) -> Optional[np.ndarray]:
+        """Get the most recent interface forces computed using the selected delay compensation method."""
+
         ready_results = []
         completed_ids = []
         force_render_time = time.perf_counter()
@@ -387,34 +580,45 @@ class DelayRIM:
             for packet_id in completed_ids:
                 del self.active_computations[packet_id]
 
-            self.stats.active_threads = len(self.active_computations)
-
         # Return most recent result (highest packet_id) and log render timing
         if ready_results:
             ready_results.sort(key=lambda x: x[0])  # Sort by packet_id
-            latest_packet_id, latest_result = ready_results[-1]
+            latest_packet_id, latest_forces = ready_results[-1]
 
             # Log when force is actually rendered to user
             # print(f"FORCE RENDERED - Packet {latest_packet_id} rendered at {force_render_time:.6f}")
 
-            self.latest_result = latest_result
-            return latest_result
+            self.latest_forces = latest_forces
+            return latest_forces
 
-        return self.latest_result  # Return last known result
+        return self.latest_forces  # Return last known result
 
-    def _update_performance_stats(self, computation_time: float) -> None:
-        """Update performance monitoring statistics"""
+    def _update_performance_stats(self, computation_time: float, total_delay: float) -> None:
+        """Update performance monitoring statistics.
+
+        Attributes:
+            computation_time (float): Time taken to compute the forces in milliseconds.
+            total_delay (float): Total delay from packet creation to force result in milliseconds.
+
+        """
         with self.lock:
             self._computation_times.append(computation_time)
+            self._total_delay_times.append(total_delay)
 
-            if self._computation_times:
-                self.stats.avg_computation_time = np.mean(self._computation_times)
-                self.stats.max_computation_time = max(self.stats.max_computation_time, computation_time)
+            self.stats.max_computation_time = max(self.stats.max_computation_time, computation_time)
 
     def get_performance_stats(self) -> PerformanceStats:
         """Get current performance statistics"""
         with self.lock:
+            if self._computation_times:
+                self.stats.avg_computation_time = np.mean(self._computation_times)
+                # self.stats.max_computation_time = max(self.stats.max_computation_time)
+
+                self.stats.avg_total_delay = np.mean(self._total_delay_times)
+
             self.stats.queue_length = len(self.haptic_history)
+            self.stats.packet_queue = len(self.active_computations)
+
             return self.stats
 
     def shutdown(self) -> None:

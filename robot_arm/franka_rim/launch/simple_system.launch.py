@@ -9,10 +9,12 @@ from ament_index_python.packages import get_package_share_directory
 K_INT = 3000.0
 D_INT = 100.0
 
-K_SPRING = 1000.0
-D_SPRING = 50.0
+K_SPRING = 500.0
+D_SPRING = 200.0
+MASS = 10.0
+# tau = 2 * MASS / D_SPRING
 
-F_SCALE = 0.02
+F_SCALE = 0.005
 
 
 def generate_launch_description():
@@ -26,6 +28,15 @@ def generate_launch_description():
     )
 
     #! Nodes
+    # RViz
+    rviz_node = Node(
+        package="rviz2",
+        executable="rviz2",
+        name="rviz2",
+        arguments=["-d", rviz_config_file],
+        output="screen",
+    )
+
     # Inverse3 Node
     inverse3_node = Node(
         package="inverse3_ros2",
@@ -47,19 +58,20 @@ def generate_launch_description():
         output="screen",
         parameters=[
             {
-                "mass": 1.0,
+                "mass": MASS,
                 "spring_constant": K_SPRING,
                 "damping_coefficient": D_SPRING,
                 "simulation_frequency": 1000.0,
-                "rim_publish_frequency": 100.0,
+                "rim_publish_frequency": 500.0,
                 "interface_stiffness": K_INT,
                 "interface_damping": D_INT,
+                "i3_state_topic": "/inverse3/state_delayed",  # Topic for Inverse3State messages
             }
         ],
     )
 
     # Network delay simulator for RIM messages
-    rim_delay_node = Node(
+    rim_msg_delay_node = Node(
         package="network_sim",
         executable="network_sim_node",
         name="rim_delay_sim",
@@ -69,6 +81,21 @@ def generate_launch_description():
                 "output_topic": "/rim_msg_delayed",
                 "delay": LaunchConfiguration("delay"),
                 "message_type": "arm_interfaces/msg/FrankaRIM",
+            }
+        ],
+        output="screen",
+    )
+
+    i3_msg_delay_node = Node(
+        package="network_sim",
+        executable="network_sim_node",
+        name="i3_cmd_delay",
+        parameters=[
+            {
+                "input_topic": "/inverse3/state",
+                "output_topic": "/inverse3/state_delayed",
+                "delay": 0.0,  # LaunchConfiguration("delay"),
+                "message_type": "teleop_interfaces/msg/Inverse3State",
             }
         ],
         output="screen",
@@ -84,21 +111,15 @@ def generate_launch_description():
                 "rim_topic": "/rim_msg_delayed",
                 "cmd_topic": "/simple_system/cmd",
                 "control_period": 0.001,  # 1kHz
-                "delay_compensation_method": "ZOH",  # Start with ZOH for debugging
-                "interface_stiffness": K_INT,
-                "interface_damping": D_INT,
-                "force_scaling": F_SCALE,  # No scaling for simple system
+                "delay_compensation_method": "DelayRIM",  # Enable DelayRIM for debugging
+                "interface_stiffness": 3000.0,
+                "interface_damping": 2.0,
+                "force_scaling": 1.0,  # No scaling for simple system
+                "enable_debug": True,  # Enable debugging
+                "debug_csv": True,  # Enable CSV logging
+                "debug_rviz": True,  # Enable RViz visualization
             }
         ],
-        output="screen",
-    )
-
-    # RViz
-    rviz_node = Node(
-        package="rviz2",
-        executable="rviz2",
-        name="rviz2",
-        arguments=["-d", rviz_config_file],
         output="screen",
     )
 
@@ -107,10 +128,11 @@ def generate_launch_description():
             # Args
             delay_arg,
             # Nodes
+            rviz_node,
             # inverse3_node,
             simple_mass_system_node,
-            rim_delay_node,
+            rim_msg_delay_node,
+            i3_msg_delay_node,
             delay_rim_node,
-            rviz_node,
         ]
     )
