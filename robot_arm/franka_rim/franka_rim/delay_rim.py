@@ -12,7 +12,6 @@ import rclpy
 from rclpy.node import Node
 from arm_interfaces.msg import FrankaRIM
 from teleop_interfaces.msg import Inverse3State
-from franka_rim.delay_rim_debug import DelayRIMDebugger
 
 
 class DelayCompensationMethod(Enum):
@@ -109,20 +108,6 @@ class DelayRIM:
         # Current state
         self.current_haptic_state: Optional[HapticState] = None
         self.latest_forces: Optional[np.ndarray] = None  # Most recent computed interface forces
-
-        # Debug system
-        self.debugger: Optional[DelayRIMDebugger] = None
-        self._real_mass_position_getter = None
-        self._real_mass_velocity_getter = None
-
-    def set_debugger(self, debugger):
-        """Set the debugger for trajectory logging"""
-        self.debugger = debugger
-
-    def set_real_mass_getter(self, position_getter, velocity_getter):
-        """Set functions to get real mass position and velocity for debugging"""
-        self._real_mass_position_getter = position_getter
-        self._real_mass_velocity_getter = velocity_getter
 
     def add_haptic_state(self, inverse3_msg: Inverse3State) -> None:
         """
@@ -309,9 +294,14 @@ class DelayRIM:
         reduced_model.inverse_augmented_mass_matrix = np.linalg.inv(augmented_mass_matrix)
         reduced_model.mass_factor = reduced_model.inverse_augmented_mass_matrix @ reduced_model.effective_mass
 
+        A = Id_m + reduced_model.damping * reduced_model.effective_mass
+        reduced_model.A_inv = np.linalg.inv(A)
+
         # Calculate the exact number of integration steps needed for the delay
         delay_seconds = packet.delay_seconds
         num_integration_steps = int(math.ceil(delay_seconds / hl))  # e.g., 100ms / 1ms = 100 steps
+
+        # node_logger.info(f"DelayRIM integration: {delay_seconds * 1000:.3f}ms -> {num_integration_steps} steps")
 
         # Get initial haptic state (oldest available)
         if not haptic_states:
@@ -320,10 +310,6 @@ class DelayRIM:
         initial_haptic = haptic_states[0]
         haptic_position = initial_haptic.position.reshape((self._interface_dim, 1))
         haptic_velocity = initial_haptic.velocity.reshape((self._interface_dim, 1))
-
-        # Initialize debugging if enabled
-        if self.debugger:
-            self.debugger.start_trajectory(packet.packet_id, delay_seconds * 1000, num_integration_steps)
 
         # Interpolate haptic data over the delay period for integration
         for step in range(num_integration_steps):
@@ -338,35 +324,6 @@ class DelayRIM:
             # One-step DelayRIM integration (from local_processes.py oneStep)
             self._one_step_delay_rim(reduced_model, haptic_position, haptic_velocity, haptic_acceleration)
 
-            # Debug logging
-            if self.debugger:
-                # Get real mass position (we'll need to access this from the simple mass system)
-                real_mass_position = self._get_real_mass_position()
-                real_mass_velocity = self._get_real_mass_velocity()
-
-                # Compute interface force at this step
-                phi_position = reduced_model.rim_position - haptic_position
-                phi_velocity = reduced_model.rim_velocity - haptic_velocity
-                step_interface_force = (
-                    -reduced_model.stiffness * phi_position
-                    - (hl * reduced_model.stiffness + reduced_model.damping) * phi_velocity
-                )
-
-                self.debugger.log_step(
-                    packet_id=packet.packet_id,
-                    step_number=step,
-                    total_steps=num_integration_steps,
-                    delay_ms=delay_seconds * 1000,
-                    haptic_position=float(haptic_position[0, 0]),
-                    real_mass_position=real_mass_position,
-                    estimated_rim_position=float(reduced_model.rim_position[0, 0]),
-                    haptic_velocity=float(haptic_velocity[0, 0]),
-                    real_mass_velocity=real_mass_velocity,
-                    estimated_rim_velocity=float(reduced_model.rim_velocity[0, 0]),
-                    interface_force=float(step_interface_force[0, 0]),
-                    is_final_step=(step == num_integration_steps - 1),
-                )
-
         # Compute final interface force (from getForce method)
         reduced_model.phi_position = reduced_model.rim_position - haptic_position
         reduced_model.phi_velocity = reduced_model.rim_velocity - haptic_velocity
@@ -376,23 +333,7 @@ class DelayRIM:
             - (hl * reduced_model.stiffness + reduced_model.damping) * reduced_model.phi_velocity
         )
 
-        # Finish debugging
-        if self.debugger:
-            self.debugger.finish_trajectory()
-
         return interface_force
-
-    def _get_real_mass_position(self) -> float:
-        """Get the real mass position from the simple mass system"""
-        if self._real_mass_position_getter:
-            return self._real_mass_position_getter()
-        return 0.0
-
-    def _get_real_mass_velocity(self) -> float:
-        """Get the real mass velocity from the simple mass system"""
-        if self._real_mass_velocity_getter:
-            return self._real_mass_velocity_getter()
-        return 0.0
 
     def _interpolate_haptic_state(self, haptic_states: List[HapticState], target_time: float, hl: float):
         """

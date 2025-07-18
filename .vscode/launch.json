@@ -92,7 +92,7 @@
             "args": [
                 "--ros-args",
                 "-p",
-                "delay_compensation_method:=ZOH", // 'DelayRIM', 'ZOH', or 'ZOHPhi
+                "delay_compensation_method:=DelayRIM", // 'DelayRIM', 'ZOH', or 'ZOHPhi
                 "-p",
                 "control_period:=0.001",
             ],

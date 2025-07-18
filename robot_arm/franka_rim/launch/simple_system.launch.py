@@ -62,7 +62,7 @@ def generate_launch_description():
                 "spring_constant": K_SPRING,
                 "damping_coefficient": D_SPRING,
                 "simulation_frequency": 1000.0,
-                "rim_publish_frequency": 500.0,
+                "rim_publish_frequency": 1000.0,
                 "interface_stiffness": K_INT,
                 "interface_damping": D_INT,
                 "i3_state_topic": "/inverse3/state_delayed",  # Topic for Inverse3State messages
@@ -111,13 +111,11 @@ def generate_launch_description():
                 "rim_topic": "/rim_msg_delayed",
                 "cmd_topic": "/simple_system/cmd",
                 "control_period": 0.001,  # 1kHz
-                "delay_compensation_method": "DelayRIM",  # Enable DelayRIM for debugging
-                "interface_stiffness": 3000.0,
-                "interface_damping": 2.0,
-                "force_scaling": 1.0,  # No scaling for simple system
-                "enable_debug": True,  # Enable debugging
-                "debug_csv": True,  # Enable CSV logging
-                "debug_rviz": True,  # Enable RViz visualization
+                "delay_compensation_method": "DelayRIM",  # 'DelayRIM', 'ZOH', or 'ZOHPhi
+                "interface_stiffness": K_INT,
+                "interface_damping": D_INT,
+                "force_scaling": F_SCALE,  # No scaling for simple system
+                "max_workers": 8,  # Threading parameter
             }
         ],
         output="screen",
@@ -133,6 +131,6 @@ def generate_launch_description():
             simple_mass_system_node,
             rim_msg_delay_node,
             i3_msg_delay_node,
-            delay_rim_node,
+            # delay_rim_node,
         ]
     )

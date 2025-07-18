@@ -3,13 +3,11 @@ from rclpy.node import Node
 from arm_interfaces.msg import FrankaRIM, Teleop
 from teleop_interfaces.msg import Inverse3State
 from geometry_msgs.msg import WrenchStamped, Twist, Point, Quaternion
-from visualization_msgs.msg import MarkerArray  # Add missing import
 import numpy as np
 import time
 from collections import deque
 
 from franka_rim.delay_rim import DelayRIM, DelayCompensationMethod
-from franka_rim.delay_rim_debug import DelayRIMDebugger
 
 
 class DelayRIMNode(Node):
@@ -26,9 +24,6 @@ class DelayRIMNode(Node):
         self.declare_parameter("interface_damping", 100.0)
         self.declare_parameter("force_scaling", 0.02)
         self.declare_parameter("max_workers", 1)  # Threading parameter
-        self.declare_parameter("enable_debug", True)  # Enable debugging
-        self.declare_parameter("debug_csv", True)  # Enable CSV logging
-        self.declare_parameter("debug_rviz", True)  # Enable RViz visualization
 
         # Get parameters
         self.control_period = self.get_parameter("control_period").get_parameter_value().double_value
@@ -37,9 +32,6 @@ class DelayRIMNode(Node):
         self._interface_damping = self.get_parameter("interface_damping").get_parameter_value().double_value
         self._force_scaling = self.get_parameter("force_scaling").get_parameter_value().double_value
         max_workers = self.get_parameter("max_workers").get_parameter_value().integer_value
-        enable_debug = self.get_parameter("enable_debug").get_parameter_value().bool_value
-        debug_csv = self.get_parameter("debug_csv").get_parameter_value().bool_value
-        debug_rviz = self.get_parameter("debug_rviz").get_parameter_value().bool_value
 
         rim_topic = self.get_parameter("rim_topic").get_parameter_value().string_value
         cmd_topic = self.get_parameter("cmd_topic").get_parameter_value().string_value
@@ -56,22 +48,6 @@ class DelayRIMNode(Node):
         # Initialize DelayRIM manager
         self.delay_rim_manager = DelayRIM(interface_dim=interface_dim, max_workers=max_workers)
 
-        # Initialize debugger
-        if enable_debug:
-            self.debugger = DelayRIMDebugger(self, enable_csv=debug_csv, enable_rviz=debug_rviz)
-            self.delay_rim_manager.set_debugger(self.debugger)
-
-            # Real mass position tracking for debugging
-            self._current_mass_position = 0.0
-            self._current_mass_velocity = 0.0
-
-            # Add the real mass position to the DelayRIM manager
-            self.delay_rim_manager.set_real_mass_getter(
-                lambda: self._current_mass_position, lambda: self._current_mass_velocity
-            )
-        else:
-            self.debugger = None
-
         # State variables
         self._last_rim_msg = None
         self._last_inverse3_msg = None
@@ -86,12 +62,6 @@ class DelayRIMNode(Node):
         # Subscribers
         self._rim_sub = self.create_subscription(FrankaRIM, rim_topic, self._rim_callback, 10)
         self._inverse3_sub = self.create_subscription(Inverse3State, "/inverse3/state", self._inverse3_callback, 10)
-
-        # Subscribe to simple mass system state for debugging (if enabled)
-        if enable_debug:
-            self._mass_state_sub = self.create_subscription(
-                MarkerArray, "/simple_system/visualization", self._mass_state_callback, 10
-            )
 
         # Publishers
         self._force_pub = self.create_publisher(WrenchStamped, "/inverse3/wrench_des", 10)
@@ -336,26 +306,6 @@ class DelayRIMNode(Node):
         self.delay_rim_manager.shutdown()
         super().destroy_node()
 
-    def _mass_state_callback(self, msg: MarkerArray):
-        """Extract real mass position from visualization markers for debugging"""
-        if not self.debugger:
-            return
-
-        # Find the mass marker (id=0)
-        for marker in msg.markers:
-            if marker.id == 0 and marker.ns == "simple_system":
-                prev_position = self._current_mass_position
-                self._current_mass_position = marker.pose.position.x
-
-                # Simple velocity estimation from position difference
-                if hasattr(self, "_last_mass_update_time"):
-                    dt = time.time() - self._last_mass_update_time
-                    if dt > 0:
-                        self._current_mass_velocity = (self._current_mass_position - prev_position) / dt
-
-                self._last_mass_update_time = time.time()
-                break
-
 
 def main(args=None):
     rclpy.init(args=args)
@@ -366,10 +316,13 @@ def main(args=None):
         rclpy.spin(node)
 
     except KeyboardInterrupt:
-        node.get_logger().info("KeyboardInterrupt, shutting down.\n")
+        node.get_logger().info(f"KeyboardInterrupt occurred, shutting down.\n")
 
     finally:
-        node.destroy_node()
+        # Cleanup
+        if "node" in locals():
+            node.destroy_node()
+        rclpy.shutdown()
 
 
 if __name__ == "__main__":
