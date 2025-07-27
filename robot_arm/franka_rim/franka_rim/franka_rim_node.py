@@ -3,13 +3,15 @@ from rclpy.node import Node
 from arm_interfaces.msg import FrankaModel, FrankaRIM
 import numpy as np
 
+import time
+
 
 class FrankaRIMNode(Node):
     def __init__(self):
         super().__init__("franka_rim_node")
         self.get_logger().info("Initializing FrankaRIMNode")
 
-        self.declare_parameter("rim_period", 0.1)  # Default: 0.1s (10 Hz)
+        self.declare_parameter("rim_period", 0.001)  # Default: 0.1s (10 Hz)
         self.declare_parameter("interface_stiffness", 3000.0)  # Default stiffness
         self.declare_parameter("interface_damping", 2.0)  # Default damping
 
@@ -100,8 +102,8 @@ class FrankaRIMNode(Node):
             effective_force = M_eff @ [self.Ai @ M_inv @ (self.fa - self.c) + self.Ai_dot_q_dot]
 
             # RIM state
-            rim_position = self.x_ee
-            rim_velocity = self.v_ee
+            rim_position = self.x_ee[0]
+            rim_velocity = self.v_ee[0]
 
             # Fill message fields
             self._rim_msg.effective_mass = M_eff.flatten().tolist()
@@ -114,6 +116,7 @@ class FrankaRIMNode(Node):
             self._rim_msg = None
 
     def _rim_timer_callback(self):
+        tic = time.perf_counter()
         # Compute RIM
         self._compute_rim()
 
@@ -121,6 +124,10 @@ class FrankaRIMNode(Node):
         if self._rim_msg is not None:
             self._rim_pub.publish(self._rim_msg)
             self.get_logger().debug("Published RIM message")
+
+        # self.get_logger().info(
+        #     f"RIM publish frequency: {1.0 / (time.perf_counter() - tic):.2f} Hz", throttle_duration_sec=3.0
+        # )
 
 
 def main(args=None):

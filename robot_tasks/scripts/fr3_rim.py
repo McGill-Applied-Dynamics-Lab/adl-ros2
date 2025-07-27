@@ -26,7 +26,7 @@ from datetime import datetime
 import signal
 
 # Experiment parameters
-START_POSE = np.array([0.4253, 0.0, 0.10])
+START_POSE = np.array([0.4253, 0.0, 0.025])
 
 
 def _set_robot_mode_async(node: Node, control_mode: ControlMode, goal_source: GoalSource):
@@ -120,9 +120,10 @@ def main(args=None):
 
     # franka_arm.gripper_close()
 
-    print("Pressing down cube...")
-    X_G_cube = pin.SE3(pin.rpy.rpyToMatrix(gripper_start_pose_rpy), p_BGstart - np.array([0.0, 0.0, 0.075]))
-    franka_arm.goto_pose(X_G_cube, Duration(seconds=10.0), Kp=1.0, Kd=0.0)
+    # Press down cube
+    # print("Pressing down cube...")
+    # X_G_cube = pin.SE3(pin.rpy.rpyToMatrix(gripper_start_pose_rpy), p_BGstart - np.array([0.0, 0.0, 0.075]))
+    # franka_arm.goto_pose(X_G_cube, Duration(seconds=10.0), Kp=1.0, Kd=0.0)
 
     # --- Control mode
     mode_set_ok = _set_robot_mode_async(node, control_mode=ControlMode.CART_VEL, goal_source=GoalSource.TELEOP)
@@ -130,6 +131,7 @@ def main(args=None):
         print("Failed to set control mode and goal source. Exiting...")
         return
 
+    return
     # Start a trial! Call the insert action
     print("--- Starting Delay RIM Experiment ---")
 

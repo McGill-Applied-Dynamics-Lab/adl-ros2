@@ -1,7 +1,16 @@
+import os
+
 from launch import LaunchDescription
 from launch_ros.actions import Node
 from launch.actions import DeclareLaunchArgument
 from launch.substitutions import LaunchConfiguration
+
+from ament_index_python.packages import get_package_share_directory
+
+K_INT = 0.1
+D_INT = 0.0
+
+F_SCALE = 0.005
 
 
 def generate_launch_description():
@@ -18,7 +27,38 @@ def generate_launch_description():
     # Delay parameters
     delay_arg = DeclareLaunchArgument("delay", default_value="100", description="5g or fixed delay value in ms")
 
+    delay_compensation = DeclareLaunchArgument(
+        "compensation", default_value="delay_rim", description="Delay compensation method: delay_rim, zoh, or zoh_phi"
+    )
+
+    rviz_config_file = os.path.join(
+        get_package_share_directory("franka_rim"),
+        "rviz",
+        "fr3_rim.rviz",
+    )
+
     #! Nodes
+    rviz_node = Node(
+        package="rviz2",
+        executable="rviz2",
+        name="rviz2",
+        arguments=["-d", rviz_config_file],
+        output="screen",
+    )
+
+    visualization_node = Node(
+        package="franka_rim",
+        executable="rim_vis_node",
+        name="rim_vis_node",
+        parameters=[
+            {
+                "i3_sphere_size": 0.03,
+                "rim_sphere_size": 0.03,
+            }
+        ],
+        output="screen",
+    )
+
     # Inverse3Node
     inverse3_node = Node(
         package="inverse3_ros2",
@@ -51,10 +91,20 @@ def generate_launch_description():
     )
 
     # FrankaRimNode
-    franka_rim_node = Node(package="franka_rim", executable="franka_rim_node", name="franka_rim_node", output="screen")
+    franka_rim_node = Node(
+        package="franka_rim",
+        executable="franka_rim_node",
+        name="franka_rim_node",
+        output="screen",
+        parameters=[
+            {
+                "rim_period": 1.0,
+            }
+        ],
+    )
 
     # Network delay simulator for robot state
-    rim_msg_delay_node = Node(
+    delay_node_rim_msg = Node(
         package="network_sim",
         executable="network_sim_node",
         name="rim_msg_delay",
@@ -69,7 +119,7 @@ def generate_launch_description():
         output="screen",
     )
 
-    ee_cmd_delay_node = Node(
+    delay_node_ee_cmd = Node(
         package="network_sim",
         executable="network_sim_node",
         name="ee_cmd_delay",
@@ -77,7 +127,7 @@ def generate_launch_description():
             {
                 "input_topic": "/teleop/ee_cmd_no_delay",
                 "output_topic": "/teleop/ee_cmd",
-                "delay": LaunchConfiguration("delay"),
+                "delay": 0,  # LaunchConfiguration("delay"),
                 "message_type": "arm_interfaces/msg/Teleop",
             }
         ],
@@ -94,11 +144,13 @@ def generate_launch_description():
                 "rim_topic": "/fr3_rim_delayed",
                 "cmd_topic": "/teleop/ee_cmd_no_delay",
                 "control_period": 0.001,  # 1kHz control rate
-                # "delay_compensation_method": "DelayRIM",
-                "interface_stiffness": 3000.0,
-                "interface_damping": 2.0,
-                # "force_scaling": 0.02,  # Force scaling factor
-                "delay_compensation_method": "ZOH",  # 'DelayRIM', 'ZOH', or 'ZOHPhi
+                "delay_compensation_method": LaunchConfiguration(
+                    "compensation"
+                ),  # "DelayRIM",  # 'DelayRIM', 'ZOH', or 'ZOHPhi
+                "interface_stiffness": K_INT,
+                "interface_damping": D_INT,
+                "force_scaling": F_SCALE,  # No scaling for simple system
+                "max_workers": 8,  # Threading parameter
             }
         ],
         output="screen",
@@ -106,16 +158,21 @@ def generate_launch_description():
 
     return LaunchDescription(
         [
-            # Args
+            # -- Args
             model_update_freq_arg,
             robot_urdf_filename_arg,
             delay_arg,
-            # Nodes
-            inverse3_node,
-            rim_msg_delay_node,
-            ee_cmd_delay_node,
+            delay_compensation,
+            # -- Nodes
+            # inverse3_node,
             franka_model_node,
             franka_rim_node,
-            delay_rim_node,  # Re-enable the DelayRIM node
+            delay_rim_node,
+            # -- Network sim nodes
+            delay_node_rim_msg,
+            delay_node_ee_cmd,
+            # -- Visualization
+            rviz_node,
+            visualization_node,
         ]
     )

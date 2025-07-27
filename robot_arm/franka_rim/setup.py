@@ -66,6 +66,7 @@ setup(
             "franka_rim_node = franka_rim.franka_rim_node:main",
             "delay_rim_node = franka_rim.delay_rim_node:main",
             "simple_mass_system_node = franka_rim.simple_mass_system_node:main",
+            "rim_vis_node = franka_rim.visualization_node:main",
         ],
     },
     package_data={"franka_rim": ["models/*.urdf"]},

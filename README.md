@@ -73,7 +73,7 @@ scp csirois@franka-pc:~/workspaces/franka_ros2_ws/index.html ~/workspaces/franka
 
 4. Open `index.html` in browser
 
-### On Host
+### On Hostr
 
 ## Data Analysis
 ### With Foxglove
@@ -90,3 +90,13 @@ ros2 launch foxglove_bridge foxglove_bridge_launch.xml
 
 **Note**
 The node can be launched in the docker container
+
+## Teleop
+```
+ros2 run inverse3_ros2 inverse3_node
+```
+
+## Delay Rim
+```
+ros2 launch franka_rim franka_rim.launch.py delay:=5g compensation:=zoh
+```

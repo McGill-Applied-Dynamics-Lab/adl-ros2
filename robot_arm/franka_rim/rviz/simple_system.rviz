@@ -3,9 +3,8 @@ Panels:
     Help Height: 78
     Name: Displays
     Property Tree Widget:
-      Expanded:
-        - /Axes1
-      Splitter Ratio: 0.5
+      Expanded: ~
+      Splitter       Splitter Ratio: 0.5
     Tree Height: 461
   - Class: rviz_common/Selection
     Name: Selection

@@ -92,9 +92,11 @@
             "args": [
                 "--ros-args",
                 "-p",
-                "delay_compensation_method:=ZOH", // 'DelayRIM', 'ZOH', or 'ZOHPhi
+                "delay_compensation_method:=delay_rim", // 'delay_rim', 'zoh', or 'zoh_phi'
                 "-p",
                 "control_period:=0.001",
+                "-p",
+                "max_workers:=1",
             ],
             "console": "integratedTerminal",
         },

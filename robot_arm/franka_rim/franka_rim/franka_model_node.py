@@ -188,7 +188,7 @@ class FrankaModelNode(Node):
 
             # Get end-effector Jacobian in base frame
             ee_frame = self._robot_model.getFrameId("fr3_hand_tcp")
-            J_ee = pin.computeFrameJacobian(self._robot_model, self._robot_data, q, ee_frame, pin.WORLD)
+            J_ee = pin.computeFrameJacobian(self._robot_model, self._robot_data, q, ee_frame, pin.LOCAL_WORLD_ALIGNED)
 
             # Estimate external wrench using: f_ext = pinv(J^T) * tau_ext
             # This assumes that external forces act primarily at the end-effector
@@ -229,31 +229,54 @@ class FrankaModelNode(Node):
 
         return f_ext
 
-    def _compute_applied_forces(self, q, q_dot):
+    def _compute_applied_forces(self, q, q_dot, q_ddot=None):
         """Compute applied forces at end-effector.
 
         Args:
             q: Joint positions (n,)
             q_dot: Joint velocities (n,)
+            q_ddot: Joint accelerations (n,)
         """
-        if np.abs(self.v_ee[0]) > self._vel_thres:
-            # Only friction in x for now
-            f_friction = np.array([self.f_ext_robot[0], 0, 0])  # Friction force in x direction
+        # #! Block pushing
+        # if np.abs(self.v_ee[0]) > self._vel_thres:
+        #     # Only friction in x for now
+        #     f_friction = np.array([self.f_ext_robot[0], 0, 0])  # Friction force in x direction
 
-            # friction_val = 10 * np.sign(self.v_ee[0])  # Friction proportional to velocity
-            # f_friction = np.array([friction_val, 0, 0])  # Friction force in x direction
+        #     # friction_val = 10 * np.sign(self.v_ee[0])  # Friction proportional to velocity
+        #     # f_friction = np.array([friction_val, 0, 0])  # Friction force in x direction
 
-            # print("Slip")
-            fa_slip = self.J_ee.T[:, :3] @ f_friction
+        #     # print("Slip")
+        #     fa_slip = self.J_ee.T[:, :3] @ f_friction
 
-            self.fa = fa_slip
+        #     self.fa = fa_slip
 
-        else:
-            # print("Stick")
-            fa_stick = np.zeros_like(q)  # Placeholder for stick forces
-            self.fa = fa_stick
+        # else:
+        #     # print("Stick")
+        #     fa_stick = np.zeros_like(q)  # Placeholder for stick forces
+        #     self.fa = fa_stick
 
-        self.fa = np.zeros_like(q)
+        #! Free movement
+        ee_frame = self._robot_model.getFrameId("fr3_hand_tcp")
+        J_ee = pin.computeFrameJacobian(self._robot_model, self._robot_data, q, ee_frame, pin.LOCAL_WORLD_ALIGNED)
+
+        tau_grav = pin.computeGeneralizedGravity(self._robot_model, self._robot_data, q)
+        J_ee_T_pinv = np.linalg.pinv(J_ee.T)
+
+        # q_dot = np.array([1,  0.5,  2,  0.001, -0.   , -0.001,  0.002])
+        # c = pin.nle(self._robot_model, self._robot_data, q, q_dot)
+        # print(c)
+        if q_ddot is None:
+            self.get_logger().error("Joint accelerations (q_ddot) not provided for force estimation")
+
+        tau_inertial = self.M @ q_ddot
+        tau_nle = self.c - tau_grav
+
+        tau_applied = self.tau - tau_grav
+
+        self.fa = J_ee_T_pinv @ tau_applied
+        self.fa = self.fa[0].reshape(
+            1,
+        )  # TODO: From interaction Jacobian
 
     def _publish_external_forces(self, f_ext_estimated):
         """Publish external force estimates to separate topics for visualization."""
@@ -324,9 +347,10 @@ class FrankaModelNode(Node):
 
         # Forces
         self._compute_external_forces(q, q_dot, q_ddot)
-        self._compute_applied_forces(q, q_dot)
+        self._compute_applied_forces(q, q_dot, q_ddot)
+
         # self.f_ext_estimated = self._compute_contact_forces(q, q_dot)
-        self.fa = np.zeros_like(q)
+        # self.fa = np.zeros_like(q)
 
     def _compute_and_publish_model(self):
         if not self._model_loaded or self._last_q is None or self._last_dq is None:
