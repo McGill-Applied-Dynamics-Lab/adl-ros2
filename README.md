@@ -8,6 +8,14 @@ Developed for ROS2 Humble with Ubuntu 22.04.
 * **[teleop](teleop/README.md)**: To teleoperate a robotic arm with the inverse 3 or a joystick
 * **[robot_tasks](robot_tasks/README.md)**: To execute task w/ the robot arm
 
+## Usage
+
+Connecting to the docker container in a terminal
+```
+docker exec -it franka_ros2 /bin/bash
+```
+
+
 ## Installing
 1. Create a ros2 workspace
 2. In `src`, clone `adg_ros2`, `franka_ros2`, `isaac_ros2_messages`(?)
@@ -65,7 +73,7 @@ scp csirois@franka-pc:~/workspaces/franka_ros2_ws/index.html ~/workspaces/franka
 
 4. Open `index.html` in browser
 
-### On Host
+### On Hostr
 
 ## Data Analysis
 ### With Foxglove
@@ -82,3 +90,13 @@ ros2 launch foxglove_bridge foxglove_bridge_launch.xml
 
 **Note**
 The node can be launched in the docker container
+
+## Teleop
+```
+ros2 run inverse3_ros2 inverse3_node
+```
+
+## Delay Rim
+```
+ros2 launch franka_rim franka_rim.launch.py delay:=5g compensation:=zoh
+```

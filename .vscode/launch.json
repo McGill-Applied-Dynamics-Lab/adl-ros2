@@ -85,14 +85,30 @@
             "console": "integratedTerminal",
         },
         {
+            "name": "Node: delay_rim",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "src/adg_ros2/robot_arm/franka_rim/franka_rim/delay_rim_node.py",
+            "args": [
+                "--ros-args",
+                "-p",
+                "delay_compensation_method:=delay_rim", // 'delay_rim', 'zoh', or 'zoh_phi'
+                "-p",
+                "control_period:=0.001",
+                "-p",
+                "max_workers:=1",
+            ],
+            "console": "integratedTerminal",
+        },
+        {
             "name": "Launch: i3_teleop.launch.py",
             "type": "debugpy",
             "request": "launch",
-            "program": "/opt/ros/humble/bin/ros2",  // Path to the ros2 executable
+            "program": "/opt/ros/humble/bin/ros2", // Path to the ros2 executable
             "args": [
-              "launch",
-              "teleop",
-              "i3_teleop.launch.py",
+                "launch",
+                "teleop",
+                "i3_teleop.launch.py",
             ],
             "console": "integratedTerminal",
         },
@@ -100,11 +116,11 @@
             "name": "Launch: joy_teleop.launch.py",
             "type": "debugpy",
             "request": "launch",
-            "program": "/opt/ros/humble/bin/ros2",  // Path to the ros2 executable
+            "program": "/opt/ros/humble/bin/ros2", // Path to the ros2 executable
             "args": [
-              "launch",
-              "teleop",
-              "joy_teleop.launch.py",
+                "launch",
+                "teleop",
+                "joy_teleop.launch.py",
             ],
             "console": "integratedTerminal",
         },
@@ -112,12 +128,12 @@
             "name": "Launch: fr3.launch.py",
             "type": "debugpy",
             "request": "launch",
-            "program": "/opt/ros/humble/bin/ros2",  // Path to the ros2 executable
+            "program": "/opt/ros/humble/bin/ros2", // Path to the ros2 executable
             "args": [
-              "launch",
-              "robot_arm_bringup",
-              "fr3.launch.py",
-              "hw_type:=fake"
+                "launch",
+                "robot_arm_bringup",
+                "fr3.launch.py",
+                "hw_type:=fake"
             ],
             "console": "integratedTerminal",
             // "env": {
@@ -125,6 +141,18 @@
             //   "ROS_DOMAIN_ID": "0"       // Optional: Set ROS_DOMAIN_ID if needed
             // },
             // "cwd": "${workspaceFolder}"  // Set the working directory
+        },
+        {
+            "name": "Launch: franka_rim.launch.py",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "/opt/ros/humble/bin/ros2", // Path to the ros2 executable
+            "args": [
+                "launch",
+                "franka_rim",
+                "franka_rim.launch.py",
+            ],
+            "console": "integratedTerminal",
         },
     ]
 }
