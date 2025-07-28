@@ -55,6 +55,7 @@ add_library(
   src/move_to_start_controller.cpp
   src/motion_generator.cpp
   src/my_controller.cpp
+  src/osc_pd_controller.cpp
 )
 
 target_compile_features(fr3_controllers PUBLIC cxx_std_17)

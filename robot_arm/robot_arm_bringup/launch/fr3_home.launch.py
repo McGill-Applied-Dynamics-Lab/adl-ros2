@@ -41,6 +41,8 @@ from launch_ros.parameter_descriptions import ParameterValue
 
 # import xacro
 
+# TODO: Launch overwite controllers of `fr3.launch.py` instead of duplicate code
+
 
 def generate_launch_description():
     arm_id_parameter_name = "arm_id"
@@ -224,7 +226,8 @@ def generate_launch_description():
         # "model_example_controller",
         # "my_controller",
         # "joint_trajectory_controller",
-        "osc_pd_controller",
+        # "osc_pd_controller",
+        "move_to_start_example_controller",
     ]
 
     ros_controllers_nodes = []
@@ -291,7 +294,7 @@ def generate_launch_description():
             gripper_launch_description,
             ros2_control_node,
             franka_robot_state_broadcaster_spawner,
-            rviz2_node,
+            # rviz2_node,
             isaac_topics_remapper_node,
             # joy_node,
             # delayed_franka_interface_node,

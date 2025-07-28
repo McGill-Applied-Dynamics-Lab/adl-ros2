@@ -20,3 +20,9 @@ Supported arms:
 
 
 
+## Controllers
+### OSC PD Controller
+To test goal
+```bash
+ros2 topic pub --once /osc_pd_controller/goal geometry_msgs/msg/PointStamped "{point: {x: 0.309, y: 0.0, z: 0.488}}"
+```

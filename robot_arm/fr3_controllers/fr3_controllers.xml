@@ -52,5 +52,14 @@
         My custom controller.
     </description>
   </class>
+
+  <!-- OSC PD Controller -->
+  <class name="fr3_controllers/OSCPDController"
+          type="fr3_controllers::OSCPDController"
+          base_class_type="controller_interface::ControllerInterface">
+    <description>
+        Operational Space Control PD Controller for Franka Research 3.
+    </description>
+  </class>
 </library>
 
