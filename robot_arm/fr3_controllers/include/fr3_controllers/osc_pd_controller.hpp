@@ -33,6 +33,7 @@ class OSCPDController : public controller_interface::ControllerInterface
 {
  public:
   using Vector3d = Eigen::Vector3d;
+  using Vector6d = Eigen::Matrix<double, 6, 1>;
   using Vector7d = Eigen::Matrix<double, 7, 1>;
 
   [[nodiscard]] controller_interface::InterfaceConfiguration command_interface_configuration() const override;
@@ -51,13 +52,17 @@ class OSCPDController : public controller_interface::ControllerInterface
   Vector7d q_;
   Vector7d dq_;
 
-  // Control gains (scalar values)
-  double kp_gain_;  // Proportional gain
-  double kd_gain_;  // Derivative gain
+  // Control gains (separate for position and orientation)
+  double kp_pos_gain_;  // Proportional gain for position
+  double kd_pos_gain_;  // Derivative gain for position
+  double kp_ori_gain_;  // Proportional gain for orientation
+  double kd_ori_gain_;  // Derivative gain for orientation
 
-  // Desired position from topic
+  // Desired position from topic and fixed orientation
   Eigen::Vector3d position_des_;
+  Eigen::Quaterniond orientation_des_;  // Fixed desired orientation (pointing down)
   bool goal_received_;
+  bool orientation_initialized_;
 
   // Topic subscription
   rclcpp::Subscription<geometry_msgs::msg::PointStamped>::SharedPtr goal_sub_;
@@ -71,8 +76,8 @@ class OSCPDController : public controller_interface::ControllerInterface
 
   void updateJointStates();
   void goalCallback(const geometry_msgs::msg::PointStamped::SharedPtr msg);
-  Vector3d computePositionError(const Eigen::Vector3d& current_position);
-  Eigen::Matrix<double, 3, 7> getPositionJacobian();
+  Vector6d computeError(const Eigen::Vector3d& current_position, const Eigen::Quaterniond& current_orientation);
+  Eigen::Matrix<double, 6, 7> getEndEffectorJacobian();
 };
 
 }  // namespace fr3_controllers

@@ -200,8 +200,11 @@ my_controller:
 osc_pd_controller:
   ros__parameters:
     arm_id: fr3
-    kp_gain: 100.0
-    kd_gain: 0.0
+    kp_pos_gain: 500.0  # Position proportional gain
+    kd_pos_gain: 50.0   # Position derivative gain
+    kp_ori_gain: 100.0   # Orientation proportional gain
+    kd_ori_gain: 5.0    # Orientation derivative gain
+    
     goal_topic: /osc_pd_controller/goal
 
     joints:

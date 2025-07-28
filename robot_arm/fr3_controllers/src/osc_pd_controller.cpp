@@ -97,18 +97,36 @@ controller_interface::return_type OSCPDController::update(const rclcpp::Time& /*
   }
 
   Eigen::Vector3d current_position = pose_matrix.block<3, 1>(0, 3);
+  Eigen::Matrix3d rotation_matrix = pose_matrix.block<3, 3>(0, 0);
+  Eigen::Quaterniond current_orientation(rotation_matrix);
 
-  // Compute position error
-  Vector3d position_error = computePositionError(current_position);
+  //   // Initialize desired orientation to current orientation on first goal
+  //   if (goal_received_ && !orientation_initialized_)
+  //   {
+  //     orientation_des_ = current_orientation;
+  //     orientation_initialized_ = true;
+  //     RCLCPP_INFO(get_node()->get_logger(),
+  //                 "Initialized desired orientation to current: [w=%.3f, x=%.3f, y=%.3f, z=%.3f]",
+  //                 orientation_des_.w(), orientation_des_.x(), orientation_des_.y(), orientation_des_.z());
+  //   }
 
-  // Get position Jacobian (first 3 rows of end-effector Jacobian)
-  Eigen::Matrix<double, 3, 7> jacobian = getPositionJacobian();
+  // Compute Cartesian error (position + orientation)
+  Vector6d cartesian_error = computeError(current_position, current_orientation);
 
-  // Compute Cartesian velocity (J * q_dot) - only position part
-  Vector3d cartesian_velocity = jacobian * dq_;
+  // Get full end-effector Jacobian (6x7)
+  Eigen::Matrix<double, 6, 7> jacobian = getEndEffectorJacobian();
 
-  // Compute desired Cartesian force using PD control law
-  Vector3d cartesian_force = kp_gain_ * position_error - kd_gain_ * cartesian_velocity;
+  // Compute Cartesian velocity (J * q_dot) - full 6DOF
+  Vector6d cartesian_velocity = jacobian * dq_;
+
+  // Compute desired Cartesian force/torque using PD control law with separate gains
+  Vector6d cartesian_force;
+
+  // Position control (first 3 elements)
+  cartesian_force.head<3>() = kp_pos_gain_ * cartesian_error.head<3>() - kd_pos_gain_ * cartesian_velocity.head<3>();
+
+  // Orientation control (last 3 elements)
+  cartesian_force.tail<3>() = kp_ori_gain_ * cartesian_error.tail<3>() - kd_ori_gain_ * cartesian_velocity.tail<3>();
 
   // Convert to joint torques: tau = J^T * F_cartesian
   Vector7d tau_d = jacobian.transpose() * cartesian_force;
@@ -120,47 +138,38 @@ controller_interface::return_type OSCPDController::update(const rclcpp::Time& /*
   }
 
   //! Debugging: Printing
-  //   // Print joint states
-  //   RCLCPP_INFO_THROTTLE(get_node()->get_logger(), *get_node()->get_clock(), 1000,
-  //                        "Joint positions: [%.3f, %.3f, %.3f, %.3f, %.3f, %.3f, %.3f]", q_(0), q_(1), q_(2), q_(3),
-  //                        q_(4), q_(5), q_(6));
-
-  //   RCLCPP_INFO_THROTTLE(get_node()->get_logger(), *get_node()->get_clock(), 1000,
-  //                        "Joint velocities: [%.3f, %.3f, %.3f, %.3f, %.3f, %.3f, %.3f]", dq_(0), dq_(1), dq_(2),
-  //                        dq_(3), dq_(4), dq_(5), dq_(6));
-
   //   // Print current and desired positions
   //   RCLCPP_INFO_THROTTLE(get_node()->get_logger(), *get_node()->get_clock(), 1000, "Current position: [%.3f, %.3f,
   //   %.3f]",
   //                        current_position.x(), current_position.y(), current_position.z());
-
   //   RCLCPP_INFO_THROTTLE(get_node()->get_logger(), *get_node()->get_clock(), 1000, "Desired position: [%.3f, %.3f,
   //   %.3f]",
   //                        position_des_.x(), position_des_.y(), position_des_.z());
 
-  //   // Print position error
-  //   RCLCPP_INFO_THROTTLE(get_node()->get_logger(), *get_node()->get_clock(), 1000, "Position error: [%.3f, %.3f,
-  //   %.3f]",
-  //                        position_error.x(), position_error.y(), position_error.z());
+  //   // Print current and desired orientations (if initialized)
+  //   if (orientation_initialized_)
+  //   {
+  //     RCLCPP_INFO_THROTTLE(get_node()->get_logger(), *get_node()->get_clock(), 1000,
+  //                          "Current orientation: [w=%.3f, x=%.3f, y=%.3f, z=%.3f]", current_orientation.w(),
+  //                          current_orientation.x(), current_orientation.y(), current_orientation.z());
+  //   }
 
-  //   // Print Jacobian (first row only to save space)
-  //   RCLCPP_INFO_THROTTLE(get_node()->get_logger(), *get_node()->get_clock(), 1000,
-  //                        "Jacobian row 0: [%.3f, %.3f, %.3f, %.3f, %.3f, %.3f, %.3f]", jacobian(0, 0), jacobian(0,
-  //                        1), jacobian(0, 2), jacobian(0, 3), jacobian(0, 4), jacobian(0, 5), jacobian(0, 6));
-
-  //   // Print Cartesian velocity
-  //   RCLCPP_INFO_THROTTLE(get_node()->get_logger(), *get_node()->get_clock(), 1000,
-  //                        "Cartesian velocity: [%.3f, %.3f, %.3f]", cartesian_velocity.x(), cartesian_velocity.y(),
-  //                        cartesian_velocity.z());
-  //   // Print Cartesian force
-  //   RCLCPP_INFO_THROTTLE(get_node()->get_logger(), *get_node()->get_clock(), 1000, "Cartesian force: [%.3f, %.3f,
-  //   %.3f]",
-  //                        cartesian_force.x(), cartesian_force.y(), cartesian_force.z());
-
-  // Print commanded torques
+  // Print Cartesian error (position + orientation)
   RCLCPP_INFO_THROTTLE(get_node()->get_logger(), *get_node()->get_clock(), 1000,
-                       "Commanded torques: [%.3f, %.3f, %.3f, %.3f, %.3f, %.3f, %.3f]", tau_d(0), tau_d(1), tau_d(2),
-                       tau_d(3), tau_d(4), tau_d(5), tau_d(6));
+                       "Cartesian error (pos+ori): [%.3f, %.3f, %.3f, %.3f, %.3f, %.3f]", cartesian_error(0),
+                       cartesian_error(1), cartesian_error(2), cartesian_error(3), cartesian_error(4),
+                       cartesian_error(5));
+
+  //   // Print Cartesian force/torque
+  //   RCLCPP_INFO_THROTTLE(get_node()->get_logger(), *get_node()->get_clock(), 1000,
+  //                        "Cartesian force/torque: [%.3f, %.3f, %.3f, %.3f, %.3f, %.3f]", cartesian_force(0),
+  //                        cartesian_force(1), cartesian_force(2), cartesian_force(3), cartesian_force(4),
+  //                        cartesian_force(5));
+
+  //   // Print commanded torques
+  //   RCLCPP_INFO_THROTTLE(get_node()->get_logger(), *get_node()->get_clock(), 1000,
+  //                        "Commanded torques: [%.3f, %.3f, %.3f, %.3f, %.3f, %.3f, %.3f]", tau_d(0), tau_d(1),
+  //                        tau_d(2), tau_d(3), tau_d(4), tau_d(5), tau_d(6));
 
   return controller_interface::return_type::OK;
 }
@@ -170,8 +179,10 @@ CallbackReturn OSCPDController::on_init()
   try
   {
     auto_declare<std::string>("arm_id", "fr3");
-    auto_declare<double>("kp_gain", 100.0);                              // Default proportional gain
-    auto_declare<double>("kd_gain", 10.0);                               // Default derivative gain
+    auto_declare<double>("kp_pos_gain", 100.0);                          // Default proportional gain for position
+    auto_declare<double>("kd_pos_gain", 10.0);                           // Default derivative gain for position
+    auto_declare<double>("kp_ori_gain", 50.0);                           // Default proportional gain for orientation
+    auto_declare<double>("kd_ori_gain", 5.0);                            // Default derivative gain for orientation
     auto_declare<std::string>("goal_topic", "/osc_pd_controller/goal");  // Topic for desired position
   }
   catch (const std::exception& e)
@@ -187,22 +198,35 @@ CallbackReturn OSCPDController::on_configure(const rclcpp_lifecycle::State& /*pr
   arm_id_ = get_node()->get_parameter("arm_id").as_string();
 
   // Configure gains
-  kp_gain_ = get_node()->get_parameter("kp_gain").as_double();
-  kd_gain_ = get_node()->get_parameter("kd_gain").as_double();
+  kp_pos_gain_ = get_node()->get_parameter("kp_pos_gain").as_double();
+  kd_pos_gain_ = get_node()->get_parameter("kd_pos_gain").as_double();
+  kp_ori_gain_ = get_node()->get_parameter("kp_ori_gain").as_double();
+  kd_ori_gain_ = get_node()->get_parameter("kd_ori_gain").as_double();
 
-  if (kp_gain_ <= 0.0)
+  if (kp_pos_gain_ <= 0.0)
   {
-    RCLCPP_FATAL(get_node()->get_logger(), "kp_gain must be positive, got: %f", kp_gain_);
+    RCLCPP_FATAL(get_node()->get_logger(), "kp_pos_gain must be positive, got: %f", kp_pos_gain_);
     return CallbackReturn::FAILURE;
   }
-  if (kd_gain_ < 0.0)
+  if (kd_pos_gain_ < 0.0)
   {
-    RCLCPP_FATAL(get_node()->get_logger(), "kd_gain must be positive, got: %f", kd_gain_);
+    RCLCPP_FATAL(get_node()->get_logger(), "kd_pos_gain must be non-negative, got: %f", kd_pos_gain_);
+    return CallbackReturn::FAILURE;
+  }
+  if (kp_ori_gain_ <= 0.0)
+  {
+    RCLCPP_FATAL(get_node()->get_logger(), "kp_ori_gain must be positive, got: %f", kp_ori_gain_);
+    return CallbackReturn::FAILURE;
+  }
+  if (kd_ori_gain_ < 0.0)
+  {
+    RCLCPP_FATAL(get_node()->get_logger(), "kd_ori_gain must be non-negative, got: %f", kd_ori_gain_);
     return CallbackReturn::FAILURE;
   }
 
   // Initialize goal state
   goal_received_ = false;
+  orientation_initialized_ = false;
   position_des_.setZero();
 
   // Create goal subscription
@@ -216,7 +240,8 @@ CallbackReturn OSCPDController::on_configure(const rclcpp_lifecycle::State& /*pr
           arm_id_ + "/" + k_robot_model_interface_name, arm_id_ + "/" + k_robot_state_interface_name));
 
   RCLCPP_INFO(get_node()->get_logger(), "OSC PD Controller configured successfully");
-  RCLCPP_INFO(get_node()->get_logger(), "Gains: kp=%.2f, kd=%.2f", kp_gain_, kd_gain_);
+  RCLCPP_INFO(get_node()->get_logger(), "Position gains: kp=%.2f, kd=%.2f", kp_pos_gain_, kd_pos_gain_);
+  RCLCPP_INFO(get_node()->get_logger(), "Orientation gains: kp=%.2f, kd=%.2f", kp_ori_gain_, kd_ori_gain_);
   RCLCPP_INFO(get_node()->get_logger(), "Listening for goals on topic: %s", goal_topic.c_str());
   return CallbackReturn::SUCCESS;
 }
@@ -238,6 +263,9 @@ CallbackReturn OSCPDController::on_activate(const rclcpp_lifecycle::State& /*pre
 
   // Initialize joint states
   updateJointStates();
+
+  // Set desired orientation to point down (identity quaternion)
+  orientation_des_ = Eigen::Quaterniond(0.0, 1.0, 0.0, 0.0);  // Pointing downards
 
   RCLCPP_INFO(get_node()->get_logger(), "OSC PD Controller activated");
   return CallbackReturn::SUCCESS;
@@ -269,27 +297,78 @@ void OSCPDController::goalCallback(const geometry_msgs::msg::PointStamped::Share
   position_des_ << msg->point.x, msg->point.y, msg->point.z;
   goal_received_ = true;
 
-  RCLCPP_INFO(get_node()->get_logger(), "Received new goal: [%.3f, %.3f, %.3f]", position_des_.x(), position_des_.y(),
-              position_des_.z());
+  //   RCLCPP_INFO(get_node()->get_logger(), "Received new goal: [%.3f, %.3f, %.3f]", position_des_.x(),
+  //   position_des_.y(),
+  //               position_des_.z());
 }
 
-OSCPDController::Vector3d OSCPDController::computePositionError(const Eigen::Vector3d& current_position)
+OSCPDController::Vector6d OSCPDController::computeError(const Eigen::Vector3d& current_position,
+                                                        const Eigen::Quaterniond& current_orientation)
 {
-  return position_des_ - current_position;
+  Vector6d error;
+
+  // Position error
+  error.head<3>() = position_des_ - current_position;
+
+  //! Option 1 - Error with quaternions
+  //   // Orientation error using quaternion difference
+  //   Eigen::Quaterniond orientation_error = orientation_des_ * current_orientation.inverse();
+
+  //   // Convert quaternion error to axis-angle representation
+  //   if (orientation_error.w() < 0)
+  //   {
+  //     orientation_error.coeffs() *= -1;  // Ensure shortest path
+  //   }
+
+  //   // For small rotations, the axis-angle is approximately 2 * [x, y, z] of the quaternion
+  //   error.tail<3>() = 2.0 * orientation_error.vec();
+
+  // --- 2. Orientation error using quaternion difference
+  // Ensure both quaternions are normalized
+  Eigen::Quaterniond q = current_orientation.normalized();
+  Eigen::Quaterniond qd = orientation_des_.normalized();  // assume this is a member variable or passed in
+
+  // Compute error quaternion: q_e = q_d * q.inverse()
+  Eigen::Quaterniond q_e = qd * q.conjugate();
+
+  // Ensure shortest path (handle double cover of SO(3))
+  if (q_e.w() < 0.0)
+    q_e.coeffs() *= -1.0;
+
+  // Orientation error is imaginary part of q_e (x, y, z)
+  error.tail<3>() = q_e.vec();  // .vec() returns (x, y, z)
+
+  //   //! Option 2 - As a vector pointing downwards
+  //   // --- 2. Orientation error (align current Z-axis with desired Z-axis)
+  //   // Get current rotation matrix from quaternion
+  //   Eigen::Matrix3d R = current_orientation.toRotationMatrix();
+
+  //   // Current Z-axis of end-effector in world frame
+  //   Eigen::Vector3d z_axis_current = R.col(2);
+
+  //   // Desired Z-axis in world frame (downward)
+  //   Eigen::Vector3d z_axis_desired(0.0, 0.0, -1.0);
+
+  //   // Orientation error: rotation needed to align current Z to desired Z
+  //   Eigen::Vector3d orientation_error = z_axis_current.cross(z_axis_desired);
+
+  //   error.tail<3>() = orientation_error;
+
+  return error;
 }
 
-Eigen::Matrix<double, 3, 7> OSCPDController::getPositionJacobian()
+Eigen::Matrix<double, 6, 7> OSCPDController::getEndEffectorJacobian()
 {
   // Get the full end-effector Jacobian from the robot model
   std::array<double, 42> jacobian_array = franka_robot_model_->getZeroJacobian(franka::Frame::kEndEffector);
 
-  // Convert to Eigen matrix and extract only position part (first 3 rows)
-  Eigen::Matrix<double, 3, 7> jacobian;
-  for (int i = 0; i < 3; ++i)
-  {  // Only position rows (0, 1, 2)
+  // Convert to Eigen matrix (6x7)
+  Eigen::Matrix<double, 6, 7> jacobian;
+  for (int i = 0; i < 6; ++i)
+  {
     for (int j = 0; j < 7; ++j)
     {
-      jacobian(i, j) = jacobian_array[j * 6 + i];  // Column-major storage, skip orientation rows
+      jacobian(i, j) = jacobian_array[j * 6 + i];  // Column-major storage
     }
   }
 
