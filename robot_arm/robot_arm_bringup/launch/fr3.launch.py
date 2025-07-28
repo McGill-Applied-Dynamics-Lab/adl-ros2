@@ -48,12 +48,14 @@ def generate_launch_description():
     load_gripper_parameter_name = "load_gripper"
     hw_type_parameter_name = "hw_type"
     use_rviz_parameter_name = "use_rviz"
+    namespace_parameter_name = "namespace"
 
     arm_id = LaunchConfiguration(arm_id_parameter_name)
     robot_ip = LaunchConfiguration(robot_ip_parameter_name)
     load_gripper = LaunchConfiguration(load_gripper_parameter_name)
     hw_type = LaunchConfiguration(hw_type_parameter_name)  # fake, real, or isaac
     use_rviz = LaunchConfiguration(use_rviz_parameter_name)
+    namespace = LaunchConfiguration(namespace_parameter_name)
 
     #! MARK: Configs
     rviz_file = os.path.join(
@@ -123,6 +125,12 @@ def generate_launch_description():
         choices=["real", "fake", "isaac", "gazebo"],
     )
 
+    namespace_launch_arg = DeclareLaunchArgument(
+        namespace_parameter_name,
+        default_value="",
+        description="Namespace for the robot. If not set, the robot will be launched in the global namespace.",
+    )
+
     #! MARK: Nodes
     # ** Publish TFs **
 
@@ -165,6 +173,7 @@ def generate_launch_description():
         ),
         launch_arguments={
             robot_ip_parameter_name: robot_ip,
+            namespace_parameter_name: namespace,
             # use_fake_hardware_parameter_name: use_fake_hardware,
         }.items(),
         condition=IfCondition(load_gripper),
@@ -274,6 +283,7 @@ def generate_launch_description():
             # fake_sensor_commands_launch_arg,
             load_gripper_launch_arg,
             hw_type_launch_arg,
+            namespace_launch_arg,
             #! --- Nodes ---
             joint_state_publisher_node,
             robot_state_publisher,
