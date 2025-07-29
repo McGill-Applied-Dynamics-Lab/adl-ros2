@@ -7,8 +7,8 @@ from launch.substitutions import LaunchConfiguration
 
 from ament_index_python.packages import get_package_share_directory
 
-K_INT = 0.1
-D_INT = 0.0
+K_INT = 500.0
+D_INT = 50.0
 
 F_SCALE = 0.005
 
@@ -98,13 +98,13 @@ def generate_launch_description():
         output="screen",
         parameters=[
             {
-                "rim_period": 1.0,
+                "rim_period": 0.01,
             }
         ],
     )
 
     # Network delay simulator for robot state
-    delay_node_rim_msg = Node(
+    delay_node_rim_msg = Node(  # rim msg delay
         package="network_sim",
         executable="network_sim_node",
         name="rim_msg_delay",
@@ -119,16 +119,16 @@ def generate_launch_description():
         output="screen",
     )
 
-    delay_node_ee_cmd = Node(
+    delay_node_ee_cmd = Node(  # teleop cmd delay
         package="network_sim",
         executable="network_sim_node",
         name="ee_cmd_delay",
         parameters=[
             {
-                "input_topic": "/teleop/ee_cmd_no_delay",
-                "output_topic": "/teleop/ee_cmd",
+                "input_topic": "/osc_pd_controller/goal_pre_delay",
+                "output_topic": "/osc_pd_controller/goal",
                 "delay": 0,  # LaunchConfiguration("delay"),
-                "message_type": "arm_interfaces/msg/Teleop",
+                "message_type": "geometry_msgs/msg/PointStamped",  # "arm_interfaces/msg/Teleop",
             }
         ],
         output="screen",
@@ -142,7 +142,8 @@ def generate_launch_description():
         parameters=[
             {
                 "rim_topic": "/fr3_rim_delayed",
-                "cmd_topic": "/teleop/ee_cmd_no_delay",
+                # "cmd_topic": "/teleop/ee_cmd_no_delay",
+                "cmd_topic": "/osc_pd_controller/goal_pre_delay",  # For teleop commands
                 "control_period": 0.001,  # 1kHz control rate
                 "delay_compensation_method": LaunchConfiguration(
                     "compensation"

@@ -97,6 +97,7 @@ class FrankaRIMNode(Node):
             # Where Ai is the interaction Jacobian (1 x n)
             M_inv = np.linalg.inv(self.M)
             M_eff = np.linalg.inv(self.Ai @ M_inv @ self.Ai.T)
+            # M_eff = np.array([[10.0]])
 
             # Compute effective force: f_eff = M_eff * (Ai * inv(M) * (tau - c) + Ai_dot * q_dot)
             effective_force = M_eff @ [self.Ai @ M_inv @ (self.fa - self.c) + self.Ai_dot_q_dot]

@@ -134,7 +134,7 @@ class Inverse3Node(Node):
         # Parameters
         self._apply_contact_forces = APPLY_CONTACT_FORCES
 
-        self._workspace_center = np.array([0.04, -0.17, 0.16])  # center of the ws
+        self._workspace_center = np.array([0.0, -0.17, 0.16])  # center of the ws
         self._pos_radius = self.get_parameter("pos_radius").get_parameter_value().double_value
         self._ks = self.get_parameter("restitution_stiffness").get_parameter_value().double_value
 
@@ -160,6 +160,8 @@ class Inverse3Node(Node):
 
         self._init_subscribers()
         self._init_publishers()
+
+        self._ee_cmd_timer = self.create_timer(0.01, self._pub_i3_state)
 
     def _init_i3(self):
         """
@@ -225,7 +227,6 @@ class Inverse3Node(Node):
         i3_state_topic = "/inverse3/state"
         self._i3_state_pub = self.create_publisher(Inverse3State, i3_state_topic, 10)
         self._i3_state_msg = Inverse3State()
-        self._ee_cmd_timer = self.create_timer(0.01, self._pub_i3_state)
 
     #! Callbacks
     def _wrench_topic_callback(self, msg: WrenchStamped):
@@ -250,6 +251,8 @@ class Inverse3Node(Node):
         self._raw_position, self._velocity = self._i3.end_effector_force(self._forces.tolist())
         self._raw_position = np.array(self._raw_position)
         self._velocity = np.array(self._velocity)
+
+        # print(f"Raw position: {self._raw_position}")
 
         # map of the workspace into the virtual space
         self._ws_position = self._scale * (self._raw_position - self._workspace_center)

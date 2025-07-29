@@ -66,6 +66,10 @@ class DelayRIMNode(Node):
         # self._last_delayrim_result_id = -1  # Track which DelayRIM result we last processed
         self._persistent_initialized = False
 
+        # TODO: Specify in params? Or init?
+        self._workspace_position = np.array([0.3085, 0.0, 0.4854])  # Home position
+        # self._workspace_position = np.array([0.4253, 0.0, 0.025])  # Cube position
+
         # Frequency monitoring
         self._control_loop_times = deque(maxlen=100)  # Store last 100 loop times
         self._control_loop_count = 0
@@ -79,7 +83,7 @@ class DelayRIMNode(Node):
         # Publishers
         self._force_pub = self.create_publisher(WrenchStamped, "/inverse3/wrench_des", 10)
         self._interface_force_pub = self.create_publisher(WrenchStamped, "/rim_interface_force", 10)
-        self._teleop_pub = self.create_publisher(Teleop, cmd_topic, 10)
+        self._teleop_pub = self.create_publisher(PointStamped, cmd_topic, 10)
         self._rim_state_pub = self.create_publisher(PointStamped, "/rim_state", 10)
 
         # Control timer
@@ -90,8 +94,8 @@ class DelayRIMNode(Node):
         # self._stats_timer = self.create_timer(2.0, self._log_performance_stats)  #TODO: Uncomment for stats logging
 
         self.get_logger().info(f"Setting robot gains")
-        self.set_robot_parameter("/fr3_interface", "Kp_gripper_trans", 2)
-        self.set_robot_parameter("/fr3_interface", "Kd_gripper_trans", 0.1)
+        # self.set_robot_parameter("/fr3_interface", "Kp_gripper_trans", 2)
+        # self.set_robot_parameter("/fr3_interface", "Kd_gripper_trans", 0.1)
 
         self.get_logger().info(
             f"DelayRIMNode started with method={self._delay_method.value}, "
@@ -137,10 +141,29 @@ class DelayRIMNode(Node):
         self.get_logger().debug(f"Submitted RIM packet {packet_id} for DelayRIM processing")
 
     def _inverse3_callback(self, msg: Inverse3State):
-        """Callback for Inverse3 state - add to haptic history"""
+        """Callback for Inverse3 state - add to haptic history
 
+        Process the I3 message: changes the coordinate system to match the robot's and add the workspace offset.
+        """
         self._last_inverse3_msg = msg
-        self.delay_rim_manager.add_haptic_state(msg)
+
+        position = np.array(
+            [
+                msg.pose.position.y + self._workspace_position[0],
+                -msg.pose.position.x + self._workspace_position[1],
+                msg.pose.position.z + self._workspace_position[2],
+            ]
+        )
+
+        velocity = np.array(
+            [
+                msg.twist.linear.y,
+                -msg.twist.linear.x,
+                msg.twist.linear.z,
+            ]
+        )
+
+        self.delay_rim_manager.add_haptic_state(position, velocity)
 
     def _compute_interface_forces(self) -> np.ndarray:
         """Get the latest DelayRIM computation result or step persistent model"""
@@ -188,7 +211,7 @@ class DelayRIMNode(Node):
 
         return haptic_position, haptic_velocity
 
-    def _publish_force(self, force):
+    def _publish_force(self, force: np.ndarray):
         """Publish computed force to haptic device"""
         #! Publish interface forces
         interface_force_msg = WrenchStamped()
@@ -196,6 +219,9 @@ class DelayRIMNode(Node):
         interface_force_msg.header.frame_id = "haptic_device"
 
         # Apply force scaling and coordinate transform
+        force = force.reshape(
+            -1,
+        )
         interface_force_msg.wrench.force.x = float(force[0])
         interface_force_msg.wrench.force.y = 0.0
         interface_force_msg.wrench.force.z = 0.0
@@ -223,9 +249,9 @@ class DelayRIMNode(Node):
         if self._last_inverse3_msg is None or self.rim_state is None:
             return
 
-        robot_pose_msg = Teleop()  # TODO: Use a more specific message type (like PoseStamped)
+        robot_pose_msg = PointStamped()
         robot_pose_msg.header.stamp = self.get_clock().now().to_msg()
-        robot_pose_msg.control_mode = Teleop.CONTROL_MODE_POSITION
+        # robot_pose_msg.control_mode = Teleop.CONTROL_MODE_POSITION
 
         #! Old - Send the haptic position as the desired end-effector position
         # Extract haptic position for teleop command
@@ -237,12 +263,10 @@ class DelayRIMNode(Node):
             ]
         )
         # Lateral commands
-        haptic_position[0] += 0.3067  # 0.3067  0.4253
-
         ee_pos_des_msg = Point()
-        ee_pos_des_msg.x = haptic_position[0]
-        ee_pos_des_msg.y = 0.0
-        ee_pos_des_msg.z = 0.4828  # 0.4828, 0.025
+        ee_pos_des_msg.x = haptic_position[0] + self._workspace_position[0]  # Adjusted for workspace
+        ee_pos_des_msg.y = self._workspace_position[1]  # No lateral movement in y
+        ee_pos_des_msg.z = self._workspace_position[2]  # Adjusted for workspace
 
         # # Vertical commands
         # haptic_position[0] += 0.025
@@ -260,16 +284,18 @@ class DelayRIMNode(Node):
         # ee_pos_des_msg.y = 0.0
         # ee_pos_des_msg.z = 0.025
 
-        # Orientation
-        ee_quat_des = Quaternion()
-        ee_quat_des.x = 1.0
-        ee_quat_des.y = 0.0
-        ee_quat_des.z = 0.0
-        ee_quat_des.w = 0.0
+        robot_pose_msg.point = ee_pos_des_msg
 
-        robot_pose_msg.ee_des.position = ee_pos_des_msg
-        robot_pose_msg.ee_des.orientation = ee_quat_des
-        robot_pose_msg.ee_vel_des = Twist()
+        # # Orientation
+        # ee_quat_des = Quaternion()
+        # ee_quat_des.x = 1.0
+        # ee_quat_des.y = 0.0
+        # ee_quat_des.z = 0.0
+        # ee_quat_des.w = 0.0
+
+        # robot_pose_msg.ee_des.position = ee_pos_des_msg
+        # robot_pose_msg.ee_des.orientation = ee_quat_des
+        # robot_pose_msg.ee_vel_des = Twist()
 
         self._teleop_pub.publish(robot_pose_msg)
 
@@ -341,8 +367,7 @@ class DelayRIMNode(Node):
         )
 
     def _robot_cmd_timer_callback(self):
-        """Robot command timer callback at 10Hz"""
-        # This can be used to send commands to the robot at a lower frequency
+        """Callback to send commands to the robot."""
         if self._last_inverse3_msg is None:
             self.get_logger().debug("No Inverse3 state available for robot command", throttle_duration_sec=2.0)
             return
@@ -350,7 +375,7 @@ class DelayRIMNode(Node):
         # Publish teleop command at 10Hz
         self._publish_teleop_command()
 
-        self.get_logger().debug("Published teleop command at 10Hz")
+        # self.get_logger().debug("Published teleop command at 10Hz")
 
     def _log_performance_stats(self):
         """Log performance statistics including frequency monitoring"""

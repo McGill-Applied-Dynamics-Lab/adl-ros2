@@ -92,11 +92,17 @@
             "args": [
                 "--ros-args",
                 "-p",
-                "delay_compensation_method:=delay_rim", // 'delay_rim', 'zoh', or 'zoh_phi'
+                "delay_compensation_method:=zoh", // 'delay_rim', 'zoh', or 'zoh_phi'
                 "-p",
                 "control_period:=0.001",
                 "-p",
                 "max_workers:=1",
+                "-p",
+                "cmd_topic:=/osc_pd_controller/goal_pre_delay",
+                "-p",
+                "interface_stiffness:=500.0",
+                "-p",
+                "interface_damping:=50.0",
             ],
             "console": "integratedTerminal",
         },

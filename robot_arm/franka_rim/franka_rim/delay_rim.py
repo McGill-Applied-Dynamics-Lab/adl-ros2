@@ -115,7 +115,7 @@ class DelayRIM:
         # Persistent state for continuous 1kHz stepping
         self.rim_state: Optional[ReducedModelState] = None  # Latest computed RIM state
 
-    def add_haptic_state(self, inverse3_msg: Inverse3State) -> None:
+    def add_haptic_state(self, i3_position: np.array, i3_velocity: np.array) -> None:
         """
         Add new haptic state to history.
 
@@ -129,21 +129,20 @@ class DelayRIM:
         # Extract position and velocity (coordinate transform as needed)
         position = np.array(
             [
-                inverse3_msg.pose.position.y,
-                # -inverse3_msg.pose.position.x,
-                # inverse3_msg.pose.position.z
+                i3_position[0],
+                # i3_position[1],
+                # i3_position[2]
             ]
         ).reshape((self._interface_dim,))
 
-        # TODO: Init offset?
-        position[0] += 0.4253  # For robot arm
+        # position[0] += 0.4253  # For robot arm
         # position = position * 5  # For simple mass
 
         velocity = np.array(
             [
-                inverse3_msg.twist.linear.y,
-                # -inverse3_msg.twist.linear.x,
-                # inverse3_msg.twist.linear.z
+                i3_velocity[0],
+                # i3_velocity[1],
+                # i3_velocity[2]
             ]
         ).reshape((self._interface_dim,))
 
@@ -417,9 +416,9 @@ class DelayRIM:
 
         elif self.rim_state is not None:
             # No results available, step local rim model
-            self.latest_forces = np.zeros((self._interface_dim, 1))
+            # self.latest_forces = np.zeros((self._interface_dim, 1))
             # self.node.get_logger().info(
-            #     "No new DelayRIM results available, stepping local rim.", throttle_duration_sec=2.0
+            #     "No new DelayRIM results available, stepping local rim.", throttle_duration_sec=0.2
             # )
 
             latest_haptic_state = self.haptic_history[-1]
@@ -435,7 +434,9 @@ class DelayRIM:
         else:
             # No persistent state yet - return zero force
             self.latest_forces = np.zeros((self._interface_dim, 1))
-            self.node.get_logger().warn("No persistent RIM state available, returning zero force.")
+            self.node.get_logger().warn(
+                "No persistent RIM state available, returning zero force.", throttle_duration_sec=2.0
+            )
 
         return self.latest_forces  # Return last known result
 
