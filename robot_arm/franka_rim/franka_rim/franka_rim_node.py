@@ -5,6 +5,10 @@ import numpy as np
 
 import time
 
+from adg_ros2_utils.debug_utils import wait_for_debugger
+
+NODE_NAME = "franka_rim_node"
+
 
 class FrankaRIMNode(Node):
     def __init__(self):
@@ -132,6 +136,8 @@ class FrankaRIMNode(Node):
 
 
 def main(args=None):
+    wait_for_debugger(NODE_NAME)  # Wait for debugger if env variables is set
+
     rclpy.init(args=args)
     node = FrankaRIMNode()
     rclpy.spin(node)

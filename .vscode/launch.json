@@ -149,6 +149,22 @@
             // "cwd": "${workspaceFolder}"  // Set the working directory
         },
         {
+            "name": "Launch: i3_teleop_position.launch.py",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "/opt/ros/humble/bin/ros2", // Path to the ros2 executable
+            "args": [
+                "launch",
+                "teleop",
+                "i3_teleop_position.launch.py",
+                "fake_i3:=true",
+            ],
+            "console": "integratedTerminal",
+            "env": {
+                "DEBUG_NODE": "",
+            },
+        },
+        {
             "name": "Launch: franka_rim.launch.py",
             "type": "debugpy",
             "request": "launch",
@@ -157,8 +173,13 @@
                 "launch",
                 "franka_rim",
                 "franka_rim.launch.py",
+                "delay:=0",
+                "compensation:=zoh",
             ],
             "console": "integratedTerminal",
+            "env": {
+                "DEBUG_NODE": "",
+            }
         },
     ]
 }

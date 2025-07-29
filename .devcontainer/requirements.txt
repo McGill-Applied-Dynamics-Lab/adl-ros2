@@ -8,3 +8,4 @@ torchvision
 torchaudio
 skrl[torch]
 robomimic
+debugpy

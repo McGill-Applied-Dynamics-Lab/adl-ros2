@@ -8,10 +8,14 @@ import numpy as np
 from ament_index_python.packages import get_package_share_directory
 import os
 
+from adg_ros2_utils.debug_utils import wait_for_debugger
+
+NODE_NAME = "franka_model_node"
+
 
 class FrankaModelNode(Node):
     def __init__(self):
-        super().__init__("franka_model_node")
+        super().__init__(NODE_NAME)
         self.get_logger().info("Initializing FrankaModelNode")
 
         # Declare model update frequency as a ROS 2 parameter
@@ -416,6 +420,8 @@ class FrankaModelNode(Node):
 
 
 def main(args=None):
+    wait_for_debugger(NODE_NAME)  # Wait for debugger if env variables is set
+
     rclpy.init(args=args)
     node = FrankaModelNode()
     rclpy.spin(node)

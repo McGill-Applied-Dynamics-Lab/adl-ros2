@@ -14,6 +14,11 @@ from rclpy.parameter import Parameter
 from rcl_interfaces.srv import SetParameters
 
 
+from adg_ros2_utils.debug_utils import wait_for_debugger
+
+NODE_NAME = "delay_rim_node"
+
+
 class DelayRIMNode(Node):
     def __init__(self):
         super().__init__("delay_rim_node")
@@ -434,6 +439,8 @@ class DelayRIMNode(Node):
 
 
 def main(args=None):
+    wait_for_debugger(NODE_NAME)  # Wait for debugger if env variables is set
+
     rclpy.init(args=args)
     node = DelayRIMNode()
 
