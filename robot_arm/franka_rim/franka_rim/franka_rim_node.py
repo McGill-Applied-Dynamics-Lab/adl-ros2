@@ -1,6 +1,7 @@
 import rclpy
 from rclpy.node import Node
 from arm_interfaces.msg import FrankaModel, FrankaRIM
+from geometry_msgs.msg import WrenchStamped
 import numpy as np
 
 import time
@@ -23,6 +24,11 @@ class FrankaRIMNode(Node):
         self._interface_stiffness = self.get_parameter("interface_stiffness").get_parameter_value().double_value
         self._interface_damping = self.get_parameter("interface_damping").get_parameter_value().double_value
 
+        self.get_logger().info(
+            f"FrankaRIMNode initialized with rim_period={rim_period}s, "
+            f"interface_stiffness={self._interface_stiffness}, interface_damping={self._interface_damping}"
+        )
+
         self._last_model_msg = None
 
         # Model matrices
@@ -39,6 +45,14 @@ class FrankaRIMNode(Node):
 
         self._model_sub = self.create_subscription(FrankaModel, "/fr3_model", self._franka_model_callback, 10)
 
+        # Subscribe to cartesian force from OSC PD controller
+        self._cartesian_force_sub = self.create_subscription(
+            WrenchStamped,
+            "/osc_pd_controller/cartesian_force",
+            self._cartesian_force_callback,
+            10,
+        )
+
         # RIM Parameters
         self.m = 1  # Interface dimension
         self._rim_msg = None
@@ -50,10 +64,16 @@ class FrankaRIMNode(Node):
             f"FrankaRIMNode started, subscribing to /fr3_model, publishing to /fr3_rim, rim_period={rim_period}s"
         )
 
+        # State variables
+        self.cartesian_force = None  # Cartesian force from OSC PD controller (6D wrench)
+
     def _franka_model_callback(self, msg: FrankaModel):
         """
         Callback for receiving FrankaModel messages. Extracts model matrices and updates internal state.
         """
+        if self._last_model_msg is None:
+            self.get_logger().info("Franka model initialized")
+
         self._last_model_msg = msg
 
         n = msg.n if hasattr(msg, "n") and msg.n > 0 else int(np.sqrt(len(msg.mass_matrix)))
@@ -76,6 +96,22 @@ class FrankaRIMNode(Node):
         # self.get_logger().info(f"Received FrankaModel: M.shape={self.M.shape}, c.shape={self.c.shape}")
 
         # print(f"Xee: {self.x_ee[0]:>10.3f} | {self.x_ee[1]:>10.3f} | {self.x_ee[2]:>10.3f}")
+
+    def _cartesian_force_callback(self, msg: WrenchStamped):
+        """Callback for cartesian force from OSC PD controller."""
+        self.get_logger().debug("Received cartesian force from OSC PD controller")
+
+        # Extract 6D wrench from message
+        self.cartesian_force = np.array(
+            [
+                msg.wrench.force.x,
+                msg.wrench.force.y,
+                msg.wrench.force.z,
+                msg.wrench.torque.x,
+                msg.wrench.torque.y,
+                msg.wrench.torque.z,
+            ]
+        )
 
     def _compute_rim(self):
         """
@@ -105,6 +141,11 @@ class FrankaRIMNode(Node):
 
             # Compute effective force: f_eff = M_eff * (Ai * inv(M) * (tau - c) + Ai_dot * q_dot)
             effective_force = M_eff @ [self.Ai @ M_inv @ (self.fa - self.c) + self.Ai_dot_q_dot]
+
+            if self.cartesian_force is not None:
+                effective_force = self.cartesian_force[0].reshape((1, 1))
+            else:
+                effective_force = np.array([[0.0]])
 
             # RIM state
             rim_position = self.x_ee[0]

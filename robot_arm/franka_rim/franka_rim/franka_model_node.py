@@ -12,6 +12,8 @@ from adg_ros2_utils.debug_utils import wait_for_debugger
 
 NODE_NAME = "franka_model_node"
 
+PIN_FRAME = pin.LOCAL_WORLD_ALIGNED  # pin.WORLD or pin.LOCAL_WORLD_ALIGNED
+
 
 class FrankaModelNode(Node):
     def __init__(self):
@@ -37,6 +39,14 @@ class FrankaModelNode(Node):
             FrankaRobotState,
             input_topic,
             self._robot_state_callback,
+            10,
+        )
+
+        # Subscribe to cartesian force from OSC PD controller
+        self._cartesian_force_sub = self.create_subscription(
+            WrenchStamped,
+            "/osc_pd_controller/cartesian_force",
+            self._cartesian_force_callback,
             10,
         )
 
@@ -78,6 +88,7 @@ class FrankaModelNode(Node):
         self.f_ext_estimated = None  # Estimated external forces (6D wrench)
         self.f_ext_robot = None  # Robot's own force estimates (6D wrench)
         self.tau_ext = None  # External joint torques from robot
+        self.cartesian_force = None  # Cartesian force from OSC PD controller (6D wrench)
 
         self.p_i = np.array([-1, 0, 0])  # Interaction surface normal in base frame
         self.Di = np.hstack([self.p_i, np.zeros(3)])
@@ -145,12 +156,16 @@ class FrankaModelNode(Node):
         if not self._model_loaded:
             return
 
+        if self._last_q is None:
+            self.get_logger().info("Robot state received")
+
         self._last_q = np.array(msg.measured_joint_state.position)[: self._n]
         self._last_dq = np.array(msg.measured_joint_state.velocity)[: self._n]
         self._last_ddq = np.array(msg.ddq_d)[: self._n]
 
         # Set tau from measured_joint_state.effort
         self.tau = np.array(msg.measured_joint_state.effort)
+        # self.tau = np.array(msg.desired_joint_state.effort)
 
         # Read external torque estimates from robot
         if len(msg.tau_ext_hat_filtered.effort) > 0:
@@ -168,6 +183,22 @@ class FrankaModelNode(Node):
         self.v_ee = np.array([msg.o_dp_ee_d.twist.linear.x, msg.o_dp_ee_d.twist.linear.y, msg.o_dp_ee_d.twist.linear.z])
         # print(f"Vee: {self.v_ee[0]:>10.3f} | {self.v_ee[1]:>10.3f} | {self.v_ee[2]:>10.3f}")
         # print(f"Xee: {self.x_ee[0]:>10.3f} | {self.x_ee[1]:>10.3f} | {self.x_ee[2]:>10.3f}")
+
+    def _cartesian_force_callback(self, msg: WrenchStamped):
+        """Callback for cartesian force from OSC PD controller."""
+        self.get_logger().debug("Received cartesian force from OSC PD controller")
+
+        # Extract 6D wrench from message
+        self.cartesian_force = np.array(
+            [
+                msg.wrench.force.x,
+                msg.wrench.force.y,
+                msg.wrench.force.z,
+                msg.wrench.torque.x,
+                msg.wrench.torque.y,
+                msg.wrench.torque.z,
+            ]
+        )
 
     def _compute_external_forces(self, q, q_dot, q_ddot=None):
         """Compute estimated external forces at end-effector.
@@ -319,9 +350,9 @@ class FrankaModelNode(Node):
 
         # --- Jacobians ---
         ee_frame = self._robot_model.getFrameId("fr3_hand_tcp")
-        self.J_ee = pin.computeFrameJacobian(self._robot_model, self._robot_data, q, ee_frame, pin.WORLD)
+        self.J_ee = pin.computeFrameJacobian(self._robot_model, self._robot_data, q, ee_frame, PIN_FRAME)
         self.J_dot_ee = pin.frameJacobianTimeVariation(
-            self._robot_model, self._robot_data, q, q_dot, ee_frame, pin.WORLD
+            self._robot_model, self._robot_data, q, q_dot, ee_frame, PIN_FRAME
         )
 
         # Interaction Jacobian (placeholder, to be computed for a specific frame or task)

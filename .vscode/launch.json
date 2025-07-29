@@ -175,6 +175,7 @@
                 "franka_rim.launch.py",
                 "delay:=0",
                 "compensation:=zoh",
+                "fake_i3:=true",
             ],
             "console": "integratedTerminal",
             "env": {

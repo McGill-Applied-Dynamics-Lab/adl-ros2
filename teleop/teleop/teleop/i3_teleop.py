@@ -11,6 +11,10 @@ from geometry_msgs.msg import PoseStamped, Pose, TwistStamped, Twist, WrenchStam
 import numpy as np
 from enum import Enum
 
+from adg_ros2_utils.debug_utils import wait_for_debugger
+
+NODE_NAME = "i3_teleop"
+
 DEBUG = False
 
 
@@ -73,7 +77,7 @@ def ros2np(msg: Vector3 | Point) -> np.ndarray:
 
 class I3Teleop(Node):
     def __init__(self):
-        super().__init__("i3_teleop")
+        super().__init__(NODE_NAME)
         self.get_logger().info("Initializing I3Teleop...")
 
         #! Attributes
@@ -383,6 +387,8 @@ class I3Teleop(Node):
 
 
 def main(args=None):
+    wait_for_debugger(NODE_NAME)  # Wait for debugger if env variables is set
+
     rclpy.init(args=args)
     node = I3Teleop()
 

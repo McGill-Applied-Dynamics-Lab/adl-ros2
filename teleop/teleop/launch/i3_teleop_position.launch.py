@@ -26,20 +26,17 @@ def generate_launch_description():
         ],
     )
 
-    haptic_simulator_node = Node(
+    i3_sim_node = Node(
         package="franka_rim",
-        executable="haptic_simulator_node",
+        executable="i3_sim_node",
         name="i3_simulator_node",
         output="screen",
         parameters=[
             {
-                "publish_frequency": 100.0,  # 100Hz
-                "sine_frequency": 2.0,  # 2 cycles per second
-                "amplitude": 0.05,  # 5cm amplitude
-                "duration": 1.0,  # 1 second duration (completes 2 cycles)
-                "center_x": 0.0,
-                "center_y": 0.0,
-                "center_z": 0.0,
+                # "publish_frequency": 100.0,  # 100Hz
+                "sine_frequency": 0.2,  # 2 cycles per second
+                "amplitude": 0.2,  # 5cm amplitude
+                "n_cycles": 2,
             }
         ],
         condition=IfCondition(LaunchConfiguration("fake_i3")),
@@ -65,7 +62,7 @@ def generate_launch_description():
             fake_i3_arg,
             #! --- Nodes ---
             i3_teleop_node,
-            haptic_simulator_node,
+            i3_sim_node,
             inverse3_node,
         ]
     )

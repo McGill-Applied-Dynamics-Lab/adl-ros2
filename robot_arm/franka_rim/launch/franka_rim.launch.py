@@ -4,11 +4,12 @@ from launch import LaunchDescription
 from launch_ros.actions import Node
 from launch.actions import DeclareLaunchArgument
 from launch.substitutions import LaunchConfiguration
+from launch.conditions import IfCondition, UnlessCondition
 
 from ament_index_python.packages import get_package_share_directory
 
 K_INT = 500.0
-D_INT = 50.0
+D_INT = 41.71
 
 F_SCALE = 0.005
 
@@ -29,6 +30,10 @@ def generate_launch_description():
 
     delay_compensation = DeclareLaunchArgument(
         "compensation", default_value="delay_rim", description="Delay compensation method: delay_rim, zoh, or zoh_phi"
+    )
+
+    fake_i3_arg = DeclareLaunchArgument(
+        "fake_i3", default_value="false", description="Use haptic simulator instead of real Inverse3 device"
     )
 
     rviz_config_file = os.path.join(
@@ -59,21 +64,39 @@ def generate_launch_description():
         output="screen",
     )
 
-    # Inverse3Node
-    inverse3_node = Node(
+    # Inverse3Node (real device)
+    inverse3_node = Node(  # noqa
         package="inverse3_ros2",
         executable="inverse3_node",
         name="inverse3_node",
         output="screen",
         parameters=[
             {
-                # "input_topic": "/robot_state_delayed",
                 "restitution_stiffness": 1.0,
             }
         ],
+        condition=UnlessCondition(LaunchConfiguration("fake_i3")),
     )
 
-    # FrankaModelNode
+    # Haptic Simulator Node (fake device)
+    i3_sim_node = Node(
+        package="franka_rim",
+        executable="i3_sim_node",
+        name="i3_sim_node",
+        output="screen",
+        parameters=[
+            {
+                "publish_frequency": 1000.0,
+                "sine_frequency": 0.2,
+                "amplitude": 0.2,
+                "n_cycles": 1,
+                "wait_to_start": True,
+            }
+        ],
+        condition=IfCondition(LaunchConfiguration("fake_i3")),
+    )
+
+    # Franka Model Node
     franka_model_node = Node(
         package="franka_rim",
         executable="franka_model_node",
@@ -90,7 +113,7 @@ def generate_launch_description():
         output="screen",
     )
 
-    # FrankaRimNode
+    # Franka Rim Node
     franka_rim_node = Node(
         package="franka_rim",
         executable="franka_rim_node",
@@ -98,7 +121,9 @@ def generate_launch_description():
         output="screen",
         parameters=[
             {
-                "rim_period": 0.01,
+                "rim_period": 0.05,  # 20 Hz
+                "interface_stiffness": K_INT,
+                "interface_damping": D_INT,
             }
         ],
     )
@@ -164,8 +189,10 @@ def generate_launch_description():
             robot_urdf_filename_arg,
             delay_arg,
             delay_compensation,
+            fake_i3_arg,
             # -- Nodes
             # inverse3_node,
+            i3_sim_node,
             franka_model_node,
             franka_rim_node,
             delay_rim_node,

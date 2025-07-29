@@ -162,8 +162,12 @@ class DelayRIM:
         reduced_model.hl = 0.001  # 1ms timestep
 
         # Update RIM state from message
-        reduced_model.position = np.array(rim_msg.rim_position).reshape((self._interface_dim, 1))
-        reduced_model.velocity = np.array(rim_msg.rim_velocity).reshape((self._interface_dim, 1))
+        if self.rim_state is None:
+            reduced_model.position = np.array(rim_msg.rim_position).reshape((self._interface_dim, 1))
+            reduced_model.velocity = np.array(rim_msg.rim_velocity).reshape((self._interface_dim, 1))
+        else:
+            reduced_model.position = self.rim_state.position.copy()
+            reduced_model.velocity = self.rim_state.velocity.copy()
 
         # Update effective parameters
         effective_mass_flat = rim_msg.effective_mass
@@ -378,7 +382,6 @@ class DelayRIM:
     ###
     def get_latest_forces(self) -> Optional[np.ndarray]:
         """Get the most recent interface forces computed using the selected delay compensation method."""
-
         ready_results = []
         completed_ids = []
         force_render_time = time.perf_counter()
@@ -432,11 +435,9 @@ class DelayRIM:
             self.latest_forces = self.rim_state.interface_force
 
         else:
-            # No persistent state yet - return zero force
+            # No persistent state yet
             self.latest_forces = np.zeros((self._interface_dim, 1))
-            self.node.get_logger().warn(
-                "No persistent RIM state available, returning zero force.", throttle_duration_sec=2.0
-            )
+            self.node.get_logger().warn("No persistent RIM state available.", throttle_duration_sec=2.0)
 
         return self.latest_forces  # Return last known result
 

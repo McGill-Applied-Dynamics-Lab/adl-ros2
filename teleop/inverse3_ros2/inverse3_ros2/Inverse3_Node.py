@@ -1,7 +1,7 @@
 from typing import Literal
 import rclpy
 from rclpy.node import Node  # node class makes a ROS2 Node
-from rclpy.executors import MultiThreadedExecutor
+# from rclpy.executors import MultiThreadedExecutor
 
 from geometry_msgs.msg import WrenchStamped, Vector3, Point
 from teleop_interfaces.msg import Inverse3State
@@ -9,6 +9,10 @@ from teleop_interfaces.msg import Inverse3State
 # libraries needed for Inverse3
 from inverse3_ros2.websocket_inverse3 import Inverse3
 import numpy as np
+
+from adg_ros2_utils.debug_utils import wait_for_debugger
+
+NODE_NAME = "inverse3_node"
 
 APPLY_CONTACT_FORCES = True
 DEBUG = False
@@ -108,7 +112,7 @@ def ros2np(msg: Vector3 | Point) -> np.ndarray:
 
 class Inverse3Node(Node):
     def __init__(self):
-        super().__init__("inverse3_node")
+        super().__init__(NODE_NAME)
         self.get_logger().info("Initializing inverse3_node...")
 
         #! Declare parameters
@@ -301,7 +305,7 @@ class Inverse3Node(Node):
 
 
 def main(args=None):
-    node_name = "inverse3_node"
+    wait_for_debugger(NODE_NAME)  # Wait for debugger if env variables is set
 
     rclpy.init(args=args)
     node = Inverse3Node()
@@ -310,7 +314,7 @@ def main(args=None):
     # executor.add_node(node)
 
     try:
-        node.get_logger().info(f"{node_name} launched, end with CTRL-C")
+        node.get_logger().info(f"{NODE_NAME} launched, end with CTRL-C")
         rclpy.spin(node)
         # executor.spin()
 
