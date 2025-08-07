@@ -139,11 +139,12 @@ class FrankaRIMNode(Node):
             M_eff = np.linalg.inv(self.Ai @ M_inv @ self.Ai.T)
             # M_eff = np.array([[10.0]])
 
+            # --- effective force
             # Compute effective force: f_eff = M_eff * (Ai * inv(M) * (tau - c) + Ai_dot * q_dot)
-            effective_force = M_eff @ [self.Ai @ M_inv @ (self.fa - self.c) + self.Ai_dot_q_dot]
+            # effective_force = M_eff @ [self.Ai @ M_inv @ (self.fa - self.c) + self.Ai_dot_q_dot]
 
             if self.cartesian_force is not None:
-                effective_force = self.cartesian_force[0].reshape((1, 1))
+                effective_force = -self.cartesian_force[0].reshape((1, 1))
             else:
                 effective_force = np.array([[0.0]])
 

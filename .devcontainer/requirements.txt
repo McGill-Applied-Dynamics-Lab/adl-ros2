@@ -9,3 +9,5 @@ torchaudio
 skrl[torch]
 robomimic
 debugpy
+websockets
+orjson

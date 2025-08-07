@@ -34,6 +34,7 @@ class DelayRIMNode(Node):
         self.declare_parameter("interface_damping", 100.0)
         self.declare_parameter("force_scaling", 0.02)
         self.declare_parameter("max_workers", 1)  # Threading parameter
+        self.declare_parameter("i3_position_scale", 1.0)  # Mapping between I3 and end-effector position
 
         # Get parameters
         self.control_period = self.get_parameter("control_period").get_parameter_value().double_value
@@ -42,6 +43,7 @@ class DelayRIMNode(Node):
         self._interface_damping = self.get_parameter("interface_damping").get_parameter_value().double_value
         self._force_scaling = self.get_parameter("force_scaling").get_parameter_value().double_value
         max_workers = self.get_parameter("max_workers").get_parameter_value().integer_value
+        self._i3_position_scale = self.get_parameter("i3_position_scale").get_parameter_value().double_value
 
         rim_topic = self.get_parameter("rim_topic").get_parameter_value().string_value
         cmd_topic = self.get_parameter("cmd_topic").get_parameter_value().string_value
@@ -61,7 +63,9 @@ class DelayRIMNode(Node):
 
         # State variables
         self._last_rim_msg = None
-        self._last_inverse3_msg = None
+        self._last_inverse3_msg: Inverse3State = None
+        self._desired_ee_position: np.ndarray | None = None  # Desired end-effector position from teleop commands
+
         self._interface_forces = np.zeros((3, 1))
         self.rim_state = None  # Estimated RIM state from DelayRIM computation
 
@@ -72,8 +76,9 @@ class DelayRIMNode(Node):
         self._persistent_initialized = False
 
         # TODO: Specify in params? Or init?
-        self._workspace_position = np.array([0.3085, 0.0, 0.4854])  # Home position
-        # self._workspace_position = np.array([0.4253, 0.0, 0.025])  # Cube position
+        # self._workspace_position = np.array([0.3085, 0.0, 0.4854])  # Home position
+        # self._workspace_position = np.array([0.40, 0.0, 0.4854])
+        self._workspace_position = np.array([0.4253, 0.0, 0.00])  # Cube position
 
         # Frequency monitoring
         self._control_loop_times = deque(maxlen=100)  # Store last 100 loop times
@@ -152,13 +157,17 @@ class DelayRIMNode(Node):
         """
         self._last_inverse3_msg = msg
 
-        position = np.array(
+        i3_position = np.array(
             [
-                msg.pose.position.y + self._workspace_position[0],
-                -msg.pose.position.x + self._workspace_position[1],
-                msg.pose.position.z + self._workspace_position[2],
+                msg.pose.position.y,
+                -msg.pose.position.x,
+                msg.pose.position.z,
             ]
         )
+
+        # Apply workspace offset and scaling
+        position = self._workspace_position + i3_position * self._i3_position_scale
+        self._desired_ee_position = position
 
         velocity = np.array(
             [
@@ -188,34 +197,6 @@ class DelayRIMNode(Node):
             self._interface_forces = np.zeros((3, 1))  # Reset to zero if no forces available
             return self._interface_forces
 
-        # # Get current haptic state
-        # haptic_position, haptic_velocity = self._get_current_haptic_state()
-
-        # # Get latest DelayRIM result or step persistent model
-        # interface_forces = self.delay_rim_manager.get_latest_forces_or_step_persistent(haptic_position, haptic_velocity)
-
-        # # Update fallback force
-        # if interface_forces is not None:
-        #     self._fallback_force = interface_forces
-        #     return interface_forces.flatten()
-        # else:
-        #     return self._fallback_force.flatten()
-
-    def _get_current_haptic_state(self) -> tuple[np.ndarray, np.ndarray]:
-        """Get current haptic position and velocity"""
-        if self._last_inverse3_msg is None:
-            return np.zeros((1, 1)), np.zeros((1, 1))
-
-        # Extract haptic position (1D interface - y-axis)
-        haptic_position = (
-            np.array([self._last_inverse3_msg.pose.position.y]).reshape((1, 1)) * 5
-        )  # Apply scaling for simple system
-
-        # Extract haptic velocity
-        haptic_velocity = np.array([self._last_inverse3_msg.twist.linear.y]).reshape((1, 1))
-
-        return haptic_position, haptic_velocity
-
     def _publish_force(self, force: np.ndarray):
         """Publish computed force to haptic device"""
         #! Publish interface forces
@@ -244,7 +225,7 @@ class DelayRIMNode(Node):
         force_msg.wrench.force.z = 0.0
 
         # TODO: Uncomment for force feedback
-        # self._force_pub.publish(force_msg)
+        self._force_pub.publish(force_msg)
 
     def _publish_teleop_command(self):
         """
@@ -260,18 +241,19 @@ class DelayRIMNode(Node):
 
         #! Old - Send the haptic position as the desired end-effector position
         # Extract haptic position for teleop command
-        haptic_position = np.array(
-            [
-                self._last_inverse3_msg.pose.position.y,
-                -self._last_inverse3_msg.pose.position.x,
-                self._last_inverse3_msg.pose.position.z,
-            ]
-        )
+        # haptic_position = np.array(
+        #     [
+        #         self._last_inverse3_msg.pose.position.y,
+        #         -self._last_inverse3_msg.pose.position.x,
+        #         self._last_inverse3_msg.pose.position.z,
+        #     ]
+        # )
+
         # Lateral commands
         ee_pos_des_msg = Point()
-        ee_pos_des_msg.x = haptic_position[0] + self._workspace_position[0]  # Adjusted for workspace
-        ee_pos_des_msg.y = self._workspace_position[1]  # No lateral movement in y
-        ee_pos_des_msg.z = self._workspace_position[2]  # Adjusted for workspace
+        ee_pos_des_msg.x = self._desired_ee_position[0]
+        ee_pos_des_msg.y = self._desired_ee_position[1]
+        ee_pos_des_msg.z = self._desired_ee_position[2]
 
         # # Vertical commands
         # haptic_position[0] += 0.025

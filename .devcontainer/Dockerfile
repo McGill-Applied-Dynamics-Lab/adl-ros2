@@ -28,11 +28,11 @@ RUN groupadd --gid $USER_GID $USERNAME \
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-        python3-pip \
-        vim \
-        evtest \
-        jstest-gtk \
-        python3-serial \
+    python3-pip \
+    vim \
+    evtest \
+    jstest-gtk \
+    python3-serial \
     ### >>> purge Ubuntu’s old SymPy — torch needs ≥ 1.13
     && apt-get purge -y python3-sympy \
     && apt-get autoremove -y \
@@ -94,6 +94,7 @@ RUN apt update && \
     # ros-humble-topic-based-ros2-control \
     ros-humble-pinocchio \
     ros-humble-joy \
+    ros-humble-foxglove-bridge \
     && rm -rf /var/lib/apt/lists/*
 ENV DEBIAN_FRONTEND=
 
@@ -134,10 +135,10 @@ ENV PATH=/opt/openrobots/bin:$PATH \
     SHELL=/bin/bash \
     XDG_RUNTIME_DIR=/run/user/"${USER_UID}"  \
     WS_FOLDER=${WS_FOLDER}
-    # PKG_CONFIG_PATH=/opt/openrobots/lib/pkgconfig:$PKG_CONFIG_PATH \
-    # LD_LIBRARY_PATH=/opt/openrobots/lib:$LD_LIBRARY_PATH \
-    # PYTHONPATH=/opt/openrobots/lib/python3.10/site-packages:$PYTHONPATH \
-    # CMAKE_PREFIX_PATH=/opt/openrobots/lib/cmake:$CMAKE_PREFIX_PATH
+# PKG_CONFIG_PATH=/opt/openrobots/lib/pkgconfig:$PKG_CONFIG_PATH \
+# LD_LIBRARY_PATH=/opt/openrobots/lib:$LD_LIBRARY_PATH \
+# PYTHONPATH=/opt/openrobots/lib/python3.10/site-packages:$PYTHONPATH \
+# CMAKE_PREFIX_PATH=/opt/openrobots/lib/cmake:$CMAKE_PREFIX_PATH
 
 # # Set environment variable to disable GPU if needed
 # ENV NVIDIA_VISIBLE_DEVICES=${USE_GPU:+all}

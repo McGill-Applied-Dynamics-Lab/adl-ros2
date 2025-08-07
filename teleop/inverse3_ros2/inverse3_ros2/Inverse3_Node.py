@@ -261,6 +261,10 @@ class Inverse3Node(Node):
         # map of the workspace into the virtual space
         self._ws_position = self._scale * (self._raw_position - self._workspace_center)
 
+        # TODO: Remove - Only y used
+        self._ws_position[0] = 0.0
+        self._ws_position[2] = 0.0
+
         #! Forces
         # Update the forces for the next iteration
 

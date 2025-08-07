@@ -175,12 +175,54 @@
                 "franka_rim.launch.py",
                 "delay:=0",
                 "compensation:=zoh",
-                "fake_i3:=true",
+                "fake_i3:=false",
+                "save_data:=true",
             ],
             "console": "integratedTerminal",
             "env": {
                 "DEBUG_NODE": "",
             }
         },
+        {
+            "name": "Replay: DelayRIM Bag Data",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "/opt/ros/humble/bin/ros2",
+            "args": [
+                "bag",
+                "play",
+                "${input:bagFileName}",
+                "--rate",
+                "0.5",
+                "--loop"
+            ],
+            "console": "integratedTerminal",
+        },
+        {
+            "name": "Replay: DelayRIM Analysis",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "/opt/ros/humble/bin/ros2",
+            "args": [
+                "bag",
+                "play",
+                "${input:bagFileName}",
+                "--topics",
+                "/inverse3/state",
+                "/fr3_rim",
+                "/fr3_rim_delayed",
+                "/rim_state",
+                "/rim_interface_force"
+            ],
+            "console": "integratedTerminal",
+        }
+    ],
+    "inputs": [
+        {
+            "id": "bagFileName",
+            "description": "Bag file name",
+            "default": "franka_rim_data_20241215_143022",
+            "type": "promptString"
+        }
     ]
 }

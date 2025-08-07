@@ -73,7 +73,7 @@ scp csirois@franka-pc:~/workspaces/franka_ros2_ws/index.html ~/workspaces/franka
 
 4. Open `index.html` in browser
 
-### On Hostr
+### On Host
 
 ## Data Analysis
 ### With Foxglove

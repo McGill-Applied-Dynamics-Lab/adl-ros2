@@ -98,7 +98,7 @@ class VisualizationNode(Node):
             i3_marker.color.b = 1.0
             i3_marker.color.a = 0.8
 
-            marker_array.markers.append(i3_marker)
+            # marker_array.markers.append(i3_marker)
 
         # RIM position marker (green sphere)
         if self._rim_position is not None:
@@ -127,32 +127,32 @@ class VisualizationNode(Node):
 
             marker_array.markers.append(rim_marker)
 
-        # RIM position marker (red sphere)
+        # Goal position marker (red sphere)
         if self._goal_position is not None:
-            rim_marker = Marker()
-            rim_marker.header.frame_id = "base"
-            rim_marker.header.stamp = self.get_clock().now().to_msg()
-            rim_marker.ns = "delayrim_viz"
-            rim_marker.id = 1
-            rim_marker.type = Marker.SPHERE
-            rim_marker.action = Marker.ADD
+            goal_marker = Marker()
+            goal_marker.header.frame_id = "base"
+            goal_marker.header.stamp = self.get_clock().now().to_msg()
+            goal_marker.ns = "goal_viz"
+            goal_marker.id = 1
+            goal_marker.type = Marker.SPHERE
+            goal_marker.action = Marker.ADD
 
-            rim_marker.pose.position.x = float(self._goal_position[0])
-            rim_marker.pose.position.y = float(self._goal_position[1])
-            rim_marker.pose.position.z = float(self._goal_position[2])
-            rim_marker.pose.orientation.w = 1.0
+            goal_marker.pose.position.x = float(self._goal_position[0])
+            goal_marker.pose.position.y = float(self._goal_position[1])
+            goal_marker.pose.position.z = float(self._goal_position[2])
+            goal_marker.pose.orientation.w = 1.0
 
-            rim_marker.scale.x = self.rim_sphere_size
-            rim_marker.scale.y = self.rim_sphere_size
-            rim_marker.scale.z = self.rim_sphere_size
+            goal_marker.scale.x = self.rim_sphere_size
+            goal_marker.scale.y = self.rim_sphere_size
+            goal_marker.scale.z = self.rim_sphere_size
 
             # Red color for goal
-            rim_marker.color.r = 1.0
-            rim_marker.color.g = 0.0
-            rim_marker.color.b = 0.0
-            rim_marker.color.a = 0.8
+            goal_marker.color.r = 1.0
+            goal_marker.color.g = 0.0
+            goal_marker.color.b = 0.0
+            goal_marker.color.a = 0.8
 
-            marker_array.markers.append(rim_marker)
+            marker_array.markers.append(goal_marker)
 
         # # Connection line between I3 and RIM (if both available)
         # if self._i3_position is not None and self._rim_position is not None:
