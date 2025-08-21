@@ -2,7 +2,7 @@ import rclpy
 from rclpy.node import Node
 from arm_interfaces.msg import FrankaRIM, Teleop
 from teleop_interfaces.msg import Inverse3State
-from geometry_msgs.msg import WrenchStamped, Twist, Point, Quaternion, PointStamped
+from geometry_msgs.msg import WrenchStamped, Twist, Point, Quaternion, PointStamped, PoseStamped, TwistStamped
 import numpy as np
 import time
 from collections import deque
@@ -12,11 +12,13 @@ from franka_rim.delay_rim import DelayRIM, DelayCompensationMethod
 
 from rclpy.parameter import Parameter
 from rcl_interfaces.srv import SetParameters
-
+import statistics
 
 from adg_ros2_utils.debug_utils import wait_for_debugger
 
 NODE_NAME = "delay_rim_node"
+
+MONITOR_TIMING = True
 
 
 class DelayRIMNode(Node):
@@ -27,20 +29,23 @@ class DelayRIMNode(Node):
         # Parameters
         self.declare_parameter("rim_topic", "/fr3_rim_delayed")  #  'fr3_rim_delayed', 'rim_msg_delayed'
         self.declare_parameter("cmd_topic", "/teleop/ee_cmd_no_delay")  # '/teleop/ee_cmd_no_delay', 'simple_system/cmd'
-        self.declare_parameter("control_period", 0.001)  # 1kHz control rate
+        self.declare_parameter("update_freq", 1000.0)  # Default: 1 KHz
+
         self.declare_parameter("robot_cmd_period", 0.1)  # 10Hz control rate
         self.declare_parameter("delay_compensation_method", "delay_rim")  # 'delay_rim', 'zoh', or 'zoh_phi'
-        self.declare_parameter("interface_stiffness", 3000.0)
-        self.declare_parameter("interface_damping", 100.0)
+        # self.declare_parameter("interface_stiffness", 3000.0)
+        # self.declare_parameter("interface_damping", 100.0)
         self.declare_parameter("force_scaling", 0.02)
         self.declare_parameter("max_workers", 1)  # Threading parameter
         self.declare_parameter("i3_position_scale", 1.0)  # Mapping between I3 and end-effector position
 
+        # self.declare_parameter("use_sim_time", False)  # Use simulation time
+
         # Get parameters
-        self.control_period = self.get_parameter("control_period").get_parameter_value().double_value
+        self._update_freq = self.get_parameter("update_freq").get_parameter_value().double_value
+        self._update_period = 1.0 / self._update_freq
+
         method_str = self.get_parameter("delay_compensation_method").get_parameter_value().string_value
-        self._interface_stiffness = self.get_parameter("interface_stiffness").get_parameter_value().double_value
-        self._interface_damping = self.get_parameter("interface_damping").get_parameter_value().double_value
         self._force_scaling = self.get_parameter("force_scaling").get_parameter_value().double_value
         max_workers = self.get_parameter("max_workers").get_parameter_value().integer_value
         self._i3_position_scale = self.get_parameter("i3_position_scale").get_parameter_value().double_value
@@ -81,24 +86,45 @@ class DelayRIMNode(Node):
         self._workspace_position = np.array([0.4253, 0.0, 0.00])  # Cube position
 
         # Frequency monitoring
-        self._control_loop_times = deque(maxlen=100)  # Store last 100 loop times
-        self._control_loop_count = 0
-        self._last_control_time = None
-        self._desired_frequency = 1.0 / self.control_period
+        self._actual_periods = deque(maxlen=100)  # Store last 100 loop times
+        self._loop_count = 0
+        self._last_timer_time = None
 
         # Subscribers
         self._rim_sub = self.create_subscription(FrankaRIM, rim_topic, self._rim_callback, 10)
         self._inverse3_sub = self.create_subscription(Inverse3State, "/inverse3/state", self._inverse3_callback, 10)
 
+        # TODO: For debugging integration
+        self._ctrl_force = np.zeros((3,))  # Cartesian force from OSC PD controller
+        self._ctrl_force_sub = self.create_subscription(
+            WrenchStamped,
+            "/osc_pd_controller/cartesian_force",
+            self._ctrl_force_callback,
+            10,
+        )
+
         # Publishers
         self._force_pub = self.create_publisher(WrenchStamped, "/inverse3/wrench_des", 10)
         self._interface_force_pub = self.create_publisher(WrenchStamped, "/rim_interface_force", 10)
         self._teleop_pub = self.create_publisher(PointStamped, cmd_topic, 10)
-        self._rim_state_pub = self.create_publisher(PointStamped, "/rim_state", 10)
+        self._rim_state_pose_pub = self.create_publisher(PoseStamped, "/rim_state_pose", 10)
+        self._rim_state_twist_pub = self.create_publisher(TwistStamped, "/rim_state_twist", 10)
 
-        # Control timer
-        self._control_timer = self.create_timer(self.control_period, self._control_timer_callback)
-        self._robot_cmd_timer = self.create_timer(self.control_period, self._robot_cmd_timer_callback)
+        # Control timers - automatically use wall timer when sim_time is enabled to bypass /clock quantization
+        use_sim_time = self.get_parameter("use_sim_time").get_parameter_value().bool_value
+
+        if use_sim_time:
+            self.get_logger().info("Simulation time detected - using wall timers to bypass /clock quantization (~25ms)")
+            clock = rclpy.clock.Clock(clock_type=rclpy.clock.ClockType.STEADY_TIME)
+        else:
+            self.get_logger().info("Using standard ROS timers for real-time operation")
+            clock = None
+
+        self._control_timer = self.create_timer(self._update_period, self._update, clock=clock)
+        self._robot_cmd_timer = self.create_timer(self._update_period, self._robot_cmd_timer_callback, clock=clock)
+
+        # Add sim time diagnostic
+        self.get_logger().info(f"Using simulation time: {use_sim_time}")
 
         # Performance monitoring timer
         # self._stats_timer = self.create_timer(2.0, self._log_performance_stats)  #TODO: Uncomment for stats logging
@@ -109,9 +135,9 @@ class DelayRIMNode(Node):
 
         self.get_logger().info(
             f"DelayRIMNode started with method={self._delay_method.value}, "
-            f"control_period={self.control_period}s, max_workers={max_workers}, "
+            f"control_period={self._update_period}s, max_workers={max_workers}, "
             f"RIM topic: {rim_topic}, Command topic: {cmd_topic}, "
-            f"Expected frequency: {self._desired_frequency:.1f}Hz"
+            f"Expected frequency: {self._update_freq:.1f}Hz"
         )
 
     def set_robot_parameter(self, target_node_name: str, param_name: str, param_value: float):
@@ -141,12 +167,13 @@ class DelayRIMNode(Node):
         result = future.result()
         return result.results[0].successful if result and result.results else False
 
+    # --- Subscribers and Publishers
     def _rim_callback(self, msg: FrankaRIM):
         """Callback for delayed RIM messages - submit for processing"""
         self._last_rim_msg = msg
 
         # Submit packet for delayed processing
-        packet_id = self.delay_rim_manager.submit_rim_packet(self, msg, self._delay_method)
+        packet_id = self.delay_rim_manager.submit_rim_packet(msg, self._delay_method)
 
         self.get_logger().debug(f"Submitted RIM packet {packet_id} for DelayRIM processing")
 
@@ -179,23 +206,16 @@ class DelayRIMNode(Node):
 
         self.delay_rim_manager.add_haptic_state(position, velocity)
 
-    def _compute_interface_forces(self) -> np.ndarray:
-        """Get the latest DelayRIM computation result or step persistent model"""
-        if self._last_rim_msg is None or self._last_inverse3_msg is None:
-            self.get_logger().debug("No RIM or Inverse3 state available, returning zero force")
-            return np.zeros((3,))
-
-        interface_forces = self.delay_rim_manager.get_latest_forces()
-
-        if interface_forces is not None:
-            self._interface_forces = interface_forces
-            return interface_forces
-
-        else:
-            # Use fallback if no result available
-            self.get_logger().debug("No DelayRIM result available, using fallback")
-            self._interface_forces = np.zeros((3, 1))  # Reset to zero if no forces available
-            return self._interface_forces
+    def _ctrl_force_callback(self, msg: WrenchStamped):
+        """Callback for cartesian force from OSC PD controller."""
+        force = np.array(
+            [
+                msg.wrench.force.x,
+                msg.wrench.force.y,
+                msg.wrench.force.z,
+            ]
+        )
+        self._ctrl_force = force
 
     def _publish_force(self, force: np.ndarray):
         """Publish computed force to haptic device"""
@@ -296,43 +316,40 @@ class DelayRIMNode(Node):
         if self.rim_state is None:
             return
 
-        rim_state_msg = PointStamped()
-        rim_state_msg.header.stamp = self.get_clock().now().to_msg()
-        rim_state_msg.header.frame_id = "world"
+        rim_state_pose_msg = PoseStamped()
+        rim_state_pose_msg.header.stamp = self.get_clock().now().to_msg()
+        rim_state_pose_msg.header.frame_id = "world"
 
         # Extract position from RIM state (convert from (m,1) array to individual coordinates)
         rim_position = self.rim_state.position.flatten()
 
-        rim_state_msg.point.x = float(rim_position[0]) if len(rim_position) > 0 else 0.0
-        rim_state_msg.point.y = 0.0  # Only x-axis for 1D interface
-        rim_state_msg.point.z = 0.0
+        rim_state_pose_msg.pose.position.x = float(rim_position[0])
+        rim_state_pose_msg.pose.position.y = 0.0
+        rim_state_pose_msg.pose.position.z = 0.0
 
-        self._rim_state_pub.publish(rim_state_msg)
+        self._rim_state_pose_pub.publish(rim_state_pose_msg)
 
-    def _control_timer_callback(self):
+        # --- Twist
+        rim_state_twist_msg = TwistStamped()
+        rim_state_twist_msg.header.stamp = self.get_clock().now().to_msg()
+        rim_state_twist_msg.header.frame_id = "world"
+
+        rim_twist = self.rim_state.velocity.flatten()
+        rim_state_twist_msg.twist.linear.x = float(rim_twist[0])
+
+        self._rim_state_twist_pub.publish(rim_state_twist_msg)
+
+    # --- DelayRIM computation
+    def _update(self):
         """Main control loop at 1kHz with frequency monitoring"""
-        current_time = time.perf_counter()
+        loop_start_time = time.perf_counter()
 
-        # Monitor frequency
-        # if self._last_control_time is not None:
-        #     loop_period = current_time - self._last_control_time
-        #     self._control_loop_times.append(loop_period)
+        # -- Track timing
+        if self._loop_count > 0:
+            actual_period = loop_start_time - self._last_timer_time
+            self._actual_periods.append(actual_period)
 
-        #     # Log frequency issues
-        #     actual_frequency = 1.0 / loop_period if loop_period > 0 else 0.0
-        #     frequency_error = abs(actual_frequency - self._desired_frequency) / self._desired_frequency
-
-        #     # if frequency_error > 0.1:  # More than 10% error
-        #     #     self.get_logger().warn(
-        #     #         f"Control loop frequency deviation: {actual_frequency:.1f}Hz "
-        #     #         f"(expected {self._desired_frequency:.1f}Hz, error: {frequency_error * 100:.1f}%)",
-        #     #         throttle_duration_sec=1.0,
-        #     #     )
-
-        #     # self.get_logger().info(f"Control loop frequency: {actual_frequency:.1f}Hz")
-
-        self._last_control_time = current_time
-        self._control_loop_count += 1
+        self._last_timer_time = loop_start_time
 
         # Check if we have haptic data
         if self._last_inverse3_msg is None:
@@ -349,9 +366,51 @@ class DelayRIMNode(Node):
         # self._publish_teleop_command()
         self._publish_rim_state()
 
-        self.get_logger().debug(
-            f"DelayRIM freq: {1.0 / (time.perf_counter() - current_time):.2f} Hz", throttle_duration_sec=2.0
-        )
+        # Log control loop frequency
+        self._log_timer_monitoring(log_period=3.0)
+
+        self._loop_count += 1
+
+    def _compute_interface_forces(self) -> np.ndarray:
+        """Get the latest DelayRIM computation result or step persistent model"""
+        if self._last_rim_msg is None or self._last_inverse3_msg is None:
+            self.get_logger().debug("No RIM or Inverse3 state available, returning zero force")
+            return np.zeros((3,))
+
+        interface_forces = self.delay_rim_manager.get_interface_force()
+
+        if interface_forces is not None:
+            self._interface_forces = interface_forces
+            return interface_forces
+
+        else:
+            # Use fallback if no result available
+            self.get_logger().debug("No DelayRIM result available, using fallback")
+            self._interface_forces = np.zeros((3, 1))  # Reset to zero if no forces available
+            return self._interface_forces
+
+    # --- Timers
+    def _log_timer_monitoring(self, log_period=1.0):
+        """
+        To log timer diagnostics at a specified period.
+        """
+        if self._loop_count % (log_period * self._update_freq) == 0 and self._loop_count > 0:
+            avg_period = statistics.mean(self._actual_periods) * 1000  # Convert to ms
+            min_period = min(self._actual_periods) * 1000
+            max_period = max(self._actual_periods) * 1000
+            std_period = statistics.stdev(self._actual_periods) * 1000 if len(self._actual_periods) > 1 else 0
+
+            if MONITOR_TIMING:
+                self.get_logger().info(
+                    f"Timer diagnostics - Avg: {avg_period:.2f}ms | Target: {self._update_period * 1000:.2f}ms | "
+                    # f"Min: {min_period:.2f}ms | Max: {max_period:.2f}ms | "
+                    # f"Std: {std_period:.2f}ms | Thread: {threading.current_thread().name}"
+                )
+
+            if avg_period > self._update_period * 1.5 * 1000:
+                self.get_logger().warn(
+                    f"High update period detected: {avg_period:.2f}ms (target: {self._update_period * 1000:.2f}ms)"
+                )
 
     def _robot_cmd_timer_callback(self):
         """Callback to send commands to the robot."""
@@ -369,8 +428,8 @@ class DelayRIMNode(Node):
         stats = self.delay_rim_manager.get_performance_stats()
 
         # Calculate frequency statistics
-        if len(self._control_loop_times) > 1:
-            periods = np.array(self._control_loop_times)
+        if len(self._actual_periods) > 1:
+            periods = np.array(self._actual_periods)
             avg_period = np.mean(periods)
             std_period = np.std(periods)
             min_period = np.min(periods)

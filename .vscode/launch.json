@@ -176,15 +176,16 @@
                 "delay:=0",
                 "compensation:=zoh",
                 "fake_i3:=false",
-                "save_data:=true",
+                "save_data:=false",
+                "use_sim_time:=true"
             ],
             "console": "integratedTerminal",
             "env": {
-                "DEBUG_NODE": "",
+                "DEBUG_NODE": "", // franka_rim_node, franka_model_node, delay_rim_node
             }
         },
         {
-            "name": "Replay: DelayRIM Bag Data",
+            "name": "Replay: Bag Data",
             "type": "debugpy",
             "request": "launch",
             "program": "/opt/ros/humble/bin/ros2",
@@ -199,23 +200,17 @@
             "console": "integratedTerminal",
         },
         {
-            "name": "Replay: DelayRIM Analysis",
+            "name": "Python: Replay bag",
             "type": "debugpy",
             "request": "launch",
-            "program": "/opt/ros/humble/bin/ros2",
+            "program": "src/adg_ros2/robot_arm/franka_rim/scripts/replay_analysis.py",
             "args": [
-                "bag",
-                "play",
                 "${input:bagFileName}",
-                "--topics",
-                "/inverse3/state",
-                "/fr3_rim",
-                "/fr3_rim_delayed",
-                "/rim_state",
-                "/rim_interface_force"
+                "--rate",
+                "1",
             ],
-            "console": "integratedTerminal",
-        }
+            "console": "integratedTerminal"
+        },
     ],
     "inputs": [
         {

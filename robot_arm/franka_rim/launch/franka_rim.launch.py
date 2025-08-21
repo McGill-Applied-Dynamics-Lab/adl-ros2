@@ -11,8 +11,8 @@ from ament_index_python.packages import get_package_share_directory
 
 from pathlib import Path
 
-K_INT = 500.0
-D_INT = 41.71
+K_INT = 100.0
+D_INT = 10.0
 
 F_SCALE = 0.1
 
@@ -27,6 +27,8 @@ def generate_launch_description():
     robot_urdf_filename_arg = DeclareLaunchArgument(
         "robot_urdf_filename", default_value="fr3_franka_hand.urdf", description="URDF filename for the robot model"
     )
+
+    use_sim_time_arg = DeclareLaunchArgument("use_sim_time", default_value="true", description="Use simulation time")
 
     # Delay parameters
     delay_arg = DeclareLaunchArgument("delay", default_value="100", description="5g or fixed delay value in ms")
@@ -49,13 +51,14 @@ def generate_launch_description():
         "fr3_rim.rviz",
     )
 
-    #! Nodes
+    #! MARK: Nodes
     rviz_node = Node(
         package="rviz2",
         executable="rviz2",
         name="rviz2",
         arguments=["-d", rviz_config_file],
         output="screen",
+        # parameters=[{"use_sim_time": LaunchConfiguration("use_sim_time")}],  # optional
     )
 
     visualization_node = Node(
@@ -66,12 +69,14 @@ def generate_launch_description():
             {
                 "i3_sphere_size": 0.03,
                 "rim_sphere_size": 0.03,
+                "use_sim_time": LaunchConfiguration("use_sim_time"),
             }
         ],
         output="screen",
     )
 
-    # Inverse3Node (real device)
+    # -- Inverse3Node
+    # real
     inverse3_node = Node(  # noqa
         package="inverse3_ros2",
         executable="inverse3_node",
@@ -80,12 +85,13 @@ def generate_launch_description():
         parameters=[
             {
                 "restitution_stiffness": 1.0,
+                "use_sim_time": LaunchConfiguration("use_sim_time"),
             }
         ],
         condition=UnlessCondition(LaunchConfiguration("fake_i3")),
     )
 
-    # Haptic Simulator Node (fake device)
+    # fake
     i3_sim_node = Node(
         package="franka_rim",
         executable="i3_sim_node",
@@ -98,29 +104,30 @@ def generate_launch_description():
                 "amplitude": 0.1,
                 "n_cycles": 3,
                 "wait_to_start": True,
+                "use_sim_time": LaunchConfiguration("use_sim_time"),
             }
         ],
         condition=IfCondition(LaunchConfiguration("fake_i3")),
     )
 
-    # Franka Model Node
+    # --- FR3 model node
     franka_model_node = Node(
         package="franka_rim",
         executable="franka_model_node",
         name="franka_model_node",
         parameters=[
             {
-                # "input_topic": "/robot_state_delayed",
                 "input_topic": "/franka_robot_state_broadcaster/robot_state",
                 "output_topic": "/fr3_model",
-                "model_update_freq": LaunchConfiguration("model_update_freq"),
+                "update_freq": LaunchConfiguration("model_update_freq"),
                 "robot_urdf_filename": LaunchConfiguration("robot_urdf_filename"),
+                "use_sim_time": LaunchConfiguration("use_sim_time"),
             }
         ],
         output="screen",
     )
 
-    # Franka Rim Node
+    # --- FR3 RIM node
     franka_rim_node = Node(
         package="franka_rim",
         executable="franka_rim_node",
@@ -128,14 +135,16 @@ def generate_launch_description():
         output="screen",
         parameters=[
             {
-                "rim_period": 0.05,  # 20 Hz
+                "update_freq": 100.0,  # 20 Hz TODO: 0.05
                 "interface_stiffness": K_INT,
                 "interface_damping": D_INT,
+                "use_sim_time": LaunchConfiguration("use_sim_time"),
             }
         ],
     )
 
-    # Network delay simulator for robot state
+    # -- Network delays
+    # for rim
     delay_node_rim_msg = Node(  # rim msg delay
         package="network_sim",
         executable="network_sim_node",
@@ -146,11 +155,13 @@ def generate_launch_description():
                 "output_topic": "/fr3_rim_delayed",
                 "delay": LaunchConfiguration("delay"),
                 "message_type": "arm_interfaces/msg/FrankaRIM",
+                "use_sim_time": LaunchConfiguration("use_sim_time"),
             }
         ],
         output="screen",
     )
 
+    # for teleop cmd
     delay_node_ee_cmd = Node(  # teleop cmd delay
         package="network_sim",
         executable="network_sim_node",
@@ -166,7 +177,7 @@ def generate_launch_description():
         output="screen",
     )
 
-    # DelayRIMNode
+    # -- DelayRIMNode
     delay_rim_node = Node(
         package="franka_rim",
         executable="delay_rim_node",
@@ -174,17 +185,15 @@ def generate_launch_description():
         parameters=[
             {
                 "rim_topic": "/fr3_rim_delayed",
-                # "cmd_topic": "/teleop/ee_cmd_no_delay",
-                "cmd_topic": "/osc_pd_controller/goal_pre_delay",  # For teleop commands
+                "cmd_topic": "/osc_pd_controller/goal_pre_delay",
                 "control_period": 0.001,  # 1kHz control rate
                 "delay_compensation_method": LaunchConfiguration(
                     "compensation"
                 ),  # "DelayRIM",  # 'DelayRIM', 'ZOH', or 'ZOHPhi
-                "interface_stiffness": K_INT,
-                "interface_damping": D_INT,
                 "force_scaling": F_SCALE,  # No scaling for simple system
                 "max_workers": 8,  # Threading parameter
                 "i3_position_scale": 1.5,  # Mapping between I3 and end-effector position
+                "use_sim_time": LaunchConfiguration("use_sim_time"),
             }
         ],
         output="screen",
@@ -196,25 +205,7 @@ def generate_launch_description():
     bag_filename = f"franka_rim_data_{timestamp}"
     bag_filepath = Path("logs") / bag_filename
 
-    # # Topics to record - comprehensive list of all DelayRIM experiment data
-    # topics_to_record = [
-    #     "/inverse3/state",  # Haptic device state
-    #     "/fr3_model",  # Robot model data
-    #     "/fr3_rim",  # RIM messages (before delay)
-    #     "/fr3_rim_delayed",  # RIM messages (after delay simulation)
-    #     "/rim_state",  # Estimated RIM state from DelayRIM
-    #     "/rim_interface_force",  # Interface forces computed by DelayRIM
-    #     "/inverse3/wrench_des",  # Force feedback to haptic device
-    #     "/osc_pd_controller/goal_pre_delay",  # Robot commands (before delay)
-    #     "/osc_pd_controller/goal",  # Robot commands (after delay)
-    #     "/osc_pd_controller/cartesian_force",  # Robot controller forces
-    #     "/franka_robot_state_broadcaster/robot_state",  # Raw robot state
-    #     "/delayrim_visualization",  # Visualization markers
-    #     "/f_ext_est",  # External force estimates
-    #     "/f_ext_robot",  # Robot's force estimates
-    # ]
-
-    bag_record_node = ExecuteProcess(
+    bag_record_node = ExecuteProcess(  # noqa
         cmd=[
             "ros2",
             "bag",
@@ -244,9 +235,10 @@ def generate_launch_description():
             delay_compensation,
             fake_i3_arg,
             save_data_arg,
+            use_sim_time_arg,
             # -- Nodes
             # inverse3_node,
-            i3_sim_node,
+            # i3_sim_node,
             franka_model_node,
             franka_rim_node,
             delay_rim_node,

@@ -1,7 +1,7 @@
 import rclpy
 from rclpy.node import Node
 from visualization_msgs.msg import Marker, MarkerArray
-from geometry_msgs.msg import PointStamped
+from geometry_msgs.msg import PointStamped, PoseStamped
 from teleop_interfaces.msg import Inverse3State
 from std_msgs.msg import ColorRGBA
 import numpy as np
@@ -28,7 +28,7 @@ class VisualizationNode(Node):
 
         # Subscribers
         self._i3_sub = self.create_subscription(Inverse3State, "/inverse3/state", self._i3_state_callback, 10)
-        self._rim_sub = self.create_subscription(PointStamped, "/rim_state", self._rim_state_callback, 10)
+        self._rim_pose_sub = self.create_subscription(PoseStamped, "/rim_state_pose", self._rim_state_callback, 10)
         self._goal_cmd_sub = self.create_subscription(
             PointStamped, "/osc_pd_controller/goal", self._goal_cmd_callback, 10
         )
@@ -58,9 +58,10 @@ class VisualizationNode(Node):
 
         self._i3_position = position
 
-    def _rim_state_callback(self, msg: PointStamped):
+    def _rim_state_callback(self, msg: PoseStamped):
         """Callback for RIM state updates"""
-        self._rim_position = np.array([msg.point.x, msg.point.y, msg.point.z])
+
+        self._rim_position = np.array([msg.pose.position.x, 0.0, 0.4852])
 
     def _goal_cmd_callback(self, msg: PointStamped):
         """Callback for goal command updates"""

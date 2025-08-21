@@ -49,7 +49,12 @@ python3 scripts/verify_installation.py
 colcon build --symlink-install --cmake-args '-DCMAKE_BUILD_TYPE=Debug'
 ```
 
-8. Launch example
+8. Source ros2
+```
+source install/setup.bash
+```
+
+9. Launch example
 TODO: Teleop example w/ rviz only
 
 ## Testing

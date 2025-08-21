@@ -33,7 +33,7 @@ RUN apt-get update && \
     evtest \
     jstest-gtk \
     python3-serial \
-    ### >>> purge Ubuntu’s old SymPy — torch needs ≥ 1.13
+    ### >>> purge Ubuntu's old SymPy — torch needs ≥ 1.13
     && apt-get purge -y python3-sympy \
     && apt-get autoremove -y \
     && rm -rf /var/lib/apt/lists/*
@@ -65,7 +65,6 @@ ENV DEBIAN_FRONTEND=noninteractive
 RUN apt update && \
     apt install -y --no-install-recommends \
     libeigen3-dev \
-    # libignition-gazebo6-dev \
     libpoco-dev \
     # ros-humble-ackermann-msgs \
     ros-humble-ament-cmake \
@@ -95,6 +94,11 @@ RUN apt update && \
     ros-humble-pinocchio \
     ros-humble-joy \
     ros-humble-foxglove-bridge \
+    # Explicitly install RViz2 and its dependencies
+    ros-humble-rviz2 \
+    ros-humble-rviz-common \
+    ros-humble-rviz-default-plugins \
+    ros-humble-rviz-rendering \
     && rm -rf /var/lib/apt/lists/*
 ENV DEBIAN_FRONTEND=
 
@@ -135,6 +139,10 @@ ENV PATH=/opt/openrobots/bin:$PATH \
     SHELL=/bin/bash \
     XDG_RUNTIME_DIR=/run/user/"${USER_UID}"  \
     WS_FOLDER=${WS_FOLDER}
+# # Graphics and display settings for RViz2
+# DISPLAY=:0 \
+# QT_X11_NO_MITSHM=1 \
+# LIBGL_ALWAYS_INDIRECT=1
 # PKG_CONFIG_PATH=/opt/openrobots/lib/pkgconfig:$PKG_CONFIG_PATH \
 # LD_LIBRARY_PATH=/opt/openrobots/lib:$LD_LIBRARY_PATH \
 # PYTHONPATH=/opt/openrobots/lib/python3.10/site-packages:$PYTHONPATH \
