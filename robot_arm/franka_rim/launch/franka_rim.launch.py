@@ -11,8 +11,8 @@ from ament_index_python.packages import get_package_share_directory
 
 from pathlib import Path
 
-K_INT = 100.0
-D_INT = 10.0
+K_INT = 500.0
+D_INT = 40.0
 
 F_SCALE = 0.1
 
@@ -103,6 +103,9 @@ def generate_launch_description():
                 "sine_frequency": 0.2,
                 "amplitude": 0.1,
                 "n_cycles": 3,
+                "center_x": 0.0,
+                "center_y": 0.0,
+                "center_z": 0.0,
                 "wait_to_start": True,
                 "use_sim_time": LaunchConfiguration("use_sim_time"),
             }
@@ -135,7 +138,7 @@ def generate_launch_description():
         output="screen",
         parameters=[
             {
-                "update_freq": 100.0,  # 20 Hz TODO: 0.05
+                "update_freq": 10.0,  # 20 Hz TODO: 0.05
                 "interface_stiffness": K_INT,
                 "interface_damping": D_INT,
                 "use_sim_time": LaunchConfiguration("use_sim_time"),
@@ -145,7 +148,7 @@ def generate_launch_description():
 
     # -- Network delays
     # for rim
-    delay_node_rim_msg = Node(  # rim msg delay
+    netsim_rim_msg_node = Node(  # rim msg delay
         package="network_sim",
         executable="network_sim_node",
         name="rim_msg_delay",
@@ -162,7 +165,7 @@ def generate_launch_description():
     )
 
     # for teleop cmd
-    delay_node_ee_cmd = Node(  # teleop cmd delay
+    netsim_node_ee_cmd_node = Node(  # teleop cmd delay
         package="network_sim",
         executable="network_sim_node",
         name="ee_cmd_delay",
@@ -238,13 +241,13 @@ def generate_launch_description():
             use_sim_time_arg,
             # -- Nodes
             # inverse3_node,
-            # i3_sim_node,
+            i3_sim_node,
             franka_model_node,
             franka_rim_node,
             delay_rim_node,
             # -- Network sim nodes
-            delay_node_rim_msg,
-            delay_node_ee_cmd,
+            netsim_rim_msg_node,
+            netsim_node_ee_cmd_node,
             # -- Data recording
             bag_record_node,
             # -- Visualization

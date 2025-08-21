@@ -177,7 +177,7 @@
                 "compensation:=zoh",
                 "fake_i3:=false",
                 "save_data:=false",
-                "use_sim_time:=true"
+                "use_sim_time:=false"
             ],
             "console": "integratedTerminal",
             "env": {

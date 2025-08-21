@@ -170,6 +170,7 @@ class DelayRIM:
         if self.rim_state is None:
             reduced_model.position = np.array(rim_msg.rim_position).reshape((self._interface_dim, 1))
             reduced_model.velocity = np.array(rim_msg.rim_velocity).reshape((self._interface_dim, 1))
+
         else:
             # State from last rim estimate
             reduced_model.position = self.rim_state.position.copy()
@@ -400,8 +401,6 @@ class DelayRIM:
             self._actual_periods.append(actual_period)
             hl = actual_period
 
-        self._last_update_time = loop_time
-
         with self.lock:
             for packet_id, future in self.active_computations.items():
                 if future.done():
@@ -458,8 +457,9 @@ class DelayRIM:
         # Monitor timing
         if self._loop_count % 1000 == 0 and self._loop_count > 0:
             dt = actual_period * 1000
-            self._node.get_logger().info(f"dt={dt:.4f}ms, loop_count={self._loop_count}")
+            self._node.get_logger().info(f"[DelayRIM Algo] Period: {dt:.4f}ms")
 
+        self._last_update_time = loop_time
         self._loop_count += 1
 
         return self.latest_forces  # Return last known result
@@ -469,10 +469,10 @@ class DelayRIM:
     ) -> None:
         """Compute the interface force based on the current reduced model state"""
         rim.phi_position = rim.position - haptic_position
-        rim.phi_velocity = rim.velocity  # - haptic_velocity
+        rim.phi_velocity = rim.velocity - haptic_velocity
         hl = rim.hl
 
-        rim.interface_force = -rim.stiffness * rim.phi_position - (hl * rim.stiffness + rim.damping) * rim.phi_velocity
+        rim.interface_force = rim.stiffness * rim.phi_position + (hl * rim.stiffness + rim.damping) * rim.phi_velocity
         # rim.interface_force = -rim.damping * rim.phi_velocity
 
         # rim.interface_force = self._node._ctrl_force
@@ -583,10 +583,9 @@ class DelayRIM:
         # wi = reduced_model.phi_velocity
 
         regular_force_terms = (
-            reduced_model.effective_force
-            - Ki * reduced_model.phi_position
-            + (Di + hl * Ki) * reduced_model.phi_velocity
+            reduced_model.effective_force - Ki * reduced_model.phi_position + (Di + hl * Ki) * haptic_vel
         )
+        # regular_force_terms = -reduced_model.effective_force
 
         # regular_force_terms = self._node._ctrl_force[0].reshape(1, 1)  # TODO: DEBUG
 

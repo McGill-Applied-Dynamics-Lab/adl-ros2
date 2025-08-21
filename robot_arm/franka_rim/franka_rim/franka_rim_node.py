@@ -176,13 +176,13 @@ class FrankaRIMNode(Node):
 
             # --- effective force
             # Compute effective force: f_eff = M_eff * (Ai * inv(M) * (tau - c) + Ai_dot * q_dot)
-            # effective_force = M_eff @ [self.Ai @ M_inv @ (self.fa - self.c) + self.Ai_dot_q_dot]
-            effective_force = np.array([[0.0]])
+            effective_force = M_eff @ [self.Ai @ M_inv @ (self.fa - self.c) + self.Ai_dot_q_dot]
+            # effective_force = np.array([[0.0]])
 
             # if self.cartesian_force is not None:
             #     effective_force = -self.cartesian_force[0].reshape((1, 1))
             # else:
-            # effective_force = np.array([[0.0]])
+            #     effective_force = np.array([[0.0]])
 
             # RIM state
             rim_position = self.x_ee[0]
