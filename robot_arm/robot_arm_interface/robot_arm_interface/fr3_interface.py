@@ -444,9 +444,9 @@ class FR3Interface(Node):
 
         #! Action clients
         self._gripper_actions = {
-            GripperActionType.HOMING: {"type": Homing, "server": "/fr3_gripper/homing", "client": None},
-            GripperActionType.MOVE: {"type": Move, "server": "/fr3_gripper/move", "client": None},
-            GripperActionType.GRASP: {"type": Grasp, "server": "/fr3_gripper/grasp", "client": None},
+            GripperActionType.HOMING: {"type": Homing, "server": "/franka_gripper/homing", "client": None},
+            GripperActionType.MOVE: {"type": Move, "server": "/franka_gripper/move", "client": None},
+            GripperActionType.GRASP: {"type": Grasp, "server": "/franka_gripper/grasp", "client": None},
         }
 
         for action_type, spec in self._gripper_actions.items():

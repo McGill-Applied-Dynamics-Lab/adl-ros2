@@ -26,6 +26,9 @@ controller_manager:
 
     my_controller:
       type: fr3_controllers/MyController
+      
+    osc_pd_controller:
+      type: fr3_controllers/OSCPDController
 
     # Example Controllers
     gravity_compensation_example_controller:
@@ -193,6 +196,33 @@ my_controller:
     state_interfaces:
       - position
       - velocity
+
+osc_pd_controller:
+  ros__parameters:
+    arm_id: fr3
+    kp_pos_gain: 500.0  # Position proportional gain
+    kd_pos_gain: 50.0   # Position derivative gain
+    kp_ori_gain: 100.0   # Orientation proportional gain
+    kd_ori_gain: 5.0    # Orientation derivative gain
+    
+    goal_topic: /osc_pd_controller/goal
+
+    joints:
+      - fr3_joint1
+      - fr3_joint2
+      - fr3_joint3
+      - fr3_joint4
+      - fr3_joint5
+      - fr3_joint6
+      - fr3_joint7
+
+    # command_interfaces:
+    #   - effort
+      # - velocity
+
+    # state_interfaces:
+    #   - position
+    #   - velocity
 
 # FRANKA CONTROLLERS
 joint_impedance_with_ik_example_controller:

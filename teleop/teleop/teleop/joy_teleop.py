@@ -157,7 +157,9 @@ class JoyTeleop(Node):
 
         # --- joystick ---
         if self._n_js_cal_msgs < 20:
-            self.get_logger().error("Joystick calibration failed. Not enough messages received on '/joy'.")
+            self.get_logger().error(
+                f"Joystick calibration failed. Not enough messages received on '/joy'. Only received {self._n_js_cal_msgs} messages."
+            )
             raise Exception("Joystick calibration failed.")
 
         self._axes_offset /= self._n_js_cal_msgs

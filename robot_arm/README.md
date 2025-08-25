@@ -20,3 +20,14 @@ Supported arms:
 
 
 
+## Controllers
+### OSC PD Controller
+To test goal
+```bash
+ros2 topic pub --once /osc_pd_controller/goal geometry_msgs/msg/PointStamped "{point: {x: 0.309, y: 0.0, z: 0.488}}"
+```
+
+To view torques
+```bash
+ros2 topic echo /franka_robot_state_broadcaster/robot_state --field measured_joint_state.effort
+```
