@@ -168,16 +168,13 @@
             "name": "Launch: franka_rim.launch.py",
             "type": "debugpy",
             "request": "launch",
-            "program": "/opt/ros/humble/bin/ros2", // Path to the ros2 executable
+            "program": "/opt/ros/humble/bin/ros2",
             "args": [
                 "launch",
                 "franka_rim",
                 "franka_rim.launch.py",
-                "delay:=0",
-                "compensation:=zoh",
                 "fake_i3:=false",
                 "save_data:=false",
-                "use_sim_time:=false"
             ],
             "console": "integratedTerminal",
             "env": {
@@ -218,6 +215,53 @@
             "description": "Bag file name",
             "default": "franka_rim_data_20241215_143022",
             "type": "promptString"
+        },
+        {
+            "id": "delay",
+            "description": "Network delay (ms)",
+            "default": "0",
+            "type": "promptString"
+        },
+        {
+            "id": "compensation",
+            "description": "Compensation method",
+            "default": "zoh",
+            "type": "pickString",
+            "options": [
+                "delay_rim",
+                "zoh",
+                "zoh_phi"
+            ]
+        },
+        {
+            "id": "fake_i3",
+            "description": "Use fake I3 device",
+            "default": "false",
+            "type": "pickString",
+            "options": [
+                "true",
+                "false"
+            ]
+        },
+        {
+            "id": "use_sim_time",
+            "description": "Use simulation time",
+            "default": "false",
+            "type": "pickString",
+            "options": [
+                "true",
+                "false"
+            ]
+        },
+        {
+            "id": "configFile",
+            "description": "Configuration file",
+            "default": "franka_rim_default.yaml",
+            "type": "pickString",
+            "options": [
+                "franka_rim_default.yaml",
+                "franka_rim_debug.yaml"
+            ]
         }
     ]
 }

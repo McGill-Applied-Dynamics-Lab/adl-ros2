@@ -16,6 +16,11 @@ data_files = [
         "share/" + package_name + "/rviz",
         [f"rviz/{f}" for f in os.listdir("rviz") if os.path.isfile(os.path.join("rviz", f))],
     ),
+    # config  files
+    (
+        "share/" + package_name + "/config",
+        [f"config/{f}" for f in os.listdir("config") if os.path.isfile(os.path.join("config", f))],
+    ),
 ]
 
 

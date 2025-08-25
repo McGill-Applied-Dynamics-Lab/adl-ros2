@@ -1,115 +1,73 @@
 import os
 from datetime import datetime
+from pathlib import Path
 
 from launch import LaunchDescription
 from launch_ros.actions import Node
 from launch.actions import DeclareLaunchArgument, ExecuteProcess
-from launch.substitutions import LaunchConfiguration
+from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch.conditions import IfCondition, UnlessCondition
-
-from ament_index_python.packages import get_package_share_directory
-
-from pathlib import Path
-
-K_INT = 500.0
-D_INT = 40.0
-
-F_SCALE = 0.1
+from launch_ros.substitutions import FindPackageShare
 
 
 def generate_launch_description():
-    #! Launch arguments
-    # Franka model parameters
-    model_update_freq_arg = DeclareLaunchArgument(
-        "model_update_freq", default_value="100.0", description="Frequency for model computation in Hz"
+    # Single launch argument for parameter file
+    config_file_arg = DeclareLaunchArgument(
+        "config_file",
+        default_value="franka_rim_default.yaml",
+        description="YAML configuration file to load (in franka_rim/config/)",
     )
 
-    robot_urdf_filename_arg = DeclareLaunchArgument(
-        "robot_urdf_filename", default_value="fr3_franka_hand.urdf", description="URDF filename for the robot model"
+    # Build path to config file
+    config_file_path = PathJoinSubstitution(
+        [FindPackageShare("franka_rim"), "config", LaunchConfiguration("config_file")]
     )
 
-    use_sim_time_arg = DeclareLaunchArgument("use_sim_time", default_value="true", description="Use simulation time")
-
-    # Delay parameters
-    delay_arg = DeclareLaunchArgument("delay", default_value="100", description="5g or fixed delay value in ms")
-
-    delay_compensation = DeclareLaunchArgument(
-        "compensation", default_value="delay_rim", description="Delay compensation method: delay_rim, zoh, or zoh_phi"
-    )
-
+    # Additional override arguments (optional)
     fake_i3_arg = DeclareLaunchArgument(
-        "fake_i3", default_value="false", description="Use haptic simulator instead of real Inverse3 device"
+        "fake_i3", default_value="true", description="Override fake_i3 setting (true/false)"
     )
 
     save_data_arg = DeclareLaunchArgument(
         "save_data", default_value="false", description="Record all data to a ROS 2 bag file"
     )
 
-    rviz_config_file = os.path.join(
-        get_package_share_directory("franka_rim"),
-        "rviz",
-        "fr3_rim.rviz",
-    )
-
     #! MARK: Nodes
+    rviz_config_file = PathJoinSubstitution([FindPackageShare("franka_rim"), "rviz", "fr3_rim.rviz"])
+
     rviz_node = Node(
         package="rviz2",
         executable="rviz2",
         name="rviz2",
         arguments=["-d", rviz_config_file],
         output="screen",
-        # parameters=[{"use_sim_time": LaunchConfiguration("use_sim_time")}],  # optional
+        parameters=[config_file_path],
     )
 
     visualization_node = Node(
         package="franka_rim",
         executable="rim_vis_node",
         name="rim_vis_node",
-        parameters=[
-            {
-                "i3_sphere_size": 0.03,
-                "rim_sphere_size": 0.03,
-                "use_sim_time": LaunchConfiguration("use_sim_time"),
-            }
-        ],
+        parameters=[config_file_path],
         output="screen",
     )
 
-    # -- Inverse3Node
-    # real
-    inverse3_node = Node(  # noqa
+    # -- Inverse3Node (real and fake)
+    inverse3_node = Node(
         package="inverse3_ros2",
         executable="inverse3_node",
         name="inverse3_node",
         output="screen",
-        parameters=[
-            {
-                "restitution_stiffness": 1.0,
-                "use_sim_time": LaunchConfiguration("use_sim_time"),
-            }
-        ],
+        parameters=[config_file_path],
         condition=UnlessCondition(LaunchConfiguration("fake_i3")),
     )
 
-    # fake
     i3_sim_node = Node(
         package="franka_rim",
         executable="i3_sim_node",
         name="i3_sim_node",
         output="screen",
-        parameters=[
-            {
-                "publish_frequency": 1000.0,
-                "sine_frequency": 0.2,
-                "amplitude": 0.1,
-                "n_cycles": 3,
-                "center_x": 0.0,
-                "center_y": 0.0,
-                "center_z": 0.0,
-                "wait_to_start": True,
-                "use_sim_time": LaunchConfiguration("use_sim_time"),
-            }
-        ],
+        parameters=[config_file_path],
         condition=IfCondition(LaunchConfiguration("fake_i3")),
     )
 
@@ -118,15 +76,7 @@ def generate_launch_description():
         package="franka_rim",
         executable="franka_model_node",
         name="franka_model_node",
-        parameters=[
-            {
-                "input_topic": "/franka_robot_state_broadcaster/robot_state",
-                "output_topic": "/fr3_model",
-                "update_freq": LaunchConfiguration("model_update_freq"),
-                "robot_urdf_filename": LaunchConfiguration("robot_urdf_filename"),
-                "use_sim_time": LaunchConfiguration("use_sim_time"),
-            }
-        ],
+        parameters=[config_file_path],
         output="screen",
     )
 
@@ -135,48 +85,24 @@ def generate_launch_description():
         package="franka_rim",
         executable="franka_rim_node",
         name="franka_rim_node",
+        parameters=[config_file_path],
         output="screen",
-        parameters=[
-            {
-                "update_freq": 10.0,  # 20 Hz TODO: 0.05
-                "interface_stiffness": K_INT,
-                "interface_damping": D_INT,
-                "use_sim_time": LaunchConfiguration("use_sim_time"),
-            }
-        ],
     )
 
-    # -- Network delays
-    # for rim
-    netsim_rim_msg_node = Node(  # rim msg delay
+    # -- Network delay nodes
+    netsim_rim_msg_node = Node(
         package="network_sim",
         executable="network_sim_node",
         name="rim_msg_delay",
-        parameters=[
-            {
-                "input_topic": "/fr3_rim",
-                "output_topic": "/fr3_rim_delayed",
-                "delay": LaunchConfiguration("delay"),
-                "message_type": "arm_interfaces/msg/FrankaRIM",
-                "use_sim_time": LaunchConfiguration("use_sim_time"),
-            }
-        ],
+        parameters=[config_file_path],
         output="screen",
     )
 
-    # for teleop cmd
-    netsim_node_ee_cmd_node = Node(  # teleop cmd delay
+    netsim_node_ee_cmd_node = Node(
         package="network_sim",
         executable="network_sim_node",
         name="ee_cmd_delay",
-        parameters=[
-            {
-                "input_topic": "/osc_pd_controller/goal_pre_delay",
-                "output_topic": "/osc_pd_controller/goal",
-                "delay": 0,  # LaunchConfiguration("delay"),
-                "message_type": "geometry_msgs/msg/PointStamped",  # "arm_interfaces/msg/Teleop",
-            }
-        ],
+        parameters=[config_file_path],
         output="screen",
     )
 
@@ -185,20 +111,7 @@ def generate_launch_description():
         package="franka_rim",
         executable="delay_rim_node",
         name="delay_rim_node",
-        parameters=[
-            {
-                "rim_topic": "/fr3_rim_delayed",
-                "cmd_topic": "/osc_pd_controller/goal_pre_delay",
-                "control_period": 0.001,  # 1kHz control rate
-                "delay_compensation_method": LaunchConfiguration(
-                    "compensation"
-                ),  # "DelayRIM",  # 'DelayRIM', 'ZOH', or 'ZOHPhi
-                "force_scaling": F_SCALE,  # No scaling for simple system
-                "max_workers": 8,  # Threading parameter
-                "i3_position_scale": 1.5,  # Mapping between I3 and end-effector position
-                "use_sim_time": LaunchConfiguration("use_sim_time"),
-            }
-        ],
+        parameters=[config_file_path],
         output="screen",
     )
 
@@ -232,15 +145,11 @@ def generate_launch_description():
     return LaunchDescription(
         [
             # -- Args
-            model_update_freq_arg,
-            robot_urdf_filename_arg,
-            delay_arg,
-            delay_compensation,
+            config_file_arg,
             fake_i3_arg,
             save_data_arg,
-            use_sim_time_arg,
             # -- Nodes
-            # inverse3_node,
+            inverse3_node,  # Add real inverse3 node back
             i3_sim_node,
             franka_model_node,
             franka_rim_node,
