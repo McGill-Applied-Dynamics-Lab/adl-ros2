@@ -22,3 +22,6 @@ log/
 # Results
 **/test/results/**
 **/results/**
+
+# Docs
+site/

@@ -1,0 +1,150 @@
+site_name: ADG ROS2 Documentation
+site_description: Documentation for the Applied Dynamics Group ROS2 packages
+site_author: McGill Applied Dynamics Group
+site_url: https://mcgill-applied-dynamics-group.github.io/adg-ros2/
+
+repo_name: McGill-Applied-Dynamics-Group/adg-ros2
+repo_url: https://github.com/McGill-Applied-Dynamics-Group/adg-ros2
+edit_uri: edit/main/
+
+# Theme
+theme:
+  name: material
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.expand
+    - navigation.path
+    - navigation.top
+    - search.suggest
+    - search.highlight
+    - content.tabs.link
+    - content.code.annotation
+    - content.code.copy
+    - content.action.edit
+    - content.action.view
+  language: en
+  palette:
+    - scheme: default
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+      primary: teal
+      accent: purple 
+    - scheme: slate
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+      primary: teal
+      accent: lime
+  font:
+    text: Roboto
+    code: Roboto Mono
+  favicon: assets/favicon.png
+  icon:
+    logo: logo
+
+# Plugins
+plugins:
+  - search:
+      separator: '[\s\-,:!=\[\]()"`/]+|\.(?!\d)|&[lg]t;|(?!\b)(?=[A-Z][a-z])'
+  - mkdocstrings:
+      handlers:
+        python:
+          options:
+            docstring_style: google
+            docstring_options:
+              ignore_init_summary: true
+            merge_init_into_class: true
+            show_submodules: true
+            show_source: false
+            show_bases: false
+            show_root_heading: false
+            show_root_toc_entry: false
+            heading_level: 1
+
+# Markdown Extensions
+markdown_extensions:
+  - abbr
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - toc:
+      permalink: true
+  - pymdownx.arithmatex:
+      generic: true
+  - pymdownx.betterem:
+      smart_enable: all
+  - pymdownx.caret
+  - pymdownx.details
+  - pymdownx.emoji:
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.keys
+  - pymdownx.magiclink:
+      normalize_issue_symbols: true
+      repo_url_shorthand: true
+      user: McGill-Applied-Dynamics-Group
+      repo: adg-ros2
+  - pymdownx.mark
+  - pymdownx.smartsymbols
+  - pymdownx.snippets:
+      base_path: [!relative $config_dir]
+      check_paths: true
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+      combine_header_slug: true
+      slugify: !!python/object/apply:pymdownx.slugs.slugify
+        kwds:
+          case: lower
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - pymdownx.tilde
+
+# Navigation
+nav:
+  - Home: index.md
+  - User Guide:
+    - Getting Started: user-guide/getting-started.md
+    - Installation: user-guide/installation.md
+    - Quick Start: user-guide/quick-start.md
+  - Packages:
+    - Overview: packages/index.md
+    - Core Utils: packages/adg-ros2-utils.md
+    - Robot Arm: packages/robot-arm.md
+    - Robot Tasks: packages/robot-tasks.md
+    - Teleop: packages/teleop.md
+  - API Reference:
+    - Overview: reference/index.md
+  - Developer Guide:
+    - Contributing: developer-guide/contributing.md
+    - Architecture: developer-guide/architecture.md
+    - Testing: developer-guide/testing.md
+  - Tutorials:
+    - tutorials/index.md
+
+# Extra
+extra:
+  version:
+    provider: mike
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/McGill-Applied-Dynamics-Group
+    - icon: fontawesome/brands/python
+      link: https://pypi.org/user/adg-mcgill/
+
+# Copyright
+copyright: |
+  &copy; 2024 <a href="https://github.com/McGill-Applied-Dynamics-Group"  target="_blank" rel="noopener">McGill Applied Dynamics Group</a>
