@@ -1,11 +1,19 @@
 {
     "name": "ROS 2 Development Container",
     "privileged": true,
-    "remoteUser": "user",
-    "dockerComposeFile": "./docker-compose.yml",
-    "service": "ros2_control",
-    "workspaceFolder": "/ros2_ws",
-    "workspaceMount": "source=${localWorkspaceFolder},target=/ros2_ws,type=bind",
+    "remoteUser": "ros",
+    "dockerComposeFile": "./docker-compose.yaml",
+    "service": "devcontainer",
+    "workspaceFolder": "/home/ros/ros2_ws/src/adg-ros2",
+    // "workspaceMount": "source=${localWorkspaceFolder},target=/ros2_ws,type=bind",
+    "features": {
+        "ghcr.io/devcontainers/features/node:1": {
+            "version": "lts"
+        },
+        "ghcr.io/larsnieuwenhuizen/features/zellij:0": {
+            "version": "0.0.4"
+        }
+    },
     "customizations": {
         "vscode": {
             "extensions": [
@@ -35,6 +43,7 @@
         "ROS_DOMAIN_ID": "01"
     },
     "mounts": [
+        "source=${localWorkspaceFolder},target=/home/ros/ros2_ws/src/adg-ros2,type=bind,consistency=cached",
         "source=/tmp/.X11-unix,target=/tmp/.X11-unix,type=bind,consistency=cached",
         "source=/dev/dri,target=/dev/dri,type=bind,consistency=cached"
     ],
@@ -45,4 +54,5 @@
         // "all"
     ],
     // "postCreateCommand": "pip install -e python/robotic_arm_controller"
+    "postStartCommand": "/bin/bash /home/ros/ros2_ws/src/adg-ros2/.devcontainer/post_create.sh"
 }
