@@ -7,6 +7,27 @@ repo_name: McGill-Applied-Dynamics-Group/adg-ros2
 repo_url: https://github.com/McGill-Applied-Dynamics-Group/adg-ros2
 edit_uri: edit/main/
 
+# Navigation
+nav:
+  - Home: index.md
+  - User Guide:
+    - Getting Started: user-guide/getting-started.md
+    - Installation: user-guide/installation.md
+    - Quick Start: user-guide/quick-start.md
+  - Packages:
+    - Utils: packages/adg-ros2-utils.md
+    - Robot Arm: packages/robot-arm.md
+    - Robot Tasks: packages/robot-tasks.md
+    - Teleop: packages/teleop.md
+  - API Reference:
+    - Overview: reference/index.md
+  - Developer Guide:
+    - Contributing: developer-guide/contributing.md
+    - Architecture: developer-guide/architecture.md
+    - Testing: developer-guide/testing.md
+  - Tutorials:
+    - tutorials/index.md
+
 # Theme
 theme:
   name: material
@@ -29,13 +50,13 @@ theme:
       toggle:
         icon: material/brightness-7
         name: Switch to dark mode
-      primary: teal
+      primary: indigo
       accent: purple 
     - scheme: slate
       toggle:
         icon: material/brightness-4
         name: Switch to light mode
-      primary: teal
+      primary: indigo
       accent: lime
   font:
     text: Roboto
@@ -113,27 +134,7 @@ markdown_extensions:
       custom_checkbox: true
   - pymdownx.tilde
 
-# Navigation
-nav:
-  - Home: index.md
-  - User Guide:
-    - Getting Started: user-guide/getting-started.md
-    - Installation: user-guide/installation.md
-    - Quick Start: user-guide/quick-start.md
-  - Packages:
-    - Overview: packages/index.md
-    - Core Utils: packages/adg-ros2-utils.md
-    - Robot Arm: packages/robot-arm.md
-    - Robot Tasks: packages/robot-tasks.md
-    - Teleop: packages/teleop.md
-  - API Reference:
-    - Overview: reference/index.md
-  - Developer Guide:
-    - Contributing: developer-guide/contributing.md
-    - Architecture: developer-guide/architecture.md
-    - Testing: developer-guide/testing.md
-  - Tutorials:
-    - tutorials/index.md
+
 
 # Extra
 extra:

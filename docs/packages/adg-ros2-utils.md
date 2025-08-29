@@ -2,18 +2,9 @@
 
 Core utilities and debugging tools for the ADG ROS2 ecosystem.
 
-## Overview
-
-The `adg_ros2_utils` package provides essential utilities and debugging tools that are shared across all other packages in the ADG ROS2 system. This package serves as the foundation for common functionality.
-
-## Features
-
-- **Debug Utilities**: Remote debugging support for ROS2 nodes
-- **Common Interfaces**: Shared data structures and utilities
-- **Logging Helpers**: Enhanced logging capabilities
+For now, mainly for remote debugging of ROS2 nodes
 
 ## Package Structure
-
 ```
 adg_ros2_utils/
 ├── adg_ros2_utils/
@@ -34,19 +25,10 @@ Provides debugging utilities for ROS2 nodes, including remote debugging support.
 
 ::: adg_ros2_utils.debug_utils.wait_for_debugger
 
-## Installation
-
-The package is automatically installed when you build the workspace:
-
-```bash
-cd ~/ros2_ws
-colcon build --packages-select adg_ros2_utils
-```
 
 ## Usage
 
 ### Remote Debugging
-
 To enable remote debugging for a specific node:
 
 ```bash
@@ -74,16 +56,42 @@ def main():
     rclpy.shutdown()
 ```
 
-## Dependencies
-
-- **ROS2 Humble**: Core ROS2 functionality
-- **debugpy**: Python debugging support
-- **rclpy**: ROS2 Python client library
-
-## Contributing
-
-This package follows the project-wide contributing guidelines. See the [contributing guide](../developer-guide/contributing.md) for details.
-
-## License
-
-Licensed under the same terms as the main ADG ROS2 project.
+#### In a VsCode Launch Configuration
+```json
+{
+    "configurations": [
+        {
+                    "name": "Python Debugger: Remote Attach",
+                    "type": "debugpy",
+                    "request": "attach",
+                    "connect": {
+                        "host": "localhost",
+                        "port": 5678
+                    },
+                    "pathMappings": [
+                        {
+                            "localRoot": "${workspaceFolder}",
+                            "remoteRoot": "."
+                        }
+                    ]
+        },
+        {
+                    "name": "Launch: franka_rim.launch.py",
+                    "type": "debugpy",
+                    "request": "launch",
+                    "program": "/opt/ros/humble/bin/ros2",
+                    "args": [
+                        "launch",
+                        "franka_rim",
+                        "franka_rim.launch.py",
+                        "fake_i3:=false",
+                        "save_data:=false",
+                    ],
+                    "console": "integratedTerminal",
+                    "env": {
+                        "DEBUG_NODE": "franka_rim_node", // Node name to debug
+                    }
+        },
+    ]
+}
+```

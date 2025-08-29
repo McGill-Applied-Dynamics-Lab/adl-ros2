@@ -5,16 +5,16 @@ import mkdocs_gen_files
 
 # Package structure mapping
 package_paths = {
-    "adg_ros2_utils": "adg_ros2_utils/adg_ros2_utils",
-    "robot_arm_bringup": "robot_arm/robot_arm_bringup/robot_arm_bringup",
-    "robot_arm_client": "robot_arm/robot_arm_client/robot_arm_client",
-    "robot_arm_interface": "robot_arm/robot_arm_interface/robot_arm_interface",
-    "robot_tasks": "robot_tasks/robot_tasks",
-    "franka_rim": "robot_arm/franka_rim/franka_rim",
-    "isaac_sim_ros": "robot_arm/isaac_sim_ros/isaac_sim_ros",
-    "teleop": "teleop/teleop/teleop",
-    "inverse3_ros2": "teleop/inverse3_ros2/inverse3_ros2",
-    "network_sim": "teleop/network_sim/network_sim",
+    "adg_ros2_utils": "src/adg_ros2_utils/adg_ros2_utils",
+    "robot_arm_bringup": "src/robot_arm/robot_arm_bringup/robot_arm_bringup",
+    "robot_arm_client": "src/robot_arm/robot_arm_client/robot_arm_client",
+    "robot_arm_interface": "src/robot_arm/robot_arm_interface/robot_arm_interface",
+    "robot_tasks": "src/robot_tasks/robot_tasks",
+    "franka_rim": "src/robot_arm/franka_rim/franka_rim",
+    "isaac_sim_ros": "src/robot_arm/isaac_sim_ros/isaac_sim_ros",
+    "teleop": "src/teleop/teleop/teleop",
+    "inverse3_ros2": "src/teleop/inverse3_ros2/inverse3_ros2",
+    "network_sim": "src/teleop/network_sim/network_sim",
 }
 
 nav_lines = []

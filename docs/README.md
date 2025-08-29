@@ -1,25 +1,18 @@
 # Documentation Setup
-
 This directory contains the MkDocs-based documentation for the ADG ROS2 project.
 
 ## Features
-
 - **Static Site Generation**: Uses MkDocs with Material theme
 - **API Documentation**: Automatically generates documentation from Python docstrings
-- **Modern UI**: Beautiful, responsive interface with search functionality
-- **Interactive**: Code examples, diagrams, and cross-references
 
 ## Quick Start
-
 ### Prerequisites
-
 ```bash
 # Install documentation dependencies
 pip install -r docs-requirements.txt
 ```
 
 ### Build Documentation
-
 ```bash
 # Build static site
 mkdocs build
@@ -31,60 +24,10 @@ mkdocs serve
 The documentation will be available at `http://localhost:8000`.
 
 ### Live Development
-
 When running `mkdocs serve`, the documentation auto-reloads when you make changes to:
 - Markdown files in `docs/`
 - Configuration in `mkdocs.yml`
 - Python docstrings in the source code
-
-## Generating API Documentation from Docstrings
-
-Yes! MkDocs can absolutely generate documentation from Python docstrings. This setup uses:
-
-1. **mkdocstrings**: Extracts docstrings and converts them to markdown
-2. **Google-style docstrings**: Supports the Google docstring format
-3. **Automatic discovery**: Finds and documents Python modules automatically
-
-### Example Docstring
-
-```python
-def wait_for_debugger(node_name, default_port=5678):
-    """
-    Wait for the debugger to attach.
-    
-    Only wait if the node_name matches the environment variable DEBUG_NODE.
-    
-    Args:
-        node_name: Name of the ROS2 node for debugging
-        default_port: Port to listen on for debugger connection
-        
-    Raises:
-        ValueError: If node_name is None
-        RuntimeError: If debugger fails to bind to port
-        
-    Example:
-        >>> wait_for_debugger("my_robot_node", 5678)
-        [my_robot_node] Waiting for debugger to attach on port 5678...
-    """
-    # Implementation here
-```
-
-### Including Docstrings in Documentation
-
-To include a module's docstrings in your documentation:
-
-```markdown
-# My Module Documentation
-
-::: my_package.my_module
-```
-
-This will automatically:
-- Extract all functions, classes, and methods
-- Format docstrings nicely
-- Include type hints
-- Show inheritance relationships
-- Generate cross-references
 
 ## Documentation Structure
 
@@ -114,7 +57,6 @@ docs/
 ## Configuration
 
 ### MkDocs Configuration (`mkdocs.yml`)
-
 Key configuration sections:
 
 ```yaml
@@ -145,7 +87,6 @@ markdown_extensions:
 ## Deployment
 
 ### GitHub Pages
-
 The documentation can be automatically deployed to GitHub Pages:
 
 ```yaml
@@ -179,6 +120,54 @@ mkdocs build
 ```
 
 ## Writing Good Documentation
+### Generating API Documentation from Docstrings
+MkDocs can generate documentation from Python docstrings. This setup uses:
+
+1. **mkdocstrings**: Extracts docstrings and converts them to markdown
+2. **Google-style docstrings**: Supports the Google docstring format
+3. **Automatic discovery**: Finds and documents Python modules automatically
+
+#### Example Docstring
+
+```python
+def wait_for_debugger(node_name, default_port=5678):
+    """
+    Wait for the debugger to attach.
+    
+    Only wait if the node_name matches the environment variable DEBUG_NODE.
+    
+    Args:
+        node_name: Name of the ROS2 node for debugging
+        default_port: Port to listen on for debugger connection
+        
+    Raises:
+        ValueError: If node_name is None
+        RuntimeError: If debugger fails to bind to port
+        
+    Example:
+        >>> wait_for_debugger("my_robot_node", 5678)
+        [my_robot_node] Waiting for debugger to attach on port 5678...
+    """
+    # Implementation here
+```
+
+#### Including Docstrings in Documentation
+
+To include a module's docstrings in your documentation:
+
+```markdown
+# My Module Documentation
+
+::: my_package.my_module
+```
+
+This will automatically:
+- Extract all functions, classes, and methods
+- Format docstrings nicely
+- Include type hints
+- Show inheritance relationships
+- Generate cross-references
+
 
 ### For Python Code
 
@@ -231,24 +220,13 @@ mkdocs build
 
 ## Tips and Tricks
 
-### Live Reload During Development
-
-```bash
-# Start development server with live reload
-mkdocs serve --dev-addr=0.0.0.0:8000
-
-# Your documentation updates automatically when you save files
-```
-
 ### Organizing Large Projects
-
 - Use the `nav:` section in `mkdocs.yml` to control page order
 - Group related content in subdirectories
 - Use `index.md` files for section overviews
 - Include a site-wide search
 
 ### Including Code from Source Files
-
 ```markdown
 --8<-- "path/to/source/file.py:10:20"
 ```
@@ -275,20 +253,7 @@ This includes lines 10-20 from the specified file.
 - Use relative paths consistently
 
 ### Getting Help
-
 - [MkDocs Documentation](https://www.mkdocs.org/)
 - [Material Theme Docs](https://squidfunk.github.io/mkdocs-material/)
 - [mkdocstrings Documentation](https://mkdocstrings.github.io/)
 
-## Summary
-
-This documentation setup provides:
-
-✅ **Automatic API documentation** from Python docstrings  
-✅ **Beautiful, modern interface** with Material theme  
-✅ **Easy maintenance** with markdown files  
-✅ **Powerful search** across all content  
-✅ **Mobile-responsive** design  
-✅ **GitHub Pages deployment** ready  
-
-The combination of MkDocs + mkdocstrings is perfect for Python projects that want both hand-written documentation and automatically generated API docs from docstrings!

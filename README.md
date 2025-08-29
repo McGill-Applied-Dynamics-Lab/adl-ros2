@@ -1,5 +1,17 @@
 # adg-ros2
-ROS2 packages for the Applied Dynamics Group at McGill.
+ROS2 packages for the Applied Dynamics Group at McGill. 
+
+Main use:
+- Teleoperation using the Inverse3
+- DelayRIM
+- Deployment of policies
+
+## Features
+
+## For Contributing
+See **[docs/README.md](docs/README.md)** on how to build and update the docs. 
+
+
 
 Developed for ROS2 Humble with Ubuntu 22.04. 
 
