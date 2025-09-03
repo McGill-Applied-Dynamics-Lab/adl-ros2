@@ -81,8 +81,8 @@ class DelayRIMNode(Node):
         self._persistent_initialized = False
 
         # TODO: Specify in params? Or init?
-        self._workspace_position = np.array([0.3085, 0.0, 0.4854])  # Home position
-        # self._workspace_position = np.array([0.40, 0.0, 0.4854])
+        # self._workspace_position = np.array([0.3085, 0.0, 0.4854])  # Home position
+        self._workspace_position = np.array([0.40, 0.0, 0.4854])
         # self._workspace_position = np.array([0.4253, 0.0, 0.00])  # Cube position
 
         # Frequency monitoring

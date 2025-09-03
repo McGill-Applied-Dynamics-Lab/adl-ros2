@@ -78,33 +78,34 @@ RUN apt-get update && \
     libeigen3-dev \
     # libignition-gazebo6-dev \
     libpoco-dev \
-    # ros-humble-ackermann-msgs \
-    ros-humble-ament-cmake \
-    ros-humble-ament-cmake-clang-format \
-    ros-humble-ament-cmake-clang-tidy \
-    # ros-humble-gazebo-ros \
-    # ros-humble-generate-parameter-library \
-    ros-humble-control-toolbox \
-    ros-humble-controller-interface \
-    ros-humble-control-msgs \
-    ros-humble-controller-manager \
-    ros-humble-geometry-msgs \
-    ros-humble-hardware-interface \
-    # ros-humble-hardware-interface-testing \
-    # ros-humble-joint-state-broadcaster \
-    # ros-humble-joint-state-publisher-gui \
-    # ros-humble-launch-testing \
-    # ros-humble-moveit \
-    # ros-humble-realtime-tools \
-    ros-humble-ros2-control \
-    ros-humble-ros2-control-test-assets \
-    ros-humble-ros2-controllers \
-    ros-humble-sensor-msgs \
-    # ros-humble-xacro \
-    # ros-humble-ros-gz \
-    # ros-humble-topic-based-ros2-control \
-    ros-humble-pinocchio \
-    ros-humble-joy \
+    # ros-${ROS_DISTRO}-ackermann-msgs \
+    ros-${ROS_DISTRO}-ament-cmake \
+    ros-${ROS_DISTRO}-ament-cmake-clang-format \
+    ros-${ROS_DISTRO}-ament-cmake-clang-tidy \
+    # ros-${ROS_DISTRO}-gazebo-ros \
+    # ros-${ROS_DISTRO}-generate-parameter-library \
+    ros-${ROS_DISTRO}-control-toolbox \
+    ros-${ROS_DISTRO}-controller-interface \
+    ros-${ROS_DISTRO}-control-msgs \
+    ros-${ROS_DISTRO}-controller-manager \
+    ros-${ROS_DISTRO}-geometry-msgs \
+    ros-${ROS_DISTRO}-hardware-interface \
+    # ros-${ROS_DISTRO}-hardware-interface-testing \
+    # ros-${ROS_DISTRO}-joint-state-broadcaster \
+    # ros-${ROS_DISTRO}-joint-state-publisher-gui \
+    # ros-${ROS_DISTRO}-launch-testing \
+    # ros-${ROS_DISTRO}-moveit \
+    # ros-${ROS_DISTRO}-realtime-tools \
+    ros-${ROS_DISTRO}-ros2-control \
+    ros-${ROS_DISTRO}-ros2-control-test-assets \
+    ros-${ROS_DISTRO}-ros2-controllers \
+    ros-${ROS_DISTRO}-sensor-msgs \
+    # ros-${ROS_DISTRO}-xacro \
+    # ros-${ROS_DISTRO}-ros-gz \
+    # ros-${ROS_DISTRO}-topic-based-ros2-control \
+    ros-${ROS_DISTRO}-pinocchio \
+    ros-${ROS_DISTRO}-joy \
+    ros-${ROS_DISTRO}-foxglove-bridge \
     && rm -rf /var/lib/apt/lists/*
 
 # Symlink python3 to python
@@ -147,10 +148,11 @@ USER $USERNAME
 WORKDIR /home/ros/ros2_ws
 
 # === FRANKA ROS2 ===
-RUN git clone https://github.com/danielsanjosepro/franka_ros2.git src/franka_ros2 \
+RUN git clone https://github.com/frankarobotics/franka_ros2.git src/franka_ros2 \
     && cd src/franka_ros2 \
+    && git checkout v2.0.2 \
     && cd /home/ros/ros2_ws \
-    && source /opt/ros/humble/setup.bash \
+    && source /opt/ros/${ROS_DISTRO}/setup.bash \
     && sudo apt-get update \
     && vcs import src < src/franka_ros2/franka.repos --recursive --skip-existing \
     && rosdep update \

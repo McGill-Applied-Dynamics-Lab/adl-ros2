@@ -10,6 +10,7 @@
 *.egg-info/
 # robot_arm_interface/robot_arm_interface/__pycache__/fr3_interface.cpython-310.pyc
 
+.github/
 
 # ROS2
 COLCON_IGNORE
@@ -19,9 +20,10 @@ build/
 install/
 log/
 
-# Results
+# Data
 **/test/results/**
 **/results/**
+data/
 
 # Docs
 site/

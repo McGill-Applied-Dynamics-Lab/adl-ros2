@@ -29,6 +29,7 @@ docker exec -it franka_ros2 /bin/bash
 
 
 ## Installing
+TODO: NOT CURRENT INSTRUCTIONS
 1. Create a ros2 workspace
 2. In `src`, clone `adg_ros2`, `franka_ros2`, `isaac_ros2_messages`(?)
 TODO: commands

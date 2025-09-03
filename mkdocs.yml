@@ -11,14 +11,15 @@ edit_uri: edit/main/
 nav:
   - Home: index.md
   - User Guide:
-    - Getting Started: user-guide/getting-started.md
     - Installation: user-guide/installation.md
-    - Quick Start: user-guide/quick-start.md
+    - Getting Started: user-guide/getting-started.md
+    - DelayRIM: user-guide/delay-rim.md
   - Packages:
     - Utils: packages/adg-ros2-utils.md
     - Robot Arm: packages/robot-arm.md
     - Robot Tasks: packages/robot-tasks.md
     - Teleop: packages/teleop.md
+    - Franka Server: packages/franka-server.md
   - API Reference:
     - Overview: reference/index.md
   - Developer Guide:
@@ -92,6 +93,7 @@ markdown_extensions:
   - def_list
   - footnotes
   - md_in_html
+  - callouts
   - toc:
       permalink: true
   - pymdownx.arithmatex:

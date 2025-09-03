@@ -140,7 +140,7 @@ def main():
 
     # Verify bag exists
     bag_file = FILES[args.bag_file]
-    bag_path = Path("logs") / bag_file["file"]
+    bag_path = Path("data") / bag_file["file"]
     if not bag_path.exists():
         print(f"Error: Bag file {bag_path} does not exist")
         sys.exit(1)

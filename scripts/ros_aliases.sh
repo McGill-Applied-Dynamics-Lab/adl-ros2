@@ -5,3 +5,4 @@ alias cb="cd ~/ros2_ws \
     && proj"
 
 alias sw="source /opt/ros/$ROS_DISTRO/setup.bash && source ~/ros2_ws/install/setup.bash"
+alias foxglove="ros2 launch foxglove_bridge foxglove_bridge_launch.xml"

@@ -43,24 +43,10 @@
             "console": "integratedTerminal",
         },
         {
-            "name": "Task: fr3_lift",
-            "type": "debugpy",
-            "request": "launch",
-            "program": "src/adg_ros2/robot_tasks/scripts/fr3_lift.py",
-            "console": "integratedTerminal",
-        },
-        {
             "name": "Agent Node: insert",
             "type": "debugpy",
             "request": "launch",
             "program": "src/adg_ros2/robot_tasks/robot_tasks/rl_agent/Insert.py",
-            "console": "integratedTerminal",
-        },
-        {
-            "name": "Agent Node: lift",
-            "type": "debugpy",
-            "request": "launch",
-            "program": "src/adg_ros2/robot_tasks/robot_tasks/rl_agent/Lift.py",
             "console": "integratedTerminal",
         },
         {
@@ -173,6 +159,7 @@
                 "launch",
                 "franka_rim",
                 "franka_rim.launch.py",
+                "config_file:=fr3_sim_config.yaml", // fr3_config, fr3_sim_config
                 "fake_i3:=false",
                 "save_data:=false",
             ],
@@ -180,33 +167,6 @@
             "env": {
                 "DEBUG_NODE": "", // franka_rim_node, franka_model_node, delay_rim_node
             }
-        },
-        {
-            "name": "Replay: Bag Data",
-            "type": "debugpy",
-            "request": "launch",
-            "program": "/opt/ros/humble/bin/ros2",
-            "args": [
-                "bag",
-                "play",
-                "${input:bagFileName}",
-                "--rate",
-                "0.5",
-                "--loop"
-            ],
-            "console": "integratedTerminal",
-        },
-        {
-            "name": "Python: Replay bag",
-            "type": "debugpy",
-            "request": "launch",
-            "program": "src/adg_ros2/robot_arm/franka_rim/scripts/replay_analysis.py",
-            "args": [
-                "${input:bagFileName}",
-                "--rate",
-                "1",
-            ],
-            "console": "integratedTerminal"
         },
     ],
     "inputs": [
