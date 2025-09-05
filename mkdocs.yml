@@ -13,13 +13,14 @@ nav:
   - User Guide:
     - Installation: user-guide/installation.md
     - Getting Started: user-guide/getting-started.md
+    - Franka Server: user-guide/franka-server.md
     - DelayRIM: user-guide/delay-rim.md
   - Packages:
     - Utils: packages/adg-ros2-utils.md
     - Robot Arm: packages/robot-arm.md
     - Robot Tasks: packages/robot-tasks.md
     - Teleop: packages/teleop.md
-    - Franka Server: packages/franka-server.md
+    - Arm Client: packages/arm-client.md
   - API Reference:
     - Overview: reference/index.md
   - Developer Guide:

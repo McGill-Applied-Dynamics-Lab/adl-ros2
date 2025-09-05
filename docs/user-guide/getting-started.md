@@ -4,12 +4,7 @@ This guide will help you get up and running with the ADG ROS2 packages.
 Before you begin, you need to have the project [installed](./installation.md). 
 
 ## 1. Franka Server
-The *Franka Server* consists of group of ROS2 nodes sending the low level torque commands to the *Franka Controller*. 
-The main component is the ros2 controller.
-
-- To start
-- Available controllers (CRISP)
-- 
+See [Franka Server User Guide](./franka-server.md) on how to use the Franka Server.
 
 ## 2. Using the Client (ADG ROS2 Packages)
 
