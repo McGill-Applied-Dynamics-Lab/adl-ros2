@@ -15,11 +15,11 @@ from rclpy.qos import qos_profile_sensor_data, qos_profile_system_default
 from scipy.spatial.transform import Rotation, Slerp
 from sensor_msgs.msg import JointState
 
-from crisp_py.control.controller_switcher import ControllerSwitcherClient
-from crisp_py.control.joint_trajectory_controller_client import JointTrajectoryControllerClient
-from crisp_py.control.parameters_client import ParametersClient
-from crisp_py.robot_config import FrankaConfig, RobotConfig
-from crisp_py.utils.callback_monitor import CallbackMonitor
+from arm_client.control.controller_switcher import ControllerSwitcherClient
+from arm_client.control.joint_trajectory_controller_client import JointTrajectoryControllerClient
+from arm_client.control.parameters_client import ParametersClient
+from arm_client.robot_config import FR3Config, RobotConfig
+from arm_client.utils.callback_monitor import CallbackMonitor
 
 
 @dataclass
@@ -77,6 +77,7 @@ class Robot:
         spin_node: bool = True,
         robot_config: RobotConfig | None = None,
         name: str = "robot_client",
+        robot_name: str = "fr3",
     ) -> None:
         """Initialize the robot interface.
 
@@ -93,12 +94,14 @@ class Robot:
             self.node = rclpy.create_node(name, namespace=namespace)
         else:
             self.node = node
-        self.config = robot_config if robot_config else FrankaConfig()
+
+        self.config = robot_config if robot_config else FR3Config()
 
         self._prefix = f"{namespace}_" if namespace else ""
 
         self.controller_switcher_client = ControllerSwitcherClient(self.node)
         self.joint_trajectory_controller_client = JointTrajectoryControllerClient(self.node)
+
         self.cartesian_controller_parameters_client = ParametersClient(
             self.node, target_node=self.config.cartesian_impedance_controller_name
         )
@@ -129,27 +132,21 @@ class Robot:
         self.node.create_subscription(
             PoseStamped,
             self.config.current_pose_topic,
-            self._callback_monitor.monitor(
-                f"{namespace.capitalize()} Current Pose", self._callback_current_pose
-            ),
+            self._callback_monitor.monitor(f"{namespace.capitalize()} Current Pose", self._callback_current_pose),
             qos_profile_sensor_data,
             callback_group=ReentrantCallbackGroup(),
         )
         self.node.create_subscription(
             JointState,
             self.config.current_joint_topic,
-            self._callback_monitor.monitor(
-                f"{namespace.capitalize()} Current Joint", self._callback_current_joint
-            ),
+            self._callback_monitor.monitor(f"{namespace.capitalize()} Current Joint", self._callback_current_joint),
             qos_profile_sensor_data,
             callback_group=ReentrantCallbackGroup(),
         )
 
         self.node.create_timer(
             1.0 / self.config.publish_frequency,
-            self._callback_monitor.monitor(
-                f"{namespace.capitalize()} Target Pose", self._callback_publish_target_pose
-            ),
+            self._callback_monitor.monitor(f"{namespace.capitalize()} Target Pose", self._callback_publish_target_pose),
             ReentrantCallbackGroup(),
         )
         self.node.create_timer(
@@ -277,6 +274,8 @@ class Robot:
             if timeout <= 0:
                 raise TimeoutError("Timeout waiting for end-effector pose.")
 
+        print("Robot is ready.")
+
     def set_target(self, position: List | NDArray | None = None, pose: Pose | None = None):
         """Set the target pose for the end-effector.
 
@@ -333,9 +332,7 @@ class Robot:
             return
         self._target_wrench_publisher.publish(self._wrench_to_wrench_msg(self._target_wrench))
 
-    def set_target_wrench(
-        self, force: List | NDArray | None = None, torque: List | NDArray | None = None
-    ):
+    def set_target_wrench(self, force: List | NDArray | None = None, torque: List | NDArray | None = None):
         """Set the target wrench (force/torque) to be applied by the robot.
 
         Args:
@@ -404,16 +401,12 @@ class Robot:
         for joint_name, joint_position in zip(msg.name, msg.position):
             if joint_name.removeprefix(self._prefix) not in self.config.joint_names:
                 continue
-            self._current_joint[
-                self.config.joint_names.index(joint_name.removeprefix(self._prefix))
-            ] = joint_position
+            self._current_joint[self.config.joint_names.index(joint_name.removeprefix(self._prefix))] = joint_position
 
         if self._target_joint is None:
             self._target_joint = self._current_joint.copy()
 
-    def move_to(
-        self, position: List | NDArray | None = None, pose: Pose | None = None, speed: float = 0.05
-    ):
+    def move_to(self, position: List | NDArray | None = None, pose: Pose | None = None, speed: float = 0.05):
         """Move the end-effector to a given pose by interpolating linearly between the poses.
 
         Args:
@@ -434,9 +427,7 @@ class Robot:
 
         rate = self.node.create_rate(self.config.publish_frequency)
 
-        slerp = Slerp(
-            [0, 1], Rotation.concatenate([start_pose.orientation, desired_pose.orientation])
-        )
+        slerp = Slerp([0, 1], Rotation.concatenate([start_pose.orientation, desired_pose.orientation]))
 
         for t in np.linspace(0.0, 1.0, N):
             pos = (1 - t) * start_pose.position + t * desired_pose.position
@@ -495,22 +486,20 @@ class Robot:
         ) = q
         return msg
 
-    def _joint_to_joint_msg(
-        self, q: NDArray, dq: NDArray | None = None, tau: NDArray | None = None
-    ) -> JointState:
+    def _joint_to_joint_msg(self, q: NDArray, dq: NDArray | None = None, tau: NDArray | None = None) -> JointState:
         """Convert a pose to a pose message."""
         joint_msg = JointState()
         joint_msg.header.frame_id = self.config.base_frame
         joint_msg.header.stamp = self.node.get_clock().now().to_msg()
-        joint_msg.name = [self._prefix + joint_name for joint_name in self.config.joint_names]
+        joint_msg.name = [
+            joint_name for joint_name in self.config.joint_names
+        ]  # [self._prefix + joint_name for joint_name in self.config.joint_names]
         joint_msg.position = q.tolist()
         joint_msg.velocity = dq.tolist() if dq is not None else [0.0] * len(q)
         joint_msg.effort = tau.tolist() if tau is not None else [0.0] * len(q)
         return joint_msg
 
-    def _parse_pose_or_position(
-        self, position: List | NDArray | None = None, pose: Pose | None = None
-    ) -> Pose:
+    def _parse_pose_or_position(self, position: List | NDArray | None = None, pose: Pose | None = None) -> Pose:
         """Parse a pose from a desired position or pose.
 
         This function is a utility to create a pose object from either a position vector or a pose object.

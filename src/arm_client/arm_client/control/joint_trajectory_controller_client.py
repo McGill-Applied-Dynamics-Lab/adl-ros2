@@ -52,12 +52,10 @@ class JointTrajectoryControllerClient(ActionClient):
             node (Node): The ROS2 node that will own this client.
         """
         self.node = node
-        super().__init__(
-            node, FollowJointTrajectory, "joint_trajectory_controller/follow_joint_trajectory"
-        )
+        super().__init__(node, FollowJointTrajectory, "joint_trajectory_controller/follow_joint_trajectory")
         self._goal = FollowJointTrajectory.Goal()
         namespace = self.node.get_namespace().strip("/")
-        self._prefix = f"{namespace}_" if namespace else ""
+        self._prefix = ""  # f"{namespace}_" if namespace else ""
 
     def send_joint_config(
         self,
@@ -78,9 +76,7 @@ class JointTrajectoryControllerClient(ActionClient):
             Optional[FollowJointTrajectory.Result]: If blocking is True, returns the result of the
                 trajectory execution. If blocking is False, returns None.
         """
-        self._goal.trajectory.joint_names = [
-            self._prefix + joint_name for joint_name in joint_names
-        ]
+        self._goal.trajectory.joint_names = [self._prefix + joint_name for joint_name in joint_names]
         self._goal.trajectory.header.stamp = self.node.get_clock().now().to_msg()
         self._goal.trajectory.points = []
         self._goal.trajectory.points.append(
@@ -95,17 +91,13 @@ class JointTrajectoryControllerClient(ActionClient):
 
         if blocking:
             while not future.done():
-                self.node.get_logger().debug(
-                    "Waiting for goal answer...", throttle_duration_sec=1.0
-                )
+                self.node.get_logger().debug("Waiting for goal answer...", throttle_duration_sec=1.0)
 
             goal_handle = future.result()
 
             future = goal_handle.get_result_async()
             while not future.done():
-                self.node.get_logger().debug(
-                    "Waiting for goal result...", throttle_duration_sec=1.0
-                )
+                self.node.get_logger().debug("Waiting for goal result...", throttle_duration_sec=1.0)
 
             self.node.get_logger().debug(f"Goal result: {future.result()}")
             return future.result()

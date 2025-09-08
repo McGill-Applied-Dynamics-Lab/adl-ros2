@@ -1,8 +1,11 @@
+from pathlib import Path
+
 """Initialize crisp_py."""
 
 import importlib.metadata
 
-__version__ = importlib.metadata.version("crisp_python")
+__version__ = importlib.metadata.version("arm_client")
+CONFIG_DIR = Path(__file__).parent / "config"
 
 try:
     import rclpy  # noqa: F401

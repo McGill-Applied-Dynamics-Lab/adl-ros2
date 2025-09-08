@@ -65,9 +65,7 @@ class ControllerSwitcherClient:
         future = self.list_client.call_async(ListControllers.Request())
 
         while not future.done():
-            self.node.get_logger().debug(
-                "Waiting for controller list...", throttle_duration_sec=1.0
-            )
+            self.node.get_logger().debug("Waiting for controller list...", throttle_duration_sec=1.0)
 
         response = future.result()
 
@@ -80,9 +78,7 @@ class ControllerSwitcherClient:
         future = self.load_client.call_async(request)
 
         while not future.done():
-            self.node.get_logger().debug(
-                "Waiting for load controller answer...", throttle_duration_sec=1.0
-            )
+            self.node.get_logger().debug("Waiting for load controller answer...", throttle_duration_sec=1.0)
         response = future.result()
 
         return response.ok
@@ -94,9 +90,7 @@ class ControllerSwitcherClient:
         future = self.configure_client.call_async(request)
 
         while not future.done():
-            self.node.get_logger().debug(
-                "Waiting for configure controller answer...", throttle_duration_sec=1.0
-            )
+            self.node.get_logger().debug("Waiting for configure controller answer...", throttle_duration_sec=1.0)
         response = future.result()
 
         return response.ok
@@ -113,9 +107,7 @@ class ControllerSwitcherClient:
         future = self.switch_client.call_async(request)
 
         while not future.done():
-            self.node.get_logger().debug(
-                "Waiting for switch controller answer...", throttle_duration_sec=1.0
-            )
+            self.node.get_logger().debug("Waiting for switch controller answer...", throttle_duration_sec=1.0)
         response = future.result()
 
         return response.ok
@@ -132,12 +124,8 @@ class ControllerSwitcherClient:
         """
         controllers = self.get_controller_list()
 
-        active_controllers = [
-            controller.name for controller in controllers if controller.state == "active"
-        ]
-        inactive_controllers = [
-            controller.name for controller in controllers if controller.state == "inactive"
-        ]
+        active_controllers = [controller.name for controller in controllers if controller.state == "active"]
+        inactive_controllers = [controller.name for controller in controllers if controller.state == "inactive"]
 
         if controller_name in active_controllers:
             self.node.get_logger().debug(f"Controller {controller_name} is already active.")
@@ -168,5 +156,7 @@ class ControllerSwitcherClient:
         if not ok:
             self.node.get_logger().error(f"Failed to switch to controller {controller_name}.")
             raise RuntimeError(f"Failed to switch to controller {controller_name}.")
+
+        print(f"Switched to controller {controller_name}.")
 
         return True

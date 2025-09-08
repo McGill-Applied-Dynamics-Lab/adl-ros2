@@ -34,11 +34,12 @@ class RobotConfig:
     target_frame: str = "end_effector_link"
 
     default_controller: str = "cartesian_impedance_controller"
-    cartesian_impedance_controller_name: str = "cartesian_impedance_controller"
-    joint_trajectory_controller_name: str = "joint_impedance_controller"
+    cartesian_impedance_controller_name: str = "/fr3/cartesian_impedance_controller"
+    joint_trajectory_controller_name: str = "/fr3/joint_impedance_controller"
 
     target_pose_topic: str = "target_pose"
     target_joint_topic: str = "target_joint"
+
     current_pose_topic: str = "current_pose"
     current_joint_topic: str = "joint_states"
 
@@ -54,11 +55,10 @@ class RobotConfig:
 
 
 @dataclass
-class FrankaConfig(RobotConfig):
-    """Configuration specific to Franka Emika robots.
+class FR3Config(RobotConfig):
+    """Configuration specific to Franka Research 3 robot.
 
-    Provides default values for frame names, joint names, and home configuration
-    specifically for Franka Emika robots.
+    Provides default values for frame names, joint names, and home configuration..
     """
 
     joint_names: list = field(
@@ -88,104 +88,6 @@ class FrankaConfig(RobotConfig):
     # target_frame: str = "fr3_link8"
 
 
-@dataclass
-class KinovaConfig(RobotConfig):
-    """Configuration specific to Kinova robots.
-
-    Provides default values for frame names, joint names, and home configuration
-    specifically for Kinova robots.
-    """
-
-    joint_names: list = field(
-        default_factory=lambda: [
-            "joint_1",
-            "joint_2",
-            "joint_3",
-            "joint_4",
-            "joint_5",
-            "joint_6",
-            "joint_7",
-        ]
-    )
-    home_config: list = field(
-        default_factory=lambda: [
-            0,
-            -np.pi / 4,
-            0,
-            -3 * np.pi / 4,
-            0,
-            np.pi / 2,
-            np.pi / 4,
-        ]
-    )
-
-
-@dataclass
-class IiwaConfig(RobotConfig):
-    """Configuration specific to KUKA Iiwa robots.
-
-    Provides default values for frame names, joint names, and home configuration
-    specifically for Iiwa robots.
-    """
-
-    joint_names: list = field(
-        default_factory=lambda: [
-            "joint_a1",
-            "joint_a2",
-            "joint_a3",
-            "joint_a4",
-            "joint_a5",
-            "joint_a6",
-            "joint_a7",
-        ]
-    )
-    home_config: list = field(
-        default_factory=lambda: [
-            0,
-            -np.pi / 4,
-            0,
-            -3 * np.pi / 4,
-            0,
-            np.pi / 2,
-            np.pi / 4,
-        ]
-    )
-    base_frame: str = "iiwa_base"
-    target_frame: str = "tool0"
-
-
-@dataclass
-class SO101Config(RobotConfig):
-    """Configuration specific to So101 robots.
-
-    Provides default values for frame names, joint names, and home configuration
-    specifically for so101 robots.
-    """
-
-    joint_names: list = field(
-        default_factory=lambda: [
-            "Shoulder_Rotation",
-            "Shoulder_Pitch",
-            "Elbow",
-            "Wrist_Pitch",
-            "Wrist_Roll",
-            "Gripper",
-        ]
-    )
-    home_config: list = field(
-        default_factory=lambda: [
-            0,
-            0,
-            0,
-            0,
-            0,
-            0,
-        ]
-    )
-    base_frame: str = "Base"
-    target_frame: str = "Fixed_Gripper"
-
-
 def make_robot_config(robot_type: str, **kwargs) -> RobotConfig:  # noqa: ANN003
     """Factory function to create robot configuration objects.
 
@@ -201,15 +103,13 @@ def make_robot_config(robot_type: str, **kwargs) -> RobotConfig:  # noqa: ANN003
     """
     robot_type = robot_type.lower()
 
-    if robot_type == "franka":
-        return FrankaConfig(**kwargs)
-    elif robot_type == "kinova":
-        return KinovaConfig(**kwargs)
-    elif robot_type == "iiwa":
-        return IiwaConfig(**kwargs)
-    elif robot_type == "so101":
-        return SO101Config(**kwargs)
+    if robot_type == "fr3":
+        return FR3Config(**kwargs)
+    # elif robot_type == "kinova":
+    #     return KinovaConfig(**kwargs)
+    # elif robot_type == "iiwa":
+    #     return IiwaConfig(**kwargs)
+    # elif robot_type == "so101":
+    #     return SO101Config(**kwargs)
     else:
-        raise ValueError(
-            f"Unsupported robot type: {robot_type}. Supported types: franka, kinova, iiwa, so101"
-        )
+        raise ValueError(f"Unsupported robot type: {robot_type}. Supported types: franka, kinova, iiwa, so101")
