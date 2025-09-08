@@ -14,7 +14,6 @@ from adg_ros2_utils.debug_utils import wait_for_debugger
 
 NODE_NAME = "inverse3_node"
 
-APPLY_CONTACT_FORCES = True
 DEBUG = False
 
 np.set_printoptions(precision=2)
@@ -123,6 +122,8 @@ class Inverse3Node(Node):
         self.declare_parameter("max_velocity", 0.0005)  # maximum velocity in vel-ctl region
         self.declare_parameter("websocket_uri", "ws://localhost:10001")  # WebSocket URI
 
+        self.declare_parameter("disable_forces", False)  # Disable forces
+
         #! Attributes
         self._i3: Inverse3 = None
         self._is_initialized = False
@@ -136,8 +137,6 @@ class Inverse3Node(Node):
         self._contact_forces = np.zeros(3)  # contact forces, from the ROS topic
 
         # Parameters
-        self._apply_contact_forces = APPLY_CONTACT_FORCES
-
         self._workspace_center = np.array([0.0, -0.17, 0.16])  # center of the ws
         self._pos_radius = self.get_parameter("pos_radius").get_parameter_value().double_value
         self._ks = self.get_parameter("restitution_stiffness").get_parameter_value().double_value
@@ -148,6 +147,8 @@ class Inverse3Node(Node):
         self._force_cap = self.get_parameter("force_cap").get_parameter_value().double_value
         self._websocket_uri = self.get_parameter("websocket_uri").get_parameter_value().string_value
 
+        self._disable_forces = self.get_parameter("disable_forces").get_parameter_value().bool_value
+
         # Log parameter values
         self.get_logger().info(
             f"Parameters\n"
@@ -156,7 +157,8 @@ class Inverse3Node(Node):
             f"- force_cap: {self._force_cap}, \n"
             f"- scale: {self._scale}, \n"
             f"- max_velocity: {self._maxVa}, \n"
-            f"- websocket_uri: {self._websocket_uri}"
+            f"- websocket_uri: {self._websocket_uri}, \n"
+            f"- disable_forces: {self._disable_forces}"
         )
 
         #! Init functions
@@ -237,7 +239,7 @@ class Inverse3Node(Node):
         """
         Callback for the '/inverse3/wrench_des' topic.
         """
-        if not self._apply_contact_forces:
+        if self._disable_forces:
             self._contact_forces = np.zeros(3)
             return
 

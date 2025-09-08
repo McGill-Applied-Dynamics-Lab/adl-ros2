@@ -59,7 +59,7 @@ Visualization Manager:
         Durability Policy: Volatile
         History Policy: Keep Last
         Reliability Policy: Reliable
-        Value: /robot_description
+        Value: /fr3/robot_description
       Enabled: true
       Links:
         All Links Enabled: true
@@ -204,7 +204,7 @@ Visualization Manager:
       Enabled: true
       Name: MarkerArray
       Namespaces:
-        delayrim_viz: true
+        {}
       Topic:
         Depth: 5
         Durability Policy: Volatile
@@ -258,16 +258,16 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz_default_plugins/Orbit
-      Distance: 1.820099115371704
+      Distance: 1.839290976524353
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
         Stereo Focal Distance: 1
         Swap Stereo Eyes: false
         Value: false
       Focal Point:
-        X: 0.44832998514175415
-        Y: -0.02156975120306015
-        Z: 0.14843101799488068
+        X: 0.2497623711824417
+        Y: 0.015875767916440964
+        Z: 0.3781079053878784
       Focal Shape Fixed Size: true
       Focal Shape Size: 0.05000000074505806
       Invert Z Axis: false

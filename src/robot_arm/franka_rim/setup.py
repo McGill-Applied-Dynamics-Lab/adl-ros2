@@ -1,4 +1,5 @@
 from setuptools import find_packages, setup
+from glob import glob
 import os
 
 package_name = "franka_rim"
@@ -17,10 +18,11 @@ data_files = [
         [f"rviz/{f}" for f in os.listdir("rviz") if os.path.isfile(os.path.join("rviz", f))],
     ),
     # config  files
-    (
-        "share/" + package_name + "/config",
-        [f"config/{f}" for f in os.listdir("config") if os.path.isfile(os.path.join("config", f))],
-    ),
+    *[
+        (os.path.join("share", package_name, os.path.dirname(f)), [f])
+        for f in glob("config/**", recursive=True)
+        if os.path.isfile(f)
+    ],
 ]
 
 

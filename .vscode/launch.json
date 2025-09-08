@@ -159,7 +159,7 @@
                 "launch",
                 "franka_rim",
                 "franka_rim.launch.py",
-                "config_file:=fr3_sim_config.yaml", // fr3_config, fr3_sim_config
+                "config_file:=rim_fr3_config.yaml", // rim_fr3_config, rim_fr3_sim_config
                 "fake_i3:=false",
                 "save_data:=false",
             ],

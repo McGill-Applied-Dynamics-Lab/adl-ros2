@@ -60,7 +60,7 @@ class FrankaRIMNode(Node):
         # Subscribe to cartesian force from OSC PD controller
         self._cartesian_force_sub = self.create_subscription(
             WrenchStamped,
-            "/osc_pd_controller/cartesian_force",
+            "/fr3/osc_pd_controller/cartesian_force",
             self._cartesian_force_callback,
             10,
         )
@@ -195,7 +195,7 @@ class FrankaRIMNode(Node):
             self._rim_msg.rim_velocity = rim_velocity.flatten().tolist()
 
             # Monitoring
-            self._log_timer_monitoring(log_period=3.0)
+            # self._log_timer_monitoring(log_period=3.0)
 
             self._loop_count += 1
             self._last_loop_time = loop_time

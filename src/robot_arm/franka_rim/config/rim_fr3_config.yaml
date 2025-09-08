@@ -7,7 +7,7 @@
 franka_model_node:
   ros__parameters:
     update_freq: 100.0
-    input_topic: "/franka_robot_state_broadcaster/robot_state"
+    input_topic: "/fr3/franka_robot_state_broadcaster/robot_state"
     output_topic: "/fr3_model"
     robot_urdf_filename: "fr3_franka_hand.urdf"
     vel_thres: 0.005
@@ -23,7 +23,7 @@ franka_rim_node:
 delay_rim_node:
   ros__parameters:
     rim_topic: "/fr3_rim_delayed"
-    cmd_topic: "/osc_pd_controller/goal_pre_delay"
+    cmd_topic: "fr3/target_pose"
     control_period: 0.001
     delay_compensation_method: "zoh"
     force_scaling: 0.1

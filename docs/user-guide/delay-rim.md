@@ -10,10 +10,21 @@ foxglove # or without the alias: ros2 launch foxglove_bridge foxglove_bridge_lau
 
 ### Real Robot
 1. Start the server on the Franka PC
+```
+cd ...
+docker compose up launch-franka
+```
 
-2. Check everything is ok (TODO)
+2. Start the I3 node
+```
+ros2 run inverse3_ros2 inverse3_node
+# OR w/o force feedback
+ros2 run inverse3_ros2 inverse3_node --ros-args --param disable_forces:=true
+```
+
+3. Launch delay rim
 ```bash
-python examples/fr3_go_home.py
+ros2 launch franka_rim franka_rim.launch.py config_file:=fr3_sim_config.yaml fake_i3:=false save_data:=false
 ```
 
 ### Sim
@@ -28,3 +39,27 @@ ros2 launch franka_rim franka_rim.launch.py config_file:=fr3_sim_config.yaml fak
 ```
 python src/robot_arm/franka_rim/scripts/replay_analysis.py <file_id>
 ```
+
+
+## Nodes
+TODO: THIS SHOULD COME FROM THE FILES
+### `franka_model_node`
+To compute the model of the franka
+
+Input: state of the robot
+
+Output: /fr3_model [FrankaModel]
+
+### `franka_rim_node`
+File: 
+
+To compute the RIM of the Model message
+
+Input: /fr3_model
+Out: /fr3_rim
+
+### `delay_rim_node`
+Compute the target_pose and interaction forces from the history of the I3 states and 
+
+In: I3 state, rim
+Out: target_pose, i3_wrench

@@ -32,7 +32,7 @@ class FrankaModelNode(Node):
         self.declare_parameter("update_freq", 100.0)  # Hz
 
         # Declare topic parameters
-        self.declare_parameter("input_topic", "/franka_robot_state_broadcaster/robot_state")
+        self.declare_parameter("input_topic", "/fr3/franka_robot_state_broadcaster/robot_state")
         self.declare_parameter("output_topic", "/fr3_model")
         self.declare_parameter("vel_thres", 0.005)  # Velocity threshold for applied forces
 
@@ -60,7 +60,7 @@ class FrankaModelNode(Node):
         # Subscribe to cartesian force from OSC PD controller
         self._cartesian_force_sub = self.create_subscription(
             WrenchStamped,
-            "/osc_pd_controller/cartesian_force",
+            "/fr3/osc_pd_controller/cartesian_force",
             self._cartesian_force_callback,
             10,
         )
@@ -277,7 +277,7 @@ class FrankaModelNode(Node):
         # self.get_logger().info("Published FrankaModel message to fr3_model topic")
 
         # Enhanced loop monitoring
-        self._log_timer_monitoring(log_period=3.0)
+        # self._log_timer_monitoring(log_period=3.0)
 
         self._loop_count += 1
         self._last_loop_time = loop_time
@@ -460,14 +460,15 @@ class FrankaModelNode(Node):
         # )
 
         #! Applied forces
-        self.fa = self.tau_meas - self.tau_des
-        self.fa = self.fa.reshape(
-            self._n,
-        )
-
-        # self.fa = np.zeros(self._n).reshape(
+        # self.fa = self.tau_meas - self.tau_des
+        # self.fa = self.fa.reshape(
         #     self._n,
         # )
+
+        # Zero, for debugging
+        self.fa = np.zeros(self._n).reshape(
+            self._n,
+        )
 
     def _build_model_message(self, q, q_dot, x_ee, v_ee, M, c, tau, Ai, Ai_dot_q_dot, fa):
         """Build a FrankaModel message from the computed model matrices.

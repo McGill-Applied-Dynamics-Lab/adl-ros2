@@ -2,7 +2,7 @@ import rclpy
 from rclpy.node import Node
 from arm_interfaces.msg import FrankaRIM, Teleop
 from teleop_interfaces.msg import Inverse3State
-from geometry_msgs.msg import WrenchStamped, Twist, Point, Quaternion, PointStamped, PoseStamped, TwistStamped
+from geometry_msgs.msg import WrenchStamped, Twist, Point, Quaternion, PointStamped, PoseStamped, TwistStamped, Pose
 import numpy as np
 import time
 from collections import deque
@@ -98,7 +98,7 @@ class DelayRIMNode(Node):
         self._ctrl_force = np.zeros((3,))  # Cartesian force from OSC PD controller
         self._ctrl_force_sub = self.create_subscription(
             WrenchStamped,
-            "/osc_pd_controller/cartesian_force",
+            "/fr3/osc_pd_controller/cartesian_force",
             self._ctrl_force_callback,
             10,
         )
@@ -106,7 +106,7 @@ class DelayRIMNode(Node):
         # Publishers
         self._force_pub = self.create_publisher(WrenchStamped, "/inverse3/wrench_des", 10)
         self._interface_force_pub = self.create_publisher(WrenchStamped, "/rim_interface_force", 10)
-        self._teleop_pub = self.create_publisher(PointStamped, cmd_topic, 10)
+        self._teleop_pub = self.create_publisher(PoseStamped, cmd_topic, 10)
         self._rim_state_pose_pub = self.create_publisher(PoseStamped, "/rim_state_pose", 10)
         self._rim_state_twist_pub = self.create_publisher(TwistStamped, "/rim_state_twist", 10)
 
@@ -255,7 +255,7 @@ class DelayRIMNode(Node):
         if self._last_inverse3_msg is None or self.rim_state is None:
             return
 
-        robot_pose_msg = PointStamped()
+        robot_pose_msg = PoseStamped()
         robot_pose_msg.header.stamp = self.get_clock().now().to_msg()
         # robot_pose_msg.control_mode = Teleop.CONTROL_MODE_POSITION
 
@@ -270,10 +270,21 @@ class DelayRIMNode(Node):
         # )
 
         # Lateral commands
-        ee_pos_des_msg = Point()
-        ee_pos_des_msg.x = self._desired_ee_position[0]
-        ee_pos_des_msg.y = self._desired_ee_position[1]
-        ee_pos_des_msg.z = self._desired_ee_position[2]
+        ee_pose_des_msg = Pose()
+
+        ee_pose_des_msg.position.x = self._desired_ee_position[0]
+        ee_pose_des_msg.position.y = self._desired_ee_position[1]
+        ee_pose_des_msg.position.z = self._desired_ee_position[2]
+        robot_pose_msg.pose = ee_pose_des_msg
+
+        # Orientation - Pointing downwards
+        ee_quat_des = Quaternion()
+        ee_quat_des.x = 1.0
+        ee_quat_des.y = 0.0
+        ee_quat_des.z = 0.0
+        ee_quat_des.w = 0.0
+
+        robot_pose_msg.pose.orientation = ee_quat_des
 
         # # Vertical commands
         # haptic_position[0] += 0.025
@@ -290,19 +301,6 @@ class DelayRIMNode(Node):
         # ee_pos_des_msg.x = float(rim_position[0])
         # ee_pos_des_msg.y = 0.0
         # ee_pos_des_msg.z = 0.025
-
-        robot_pose_msg.point = ee_pos_des_msg
-
-        # # Orientation
-        # ee_quat_des = Quaternion()
-        # ee_quat_des.x = 1.0
-        # ee_quat_des.y = 0.0
-        # ee_quat_des.z = 0.0
-        # ee_quat_des.w = 0.0
-
-        # robot_pose_msg.ee_des.position = ee_pos_des_msg
-        # robot_pose_msg.ee_des.orientation = ee_quat_des
-        # robot_pose_msg.ee_vel_des = Twist()
 
         self._teleop_pub.publish(robot_pose_msg)
 

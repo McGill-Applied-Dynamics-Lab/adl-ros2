@@ -8,6 +8,12 @@ See [Franka Server User Guide](./franka-server.md) on how to use the Franka Serv
 
 ## 2. Using the Client (ADG ROS2 Packages)
 
+1. Start the server 
+2. Make sure you are able to see the robot
+TODO: Script that test
+
+3. 
+
 ### Python Scripting
 
 To start the robot arm control system:
