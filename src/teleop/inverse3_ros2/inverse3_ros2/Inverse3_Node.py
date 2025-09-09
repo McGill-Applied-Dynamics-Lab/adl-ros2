@@ -3,7 +3,7 @@ import rclpy
 from rclpy.node import Node  # node class makes a ROS2 Node
 # from rclpy.executors import MultiThreadedExecutor
 
-from geometry_msgs.msg import WrenchStamped, Vector3, Point
+from geometry_msgs.msg import WrenchStamped, Vector3, Point, PoseStamped, TwistStamped
 from teleop_interfaces.msg import Inverse3State
 
 # libraries needed for Inverse3
@@ -115,6 +115,13 @@ class Inverse3Node(Node):
         self.get_logger().info("Initializing inverse3_node...")
 
         #! Declare parameters
+        self.declare_parameter("i3_pose_topic_name", "/i3/pose")  # topic name for the Inverse3 pose
+        self.declare_parameter("i3_twist_topic_name", "/i3/twist")  # topic name for the Inverse3 twist
+        self.declare_parameter("i3_wrench_topic_name", "/i3/wrench")  # topic name for the Inverse3 wrench
+        self.declare_parameter("frequency", 1000.0)  # frequency of the node
+
+        self.declare_parameter("workspace_centre", [0.0, -0.17, 0.16])  # center of the physical workspace
+
         self.declare_parameter("pos_radius", 0.04)  # radius of the pos-ctl region
         self.declare_parameter("restitution_stiffness", 1.0)  # stiffness for restitution force
         self.declare_parameter("force_cap", 1.0)  # maximum force cap
@@ -137,7 +144,15 @@ class Inverse3Node(Node):
         self._contact_forces = np.zeros(3)  # contact forces, from the ROS topic
 
         # Parameters
-        self._workspace_center = np.array([0.0, -0.17, 0.16])  # center of the ws
+        self._i3_pose_topic_name = self.get_parameter("i3_pose_topic_name").get_parameter_value().string_value
+        self._i3_twist_topic_name = self.get_parameter("i3_twist_topic_name").get_parameter_value().string_value
+        self._i3_wrench_topic_name = self.get_parameter("i3_wrench_topic_name").get_parameter_value().string_value
+
+        self._workspace_centre = np.array(
+            self.get_parameter("workspace_centre").get_parameter_value().double_array_value
+        )
+        self._freq = self.get_parameter("frequency").get_parameter_value().double_value
+
         self._pos_radius = self.get_parameter("pos_radius").get_parameter_value().double_value
         self._ks = self.get_parameter("restitution_stiffness").get_parameter_value().double_value
 
@@ -158,7 +173,11 @@ class Inverse3Node(Node):
             f"- scale: {self._scale}, \n"
             f"- max_velocity: {self._maxVa}, \n"
             f"- websocket_uri: {self._websocket_uri}, \n"
-            f"- disable_forces: {self._disable_forces}"
+            f"- disable_forces: {self._disable_forces}, \n"
+            f"- workspace_centre: {self._workspace_centre.tolist()}, \n"
+            f"- i3_pose_topic_name: {self._i3_pose_topic_name}, \n"
+            f"- i3_twist_topic_name: {self._i3_twist_topic_name}, \n"
+            f"- frequency: {self._freq}, \n"
         )
 
         #! Init functions
@@ -167,7 +186,7 @@ class Inverse3Node(Node):
         self._init_subscribers()
         self._init_publishers()
 
-        self._ee_cmd_timer = self.create_timer(0.01, self._pub_i3_state)
+        self._ee_cmd_timer = self.create_timer(1 / self._freq, self._pub_i3_state)
 
     def _init_i3(self):
         """
@@ -196,18 +215,18 @@ class Inverse3Node(Node):
         self._raw_position, self._velocity = self._i3.get_state()
 
         # loop until the device end effector is close enough to the center of the pos-ctl region
-        i3_at_center = close_to_point(self._workspace_center, self._raw_position, 0.03)
+        i3_at_center = close_to_point(self._workspace_centre, self._raw_position, 0.03)
 
         while not i3_at_center:
             self._raw_position, self._velocity = self._i3.end_effector_force(self._forces.tolist())
             self._raw_position = np.array(self._raw_position)
             self._velocity = np.array(self._velocity)
 
-            self._forces = force_restitution(self._workspace_center, 0.01, self._raw_position, 10)
-            i3_at_center = close_to_point(self._workspace_center, self._raw_position, 0.03)
+            self._forces = force_restitution(self._workspace_centre, 0.01, self._raw_position, 10)
+            i3_at_center = close_to_point(self._workspace_centre, self._raw_position, 0.03)
 
             # ? Log
-            self._ws_position = self._scale * (self._raw_position - self._workspace_center)
+            self._ws_position = self._scale * (self._raw_position - self._workspace_centre)
             self.get_logger().info("Move device to the center of the pos-ctl region...", throttle_duration_sec=2.0)
 
         self._is_initialized = True
@@ -220,8 +239,9 @@ class Inverse3Node(Node):
         self.get_logger().info("Initializing subscribers...")
 
         # --- forces ---
-        forces_topic = "/inverse3/wrench_des"
-        self._forces_sub = self.create_subscription(WrenchStamped, forces_topic, self._wrench_topic_callback, 10)
+        self._forces_sub = self.create_subscription(
+            WrenchStamped, self._i3_wrench_topic_name, self._wrench_topic_callback, 10
+        )
 
     def _init_publishers(self):
         """
@@ -229,15 +249,21 @@ class Inverse3Node(Node):
         """
         self.get_logger().info("Initializing publishers...")
 
-        # Inverse3 state publisher
-        i3_state_topic = "/inverse3/state"
-        self._i3_state_pub = self.create_publisher(Inverse3State, i3_state_topic, 10)
-        self._i3_state_msg = Inverse3State()
+        # # Inverse3 state publisher
+        # i3_state_topic = "/inverse3/state"
+        # self._i3_state_pub = self.create_publisher(Inverse3State, i3_state_topic, 10)
+        # self._i3_state_msg = Inverse3State()
+
+        self._i3_pose_pub = self.create_publisher(PoseStamped, self._i3_pose_topic_name, 10)
+        self._i3_pose_msg = PoseStamped()
+
+        self._i3_twist_pub = self.create_publisher(TwistStamped, self._i3_twist_topic_name, 10)
+        self._i3_twist_msg = TwistStamped()
 
     #! Callbacks
     def _wrench_topic_callback(self, msg: WrenchStamped):
         """
-        Callback for the '/inverse3/wrench_des' topic.
+        Callback for the '/i3/wrench' topic.
         """
         if self._disable_forces:
             self._contact_forces = np.zeros(3)
@@ -261,29 +287,39 @@ class Inverse3Node(Node):
         # print(f"Raw position: {self._raw_position}")
 
         # map of the workspace into the virtual space
-        self._ws_position = self._scale * (self._raw_position - self._workspace_center)
+        self._ws_position = self._scale * (self._raw_position - self._workspace_centre)
 
-        # TODO: Remove - Only y used
-        self._ws_position[0] = 0.0
-        self._ws_position[2] = 0.0
+        # # TODO: Remove - Only y used
+        # self._ws_position[0] = 0.0
+        # self._ws_position[2] = 0.0
 
         #! Forces
         # Update the forces for the next iteration
 
         # set the force in the next iteration on the end effector to be the published forces from Vortex
         # (capped since contact forces generated in Vortex can be very large)
-        restitution_forces = force_restitution(self._workspace_center, self._pos_radius, self._raw_position, self._ks)
+        restitution_forces = force_restitution(self._workspace_centre, self._pos_radius, self._raw_position, self._ks)
 
         # total force on the end effector, applied next iteration
         self._forces = restitution_forces + self._contact_forces
 
         #! Publish the Inverse3 state
-        self._i3_state_msg.header.stamp = self.get_clock().now().to_msg()
+        self._i3_pose_msg.header.stamp = self.get_clock().now().to_msg()
+        self._i3_pose_msg.pose.position = np2ros(self._ws_position, msg_type="Point")
 
-        self._i3_state_msg.pose.position = np2ros(self._ws_position, msg_type="Point")
-        self._i3_state_msg.twist.linear = np2ros(self._velocity, msg_type="Vector3")
+        self._i3_twist_msg.header.stamp = self.get_clock().now().to_msg()
+        self._i3_twist_msg.twist.linear = np2ros(self._velocity, msg_type="Vector3")
 
-        self._i3_state_pub.publish(self._i3_state_msg)
+        self._i3_pose_pub.publish(self._i3_pose_msg)
+        self._i3_twist_pub.publish(self._i3_twist_msg)
+
+        # self._i3_state_msg.header.stamp = self.get_clock().now().to_msg()
+
+        # self._i3_state_msg.pose.position = np2ros(self._ws_position, msg_type="Point")
+        # self._i3_state_msg.twist.linear = np2ros(self._velocity, msg_type="Vector3")
+
+        # self._i3_state_pub.publish(self._i3_state_msg)
+
         if DEBUG:
             self._log_infos()
 

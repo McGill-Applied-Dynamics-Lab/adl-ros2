@@ -28,8 +28,11 @@ class DelayRIMNode(Node):
 
         # Parameters
         self.declare_parameter("rim_topic", "/fr3_rim_delayed")  #  'fr3_rim_delayed', 'rim_msg_delayed'
-        self.declare_parameter("cmd_topic", "/teleop/ee_cmd_no_delay")  # '/teleop/ee_cmd_no_delay', 'simple_system/cmd'
+        # self.declare_parameter("cmd_topic", "/teleop/ee_cmd_no_delay")  # '/teleop/ee_cmd_no_delay', 'simple_system/cmd'
         self.declare_parameter("update_freq", 1000.0)  # Default: 1 KHz
+
+        self.declare_parameter("haptic_pose_topic_name", "/haptic_pose")
+        self.declare_parameter("haptic_twist_topic_name", "/haptic_twist")
 
         self.declare_parameter("robot_cmd_period", 0.1)  # 10Hz control rate
         self.declare_parameter("delay_compensation_method", "delay_rim")  # 'delay_rim', 'zoh', or 'zoh_phi'

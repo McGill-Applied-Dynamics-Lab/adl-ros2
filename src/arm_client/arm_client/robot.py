@@ -438,13 +438,13 @@ class Robot:
 
         self._target_pose = desired_pose
 
-    def home(self, home_config: list[float] | None = None, blocking: bool = True):
+    def home(self, home_config: list[float] | None = None, blocking: bool = True, time_to_home: float | None = None):
         """Home the robot."""
         self.controller_switcher_client.switch_controller("joint_trajectory_controller")
         self.joint_trajectory_controller_client.send_joint_config(
             self.config.joint_names,
             self.config.home_config if home_config is None else home_config,
-            self.config.time_to_home,
+            self.config.time_to_home if time_to_home is None else time_to_home,
             blocking=blocking,
         )
 
