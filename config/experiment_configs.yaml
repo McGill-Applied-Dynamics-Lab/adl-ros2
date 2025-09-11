@@ -1,0 +1,15 @@
+int_force_free_space:
+  experiments:
+  - franka_rim_data_20250911_145004
+  - franka_rim_data_20250911_185005
+  output_filename: int_force_free_space.pkl
+  topics:
+    # Interface Forces
+    fr3_interface_force: /fr3/interface_force  # Force from the controller (between EE and I3)
+    rim_force: /rim/interface_force  # Force between RIM and I3
+    rendered_force: /i3/wrench  # Force rendered to the I3
+    # States
+    fr3_joint_states: /fr3/joint_states
+    fr3_pose: /fr3/current_pose
+    haptic_pose: /haptic_pose
+    rim_pose: /rim/pose

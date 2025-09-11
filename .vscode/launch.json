@@ -169,16 +169,17 @@
             }
         },
         {
-            "name": "Python: Analyse RIM Data",
+            "name": "Python: Process bag files",
             "type": "debugpy",
             "request": "launch",
-            "program": "scripts/analyze_rim_data.py",
+            "program": "scripts/bag_data_processing.py",
             "console": "integratedTerminal",
             "args": [
-                "franka_rim_data_20250911_145004", // Bag file
-                "--output-dir",
-                "${workspaceFolder}/data/analysis",
-                "--show-plots", // Comment this line to save plots instead of showing them
+                "--config-file",
+                "${workspaceFolder}/config/experiment_configs.yaml",
+                "--config",
+                "int_force_free_space",
+                "--force", // Uncomment to force processing even if output exists
             ],
             // "console": "externalTerminal",
             // "sudo": true

@@ -1,3 +1,7 @@
+<p align="center">
+    <img src="media/MADL_logo.svg" alt="ADG Logo"/>
+</p>
+
 # ADG ROS2 Documentation
 
 Welcome to the **Applied Dynamics Group ROS2** documentation! 
@@ -17,6 +21,15 @@ The ADG ROS2 ecosystem consists of several interconnected packages:
 1. **Installation**: Follow our [installation guide](user-guide/installation.md)
 2. **Getting Started**: Check out the [getting started guide](user-guide/getting-started.md)
 3. **Examples**: Explore the [tutorials](tutorials/index.md)
+
+
+## User Guides
+
+- **[Installation](user-guide/installation.md)**
+- **[Getting Started](user-guide/getting-started.md)**
+- **[Franka Server](user-guide/franka-server.md)**
+- **[Experiments](user-guide/experiments.md)**
+- **[DelayRIM](user-guide/delay-rim.md)**
 
 ## Key Features
 - 🦾 **Robot Arm Control**: Complete control stack for Franka FR3 robot

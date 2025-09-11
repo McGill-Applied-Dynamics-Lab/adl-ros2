@@ -207,24 +207,7 @@ class BagDataProcessor:
 def load_config(config_file: Path) -> Dict[str, Any]:
     """Load processing configuration from YAML file."""
     if not config_file.exists():
-        # Create default config file
-        default_config = {
-            "default": {
-                "experiments": ["franka_rim_data_20250911_142449", "franka_rim_data_20250910_203916"],
-                "topics": {
-                    "rim_force": "/rim/interface_force",
-                    "rim_pose": "/rim/pose",
-                    "haptic_pose": "/haptic_pose",
-                    "fr3_pose": "/fr3/current_pose",
-                    "fr3_joint_states": "/fr3/joint_states",
-                },
-                "output_filename": "processed_data.pkl",
-            }
-        }
-
-        with open(config_file, "w") as f:
-            yaml.dump(default_config, f, default_flow_style=False)
-        print(f"Created default config file: {config_file}")
+        raise FileNotFoundError(f"Configuration file not found: {config_file}")
 
     with open(config_file, "r") as f:
         return yaml.safe_load(f)

@@ -15,6 +15,7 @@ nav:
     - Getting Started: user-guide/getting-started.md
     - Franka Server: user-guide/franka-server.md
     - DelayRIM: user-guide/delay-rim.md
+    - Experiments: user-guide/experiments.md
   - Packages:
     - Utils: packages/adg-ros2-utils.md
     - Robot Arm: packages/robot-arm.md
@@ -64,9 +65,10 @@ theme:
     text: Roboto
     code: Roboto Mono
   favicon: assets/favicon.png
-  icon:
-    logo: logo
-
+  # icon:
+  #   logo: media/logo.png
+  logo: media/MADL_logo-minimal.svg
+  
 # Plugins
 plugins:
   - search:

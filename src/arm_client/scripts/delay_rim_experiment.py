@@ -1,4 +1,4 @@
-"""Try to follow a "figure eight" target on the yz plane."""
+"""Setup of the DelayRIM experiments."""
 
 import time
 
