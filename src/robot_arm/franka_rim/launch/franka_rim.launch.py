@@ -1,4 +1,3 @@
-import os
 from datetime import datetime
 from pathlib import Path
 
@@ -53,7 +52,7 @@ def generate_launch_description():
     )
 
     # -- Inverse3Node (real and fake)
-    inverse3_node = Node(
+    inverse3_node = Node(  # noqa
         package="inverse3_ros2",
         executable="inverse3_node",
         name="inverse3_node",
@@ -119,24 +118,61 @@ def generate_launch_description():
     # Generate timestamped bag file name
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     bag_filename = f"franka_rim_data_{timestamp}"
-    bag_filepath = Path("logs") / bag_filename
+    bag_filepath = Path("data") / bag_filename  # Store in data directory
 
-    bag_record_node = ExecuteProcess(  # noqa
+    # Define topics to record (add/remove as needed)
+    topics_to_record = [
+        "/delayrim_visualization",
+        "/f_ext_est",
+        "/f_ext_robot",
+        "/fr3/current_pose",
+        "/fr3/franka/joint_states",
+        "/fr3/franka_gripper/joint_states",
+        "/fr3/franka_robot_state_broadcaster/current_pose",
+        "/fr3/franka_robot_state_broadcaster/desired_end_effector_twist",
+        "/fr3/franka_robot_state_broadcaster/desired_joint_states",
+        "/fr3/franka_robot_state_broadcaster/external_joint_torques",
+        "/fr3/franka_robot_state_broadcaster/external_wrench_in_base_frame",
+        "/fr3/franka_robot_state_broadcaster/last_desired_pose",
+        "/fr3/franka_robot_state_broadcaster/measured_joint_states",
+        "/fr3/franka_robot_state_broadcaster/robot_state",
+        "/fr3/interface_force",
+        "/fr3/interface_torques",
+        "/fr3/joint_states",
+        "/fr3/robot_description",
+        "/fr3/target_joint",
+        "/fr3/target_pose",
+        "/fr3/target_wrench",
+        "/fr3_model",
+        "/fr3_rim",
+        "/fr3_rim_delayed",
+        "/goal_pose",
+        "/haptic_pose",
+        "/haptic_twist",
+        "/i3/pose",
+        "/i3/twist",
+        "/i3/wrench",
+        "/rim/interface_force",
+        "/rim/pose",
+        "/rim/twist",
+        "/tau_grav_est",
+        "/tf",
+        "/tf_static",
+    ]
+
+    # ROS 2 bag recording (uncompressed for easier analysis)
+    bag_record_node = ExecuteProcess(
         cmd=[
             "ros2",
             "bag",
             "record",
-            "--all",  # Record all topics
+            *topics_to_record,
             "--output",
-            bag_filepath.as_posix(),  # Use the generated bag file path
+            bag_filepath.as_posix(),
             "--storage",
             "sqlite3",
             "--max-bag-size",
             "0",  # No size limit
-            "--compression-mode",
-            "file",
-            "--compression-format",
-            "zstd",
         ],
         output="screen",
         condition=IfCondition(LaunchConfiguration("save_data")),
@@ -150,7 +186,7 @@ def generate_launch_description():
             save_data_arg,
             # -- Nodes
             # inverse3_node,  # Add real inverse3 node back
-            # i3_sim_node,
+            i3_sim_node,
             franka_model_node,
             franka_rim_node,
             delay_rim_node,

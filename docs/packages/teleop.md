@@ -1,16 +1,12 @@
 # Teleop 
 Remote robot control and teleoperation system with multiple interface options.
 
-## Sub-Packages
+## Packages
 ### `teleop`
-Main teleoperation package with core functionality.
 
-- **Purpose**: Primary teleoperation interface and control logic
-- **Language**: Python
-- **Key Features**: Multi-input support, safety monitoring, command filtering
+Main package. Teleoperation nodes (to process device inputs) and launch files
 
 #### Launch Files
-
 
 #### Nodes
 
@@ -65,102 +61,20 @@ Message and service definitions for teleoperation.
 - **Language**: ROS2 Interface Definition Language
 - **Key Features**: Command messages, status feedback, configuration services
 
-
-## Supported Input Methods
-
-### Keyboard Control
-TODO
-Direct keyboard input for quick testing and development.
-
-```bash
-# Launch keyboard teleoperation
-ros2 run TODO
-
-# Controls:
-# WASD: Translation
-# QE: Rotation around Z
-# RF: Up/Down motion
-# Space: Emergency stop
-```
-
-### Joystick/Gamepad
-Xbox, PlayStation, and generic USB controllers.
-
-
-```bash
-# Launch with joystick support
-ros2 launch TODO
-```
-
-
-
-## Configuration
-
-### Device Configuration
-
-Configure input devices in `config/devices.yaml`:
-
-```yaml
-keyboard:
-  enabled: true
-  key_mappings:
-    'w': [0.0, 0.1, 0.0]  # Forward
-    's': [0.0, -0.1, 0.0] # Backward
-    'a': [-0.1, 0.0, 0.0] # Left
-    'd': [0.1, 0.0, 0.0]  # Right
-    
-joystick:
-  enabled: true
-  device: "/dev/input/js0"
-  deadzone: 0.1
-  max_velocity: 0.5
-  button_map:
-    emergency_stop: 9
-    mode_switch: 8
-```
-
-
 ## Quick Start
 
-### Basic Keyboard Control
-
+### Inverse3
+TODO
 ```bash
-# Terminal 1: Launch robot system
-ros2 launch robot_arm_bringup gazebo.launch.py
-
-# Terminal 2: Start teleoperation
-ros2 run teleop teleop_keyboard
 ```
 
-### Joystick Setup
-
-```bash
-# Check joystick device
-ls /dev/input/js*
-
-# Test joystick input  
-jstest /dev/input/js0
-
-# Launch with joystick
-ros2 launch teleop joystick.launch.py device:=/dev/input/js0
-```
-
-### Network Teleoperation
-
-```bash
-# Server side (robot)
-ros2 launch teleop network_server.launch.py
-
-# Client side (operator)
-ros2 run teleop network_client --server=ROBOT_IP:8080
-```
-
-
-## Network Simulation
-
-The `network_sim` package provides tools for testing teleoperation under various network conditions:
-
+### Gamepad
 TODO
 
-## API Reference
+### Network Simulation
+You can add delays between messages using... 
 
+Add this to your launch file
+```python
+...
+```

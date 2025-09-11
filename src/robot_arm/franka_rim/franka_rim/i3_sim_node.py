@@ -1,7 +1,6 @@
 import rclpy
 from rclpy.node import Node
-from teleop_interfaces.msg import Inverse3State
-from geometry_msgs.msg import Point, Vector3, Pose, Twist
+from geometry_msgs.msg import Point, Vector3, Pose, Twist, PoseStamped, TwistStamped
 from std_srvs.srv import Trigger
 import numpy as np
 import math
@@ -13,7 +12,7 @@ NODE_NAME = "i3_sim_node"
 
 
 class I3SimNode(Node):
-    """Simulates haptic device input by publishing sine waves to /inverse3/state"""
+    """Simulates haptic device input by publishing sine waves to /i3/pose and /i3/twist"""
 
     def __init__(self):
         super().__init__(NODE_NAME)
@@ -27,7 +26,8 @@ class I3SimNode(Node):
         self.declare_parameter("center_x", 0.0)  # center position 0.30676
         self.declare_parameter("center_y", 0.0)
         self.declare_parameter("center_z", 0.0)  # 0.4844
-        self.declare_parameter("wait_to_start", False)  # Wait for service call to start
+        self.declare_parameter("use_start_srv", False)  # Wait for service call to start
+        self.declare_parameter("start_time", 2.0)  # Wait time before starting (if not using service)
 
         # Get parameters
         self.publish_freq = self.get_parameter("publish_frequency").get_parameter_value().double_value
@@ -37,24 +37,28 @@ class I3SimNode(Node):
         self.center_x = self.get_parameter("center_x").get_parameter_value().double_value
         self.center_y = self.get_parameter("center_y").get_parameter_value().double_value
         self.center_z = self.get_parameter("center_z").get_parameter_value().double_value
-        self.wait_to_start = self.get_parameter("wait_to_start").get_parameter_value().bool_value
+        self.start_time = self.get_parameter("start_time").get_parameter_value().double_value
+
+        self.use_start_srv = self.get_parameter("use_start_srv").get_parameter_value().bool_value
 
         # State variables
         self.duration = self.n_cycles / self.sine_freq  # Total duration for n cycles
 
         self.init_time = time.perf_counter()
 
-        if self.wait_to_start:
+        if self.use_start_srv:
             self.start_time = None  # Will be set when service is called
             self.trajectory_active = False
             self.simulation_active = False
+
         else:
-            self.start_time = self.init_time + 1  # Start after 1 second to allow system to stabilize
+            self.start_time = self.init_time + self.start_time  # Start after 1 second to allow system to stabilize
             self.trajectory_active = True
             self.simulation_active = True
 
-        # Publisher
-        self._inverse3_pub = self.create_publisher(Inverse3State, "/inverse3/state", 10)
+        # Publishers
+        self._pose_pub = self.create_publisher(PoseStamped, "/i3/pose", 10)
+        self._twist_pub = self.create_publisher(TwistStamped, "/i3/twist", 10)
 
         # Service for starting trajectory
         self._start_service = self.create_service(Trigger, "~/start_trajectory", self._start_trajectory_callback)
@@ -67,10 +71,10 @@ class I3SimNode(Node):
             f"HapticSimulator started: freq={self.publish_freq}Hz, "
             f"sine_freq={self.sine_freq}Hz, amplitude={self.amplitude}m, "
             f"duration={self.duration}s, center=({self.center_x}, {self.center_y}, {self.center_z}), "
-            f"wait_to_start={self.wait_to_start}"
+            f"wait_to_start={self.use_start_srv}"
         )
 
-        if self.wait_to_start:
+        if self.use_start_srv:
             self.get_logger().info("Waiting for service call to '~/start_trajectory' to begin simulation")
 
     def _start_trajectory_callback(self, request, response):
@@ -78,7 +82,7 @@ class I3SimNode(Node):
         current_time = time.perf_counter()
 
         # Check if we can start a new trajectory
-        if self.wait_to_start and self.trajectory_active and self.simulation_active:
+        if self.use_start_srv and self.trajectory_active and self.simulation_active:
             # Previous trajectory is still running
             response.success = False
             response.message = "Previous trajectory is still active. Cannot start new trajectory."
@@ -108,12 +112,12 @@ class I3SimNode(Node):
         velocity = np.zeros(3)
 
         # If wait_to_start is True and trajectory not active, publish zeros
-        if self.wait_to_start and not self.trajectory_active:
+        if self.use_start_srv and not self.trajectory_active:
             self._publish_i3_state(position, velocity)
             return
 
         # If not started yet (auto mode), wait until start time
-        if not self.wait_to_start and current_time < self.start_time:
+        if not self.use_start_srv and current_time < self.start_time:
             self._publish_i3_state(position, velocity)
             return
 
@@ -124,11 +128,11 @@ class I3SimNode(Node):
             if self.simulation_active:
                 self.get_logger().info(f"Simulation completed after {elapsed_time:.3f}s")
                 self.simulation_active = False
-                if self.wait_to_start:
+                if self.use_start_srv:
                     self.trajectory_active = False  # Allow new trajectory to be started
 
             # Continue publishing at final position (or zeros if wait_to_start mode)
-            if self.wait_to_start:
+            if self.use_start_srv:
                 # Reset to zeros when trajectory is complete
                 position = np.zeros(3)
                 velocity = np.zeros(3)
@@ -151,7 +155,7 @@ class I3SimNode(Node):
             velocity[2] = 0.0  # Fixed
         else:
             # Simulation complete
-            if not self.wait_to_start:
+            if not self.use_start_srv:
                 # Hold final position
                 omega = 2.0 * math.pi * self.sine_freq
                 position[0] = self.center_x + self.amplitude * math.sin(omega * self.duration)
@@ -162,38 +166,47 @@ class I3SimNode(Node):
         self._publish_i3_state(position, velocity)
 
     def _publish_i3_state(self, position: np.ndarray, velocity: np.ndarray):
-        # Create Inverse3State message
-        msg = Inverse3State()
-        msg.header.stamp = self.get_clock().now().to_msg()
-        msg.header.frame_id = "haptic_device"
+        # Create header with timestamp
+        current_time = self.get_clock().now().to_msg()
+
+        # Create and publish PoseStamped message
+        pose_msg = PoseStamped()
+        pose_msg.header.stamp = current_time
+        pose_msg.header.frame_id = "haptic_device"
 
         # Set pose
-        msg.pose = Pose()
-        msg.pose.position = Point()
-        msg.pose.position.x = position[1]  # To map correctly to robot, inverse x and y
-        msg.pose.position.y = position[0]
-        msg.pose.position.z = position[2]
+        pose_msg.pose = Pose()
+        pose_msg.pose.position = Point()
+        pose_msg.pose.position.x = position[1]  # To map correctly to robot, inverse x and y
+        pose_msg.pose.position.y = position[0]
+        pose_msg.pose.position.z = position[2]
 
         # Set orientation (identity quaternion)
-        msg.pose.orientation.w = 1.0
-        msg.pose.orientation.x = 0.0
-        msg.pose.orientation.y = 0.0
-        msg.pose.orientation.z = 0.0
+        pose_msg.pose.orientation.w = 1.0
+        pose_msg.pose.orientation.x = 0.0
+        pose_msg.pose.orientation.y = 0.0
+        pose_msg.pose.orientation.z = 0.0
+
+        # Create and publish TwistStamped message
+        twist_msg = TwistStamped()
+        twist_msg.header.stamp = current_time
+        twist_msg.header.frame_id = "haptic_device"
 
         # Set twist
-        msg.twist = Twist()
-        msg.twist.linear = Vector3()
-        msg.twist.linear.x = velocity[1]  # Inverse x and y
-        msg.twist.linear.y = velocity[0]  # Inverse x and y
-        msg.twist.linear.z = velocity[2]  # Inverse x and y
+        twist_msg.twist = Twist()
+        twist_msg.twist.linear = Vector3()
+        twist_msg.twist.linear.x = velocity[1]  # Inverse x and y
+        twist_msg.twist.linear.y = velocity[0]  # Inverse x and y
+        twist_msg.twist.linear.z = velocity[2]
 
         # Angular velocity (zero)
-        msg.twist.angular.x = 0.0
-        msg.twist.angular.y = 0.0
-        msg.twist.angular.z = 0.0
+        twist_msg.twist.angular.x = 0.0
+        twist_msg.twist.angular.y = 0.0
+        twist_msg.twist.angular.z = 0.0
 
-        # Publish message
-        self._inverse3_pub.publish(msg)
+        # Publish messages
+        self._pose_pub.publish(pose_msg)
+        self._twist_pub.publish(twist_msg)
 
         # # Log progress periodically
         # if int(elapsed_time * 10) % 10 == 0:  # Every 0.1 seconds

@@ -114,7 +114,7 @@ class DelayRIM:
 
         # Current state
         self.current_haptic_state: Optional[HapticState] = None
-        self.latest_forces: Optional[np.ndarray] = None  # Most recent computed interface forces
+        self.latest_interface_force: Optional[np.ndarray] = None  # Most recent computed interface force
 
         # Persistent state for continuous 1kHz stepping
         self.rim_state: Optional[ReducedModelState] = None  # Latest computed RIM state
@@ -124,9 +124,6 @@ class DelayRIM:
         Add new haptic state to history.
 
         Only add the state in along the interfaces.
-
-        For the 1D systems, this corresponds to the y-axis of the haptic device.
-
         """
         timestamp = self._node.get_clock().now().nanoseconds / 1e9
 
@@ -231,7 +228,9 @@ class DelayRIM:
         # Check if we have enough haptic history
         with self.lock:
             if len(self.haptic_history) == 0:
-                self._node.get_logger().warn(f"No haptic history available for packet {packet_id}")
+                self._node.get_logger().warn(
+                    f"No haptic history available for packet {packet_id}", throttle_duration_sec=2.0
+                )
                 self.stats.dropped_packets += 1
                 return packet_id
 
@@ -290,7 +289,7 @@ class DelayRIM:
             else:
                 raise ValueError(f"Unknown DelayCompensationMethod: {packet.method}")
 
-            # rendered_forces = Nonecomputation_time_ms
+            # rendered_force = Nonecomputation_time_ms
 
             # Calculate total delay from robot state capture to force computation
             proc_end_time = self._node.get_clock().now().nanoseconds / 1e9
@@ -391,7 +390,7 @@ class DelayRIM:
     # Force Computations
     ###
     def get_interface_force(self) -> Optional[np.ndarray]:
-        """Get the most recent interface forces computed using the selected delay compensation method."""
+        """Get the most recent interface force computed using the selected delay compensation method."""
         ready_results = []
         completed_ids = []
         loop_time = time.perf_counter()
@@ -423,18 +422,18 @@ class DelayRIM:
             # Return most recent result (highest packet_id) and log render timing
             ready_results.sort(key=lambda x: x[0])  # Sort by packet_id
             latest_packet_id, latest_rim = ready_results[-1]
-            # latest_forces = latest_rim.interface_force
+            # latest_force = latest_rim.interface_force
 
             # Log when force is actually rendered to user
             # print(f"FORCE RENDERED - Packet {latest_packet_id} rendered at {force_render_time:.6f}")
 
             self.rim_state = copy(latest_rim)
 
-            self.latest_forces = self.rim_state.interface_force
+            self.latest_interface_force = self.rim_state.interface_force
 
         elif self.rim_state is not None:
             # No results available, step local rim model
-            # self.latest_forces = np.zeros((self._interface_dim, 1))
+            # self.latest_force = np.zeros((self._interface_dim, 1))
             # self.node.get_logger().info(
             #     "No new DelayRIM results available, stepping local rim.", throttle_duration_sec=0.2
             # )
@@ -447,11 +446,11 @@ class DelayRIM:
 
             self._compute_interface_force(self.rim_state, haptic_position, haptic_velocity)
 
-            self.latest_forces = self.rim_state.interface_force
+            self.latest_interface_force = self.rim_state.interface_force
 
         else:
             # No persistent state yet
-            self.latest_forces = np.zeros((self._interface_dim, 1))
+            self.latest_interface_force = np.zeros((self._interface_dim, 1))
             self._node.get_logger().warn("No persistent RIM state available.", throttle_duration_sec=2.0)
 
         # Monitor timing
@@ -462,7 +461,7 @@ class DelayRIM:
         self._last_update_time = loop_time
         self._loop_count += 1
 
-        return self.latest_forces  # Return last known result
+        return self.latest_interface_force  # Return last known result
 
     def _compute_interface_force(
         self, rim: ReducedModelState, haptic_position: np.ndarray, haptic_velocity: np.ndarray
@@ -563,10 +562,10 @@ class DelayRIM:
         # reduced_model.rim_position = reduced_model.rim_position + reduced_model.hl * reduced_model.rim_velocity
 
         # #! V2
-        # forces_term = reduced_model.effective_force - reduced_model.stiffness * reduced_model.phi_position
+        # force_term = reduced_model.effective_force - reduced_model.stiffness * reduced_model.phi_position
         # rim_velocity_p = (
         #     reduced_model.A_inv @ reduced_model.rim_velocity
-        #     + reduced_model.A_inv * (1 / reduced_model.hl) * reduced_model.effective_mass * forces_term
+        #     + reduced_model.A_inv * (1 / reduced_model.hl) * reduced_model.effective_mass * force_term
         # )
         # reduced_model.rim_velocity = rim_velocity_p
 
@@ -657,7 +656,7 @@ class DelayRIM:
         """Update performance monitoring statistics.
 
         Attributes:
-            computation_time (float): Time taken to compute the forces in milliseconds.
+            computation_time (float): Time taken to compute the force in milliseconds.
             total_delay (float): Total delay from packet creation to force result in milliseconds.
 
         """

@@ -76,7 +76,7 @@ class I3TeleopVirtualCoupling(Node):
         self._haptic_position = np.zeros(3)  # Position of the haptic device in the robot's base frame
         self._haptic_linear_vel = np.zeros(3)  # Velocities of the haptic device in the robot's base frame
 
-        self._ee_pos = None  # np.zeros(3)  # End effector position for the robot
+        self._ee_pose = None  # np.zeros(3)  # End effector position for the robot
         self._ee_quat = np.array([0, 0, 0, 1])  # End effector orientation for the robot
         self._ee_vel = np.zeros(3)  # Velocities of the end effector.
         self._ws_center = np.zeros(3)  # Workspace center position of the I3 in the robot's base frame
@@ -205,7 +205,7 @@ class I3TeleopVirtualCoupling(Node):
         ----------
         msg : PoseStamped
         """
-        self._ee_pos = ros2np(msg.pose.position)
+        self._ee_pose = ros2np(msg.pose.position)
         self._ee_quat = np.array(
             [msg.pose.orientation.x, msg.pose.orientation.y, msg.pose.orientation.z, msg.pose.orientation.w]
         )
@@ -308,12 +308,12 @@ class I3TeleopVirtualCoupling(Node):
         Main loop of the node.
         """
         if not self._is_initialized:
-            if self._ee_pos is None:
+            if self._ee_pose is None:
                 self.get_logger().warn("Waiting for the robot pose...", throttle_duration_sec=2.0)
                 return
 
             self.get_logger().info("Initializing teleop node...")
-            self._ws_center = self._ee_pos
+            self._ws_center = self._ee_pose
 
             # self._n_robot_cal_msgs += 1
 

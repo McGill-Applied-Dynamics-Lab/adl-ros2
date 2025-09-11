@@ -160,13 +160,28 @@
                 "franka_rim",
                 "franka_rim.launch.py",
                 "config_file:=rim_fr3_config.yaml", // rim_fr3_config, rim_fr3_sim_config
-                "fake_i3:=false",
-                "save_data:=false",
+                "fake_i3:=true",
+                "save_data:=true",
             ],
             "console": "integratedTerminal",
             "env": {
                 "DEBUG_NODE": "", // franka_rim_node, franka_model_node, delay_rim_node
             }
+        },
+        {
+            "name": "Python: Analyse RIM Data",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "scripts/analyze_rim_data.py",
+            "console": "integratedTerminal",
+            "args": [
+                "franka_rim_data_20250911_145004", // Bag file
+                "--output-dir",
+                "${workspaceFolder}/data/analysis",
+                "--show-plots", // Comment this line to save plots instead of showing them
+            ],
+            // "console": "externalTerminal",
+            // "sudo": true
         },
     ],
     "inputs": [
