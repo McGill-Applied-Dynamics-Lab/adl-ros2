@@ -169,6 +169,24 @@
             }
         },
         {
+            "name": "Launch: i3_teleop_virual.launch.py",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "/opt/ros/humble/bin/ros2",
+            "args": [
+                "launch",
+                "franka_rim",
+                "i3_teleop.launch.py",
+                "config_file:=i3_teleop.yaml", // rim_fr3_config, rim_fr3_sim_config
+                "fake_i3:=true",
+                "save_data:=true",
+            ],
+            "console": "integratedTerminal",
+            "env": {
+                "DEBUG_NODE": "", // franka_rim_node, franka_model_node, delay_rim_node
+            }
+        },
+        {
             "name": "Python: Process bag files",
             "type": "debugpy",
             "request": "launch",
@@ -179,7 +197,7 @@
                 "${workspaceFolder}/config/experiment_configs.yaml",
                 "--config",
                 "int_force_free_space",
-                "--force", // Uncomment to force processing even if output exists
+                // "--force", // Uncomment to force processing even if output exists
             ],
             // "console": "externalTerminal",
             // "sudo": true

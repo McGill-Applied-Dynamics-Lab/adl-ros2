@@ -1,0 +1,21 @@
+# Global launch parameters (not node-specific)
+/**:
+  ros__parameters:
+    use_sim_time: false
+
+# I3 Sim Node Parameters
+i3_sim_node:
+  ros__parameters:
+    publish_frequency: 1000.0
+    sine_frequency: 0.2
+    amplitude: 0.1
+    n_cycles: 3
+    use_start_srv: false
+    start_time: 2.0
+
+# Visualization Node Parameters
+rim_vis_node:
+  ros__parameters:
+    i3_sphere_size: 0.03
+    rim_sphere_size: 0.03
+

@@ -2,6 +2,8 @@ int_force_free_space:
   experiments:
   - franka_rim_data_20250911_145004
   - franka_rim_data_20250911_185005
+  - franka_rim_data_20250911_202012
+  - franka_rim_data_20250911_202557
   output_filename: int_force_free_space.pkl
   topics:
     # Interface Forces
