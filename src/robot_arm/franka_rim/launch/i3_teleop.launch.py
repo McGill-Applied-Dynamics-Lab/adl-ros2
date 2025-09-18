@@ -28,7 +28,7 @@ def generate_launch_description():
 
     # Additional override arguments (optional)
     fake_i3_arg = DeclareLaunchArgument(
-        "fake_i3", default_value="true", description="Override fake_i3 setting (true/false)"
+        "fake_i3", default_value="false", description="Override fake_i3 setting (true/false)"
     )
 
     save_data_arg = DeclareLaunchArgument(
@@ -153,7 +153,7 @@ def generate_launch_description():
             fake_i3_arg,
             save_data_arg,
             # -- Nodes
-            # inverse3_node,  # Add real inverse3 node back
+            inverse3_node,  # Add real inverse3 node back
             i3_sim_node,
             fr3_teleop_node,
             # -- Data recording

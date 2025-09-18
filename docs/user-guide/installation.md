@@ -1,6 +1,8 @@
 # Installation
 
-Detailed installation instructions for the ADG ROS2 packages.
+Detailed installation instructions for the MADL ROS2 packages.
+This just on how to get everything ready, see [getting started](./getting-started.md) for instructions on how to use the
+different parts of the project.
 
 
 

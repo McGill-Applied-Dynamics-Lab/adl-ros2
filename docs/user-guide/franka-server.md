@@ -9,6 +9,27 @@ The main component is the ros2 controller.
 > - [IsaacSim Documentation](https://docs.isaacsim.omniverse.nvidia.com/4.5.0/index.html)
 > - [IsaacSim API](https://docs.isaacsim.omniverse.nvidia.com/4.5.0/py/index.html)
 
+## Testing `libfranka`
+Libfranka is the low level c++ api to send commands to the robot. 
+Test that you are able to connect to the robot:
+```
+cd ~/git/libfranka/build
+./examples/echo_robot_state $FR3_IP
+```
+
+To check the realtime is working:
+```
+# This moves the robot home
+./examples/communication_test $FR3_IP
+```
+
+Other examples are available. You can take a look with 
+```
+ls examples
+```
+
+## 
+
 
 ## Simulation Setup
 1. [Install Isaac Sim](https://docs.isaacsim.omniverse.nvidia.com/4.5.0/installation/index.html) (Only version 4.5.0 was tested)

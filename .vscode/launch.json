@@ -178,8 +178,8 @@
                 "franka_rim",
                 "i3_teleop.launch.py",
                 "config_file:=i3_teleop.yaml", // rim_fr3_config, rim_fr3_sim_config
-                "fake_i3:=true",
-                "save_data:=true",
+                "fake_i3:=false",
+                "save_data:=false",
             ],
             "console": "integratedTerminal",
             "env": {

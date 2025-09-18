@@ -1,13 +1,34 @@
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "adg-ros2"
+version = "0.1.0"
+description = "ADG ROS2 workspace for DelayRIM control, teleoperation, and policy deployment"
+readme = "README.md"
+authors = [{ name = "McGill Applied Dynamics Group" }]
+license = { file = "LICENSE" }
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+]
+requires-python = ">=3.10"
+
 [tool.ruff]
 # Specify the line length
 line-length = 180
 
 # Enable specific rules
 select = [
-    "E",  # Pyflakes error codes
-    "F",  # Pyflakes warning codes
-    "W",  # PEP8 warning codes
-    "C90",  # McCabe complexity
+    "E",   # Pyflakes error codes
+    "F",   # Pyflakes warning codes
+    "W",   # PEP8 warning codes
+    "C90", # McCabe complexity
 ]
 
 # Exclude specific directories or files
@@ -26,8 +47,8 @@ exclude = [
 
 # Ignore specific rules
 ignore = [
-    "E402",  # Import not at the top of the file
-    "E501",  # Line too long
-    "C901",  # Function is too complex
-    "F541",  # f-string is missing placeholders
+    "E402", # Import not at the top of the file
+    "E501", # Line too long
+    "C901", # Function is too complex
+    "F541", # f-string is missing placeholders
 ]

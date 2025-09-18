@@ -156,4 +156,6 @@
         "plaintext"
     ],
     // "python.testing.pytestPath": "/usr/bin/pytest-3"
+    //Docker
+    "containers.composeCommand": "docker compose"
 }

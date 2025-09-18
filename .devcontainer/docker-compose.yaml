@@ -1,59 +1,83 @@
+x-base: &base
+  image: adg_ros2:base
+  build:
+    context: ..
+    dockerfile: .devcontainer/Dockerfile
+    args:
+      ROS_DISTRO: humble
+
+  # --- Settings
+  network_mode: "host"
+  privileged: true
+  ipc: "host"
+  # ---
+
+  command: /bin/bash
+  tty: true
+  stdin_open: true
+
+  volumes:
+    - ../:/ros2_ws
+    - /tmp/.X11-unix:/tmp/.X11-unix
+    - $XAUTHORITY:$XAUTHORITY
+    - ./limits.conf:/etc/security/limits.conf
+    - ~/.gitconfig:/etc/gitconfig:ro
+
+  environment:
+    QT_X11_NO_MITSHM: 1
+    DISPLAY: $DISPLAY
+    PATH: /opt/openrobots/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+    PKG_CONFIG_PATH: /opt/openrobots/lib/pkgconfig:/usr/local/lib/pkgconfig:/usr/lib/pkgconfig
+    LD_LIBRARY_PATH: /opt/openrobots/lib:/usr/local/lib:/usr/lib
+    PYTHONPATH: /opt/openrobots/lib/python3.10/site-packages:/usr/local/lib/python3.10/site-packages
+    CMAKE_PREFIX_PATH: /opt/openrobots:/usr/local
+
+  # user: "${UID:-1000}:${GID:-1000}"
+
+  cap_add:
+    - SYS_NICE
+
+  ulimits:
+    rtprio: 99
+    rttime: -1
+    memlock: 8428281856
+
+  device_cgroup_rules:
+    - 'c *:* rmw'
+
+  devices:
+    - "/dev/ttyACM0:/dev/ttyACM0"
+
+  deploy:
+    resources:
+      reservations:
+        devices:
+          - capabilities: [ gpu ]
+
 services:
   devcontainer:
-    image: adg_ros2:base
-    build:
-      context: .
-      dockerfile: Dockerfile
-      args:
-        ROS_DISTRO: humble
+    <<: *base
     container_name: adg_ros2
 
-    # --- Settings
-    network_mode: "host"
-    privileged: true
-    ipc: "host"
-    # ---
+  docs:
+    <<: *base
+    container_name: adg_ros2_docs
 
-    command: /bin/bash
-    tty: true
-    stdin_open: true
-    
-    volumes:
-      - ../:/ros2_ws
-      - /tmp/.X11-unix:/tmp/.X11-unix
-      - $XAUTHORITY:$XAUTHORITY
-      - ./limits.conf:/etc/security/limits.conf
-      - ~/.gitconfig:/etc/gitconfig:ro
-    
-    environment:
-      QT_X11_NO_MITSHM: 1
-      DISPLAY: $DISPLAY
-      PATH: /opt/openrobots/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-      PKG_CONFIG_PATH: /opt/openrobots/lib/pkgconfig:/usr/local/lib/pkgconfig:/usr/lib/pkgconfig
-      LD_LIBRARY_PATH: /opt/openrobots/lib:/usr/local/lib:/usr/lib
-      PYTHONPATH: /opt/openrobots/lib/python3.10/site-packages:/usr/local/lib/python3.10/site-packages
-      CMAKE_PREFIX_PATH: /opt/openrobots:/usr/local
-    
-    # user: "${UID:-1000}:${GID:-1000}"
-    
-    cap_add:
-      - SYS_NICE
-    
-    ulimits:
-      rtprio: 99
-      rttime: -1
-      memlock: 8428281856
-    
-    device_cgroup_rules:
-      - 'c *:* rmw'
-    
-    devices:
-      - "/dev/ttyACM0:/dev/ttyACM0"
+    command: >
+      mkdocs serve
 
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - capabilities: [gpu]
+    ports:
+      - "8000:8000"
 
+    depends_on:
+      - devcontainer
 
+  foxglove:
+    <<: *base
+    container_name: adg_ros2_foxglove
+
+    command: >
+      ros2 launch foxglove_bridge foxglove_bridge_launch.xml
+
+    depends_on:
+      - devcontainer

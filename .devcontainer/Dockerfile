@@ -119,8 +119,8 @@ RUN mkdir -p /home/ros/ros2_ws
 # Upgrade pip
 RUN python3 -m pip install --upgrade pip
 
-# Install Python dependencies
-COPY requirements.txt /tmp/requirements.txt
+# Install Python dependencies from requirements.txt
+COPY ./requirements.txt /tmp/requirements.txt
 RUN pip install -r /tmp/requirements.txt
 # RUN python3 -m pip install --upgrade numpy
 

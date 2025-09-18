@@ -108,6 +108,7 @@ class Robot:
         self.joint_controller_parameters_client = ParametersClient(
             self.node, target_node=self.config.joint_trajectory_controller_name
         )
+        self.haptic_controller_parameters_client = ParametersClient(self.node, target_node="haptic_controller")
 
         self._current_pose = None
         self._target_pose = None
@@ -276,7 +277,7 @@ class Robot:
 
         print("Robot is ready.")
 
-    def set_target(self, position: List | NDArray | None = None, pose: Pose | None = None):
+    def setptarget(self, position: List | NDArray | None = None, pose: Pose | None = None):
         """Set the target pose for the end-effector.
 
         Args:
