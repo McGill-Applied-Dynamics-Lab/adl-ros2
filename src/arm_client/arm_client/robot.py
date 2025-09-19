@@ -146,7 +146,7 @@ class Robot:
         )
 
         self.node.create_timer(
-            1.0 / self.config.publish_frequency,
+            1.0 / 100.0,
             self._callback_monitor.monitor(f"{namespace.capitalize()} Target Pose", self._callback_publish_target_pose),
             ReentrantCallbackGroup(),
         )
@@ -277,7 +277,7 @@ class Robot:
 
         print("Robot is ready.")
 
-    def setptarget(self, position: List | NDArray | None = None, pose: Pose | None = None):
+    def set_target(self, position: List | NDArray | None = None, pose: Pose | None = None):
         """Set the target pose for the end-effector.
 
         Args:

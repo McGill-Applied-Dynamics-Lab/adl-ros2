@@ -33,8 +33,8 @@ class DelayRIMNode(Node):
         # --- Parameters
         # Topic names
         self.declare_parameter("rim_topic", "/fr3_rim_delayed")  #  'fr3_rim_delayed', 'rim_msg_delayed'
-        self.declare_parameter("haptic_pose_topic_name", "/haptic_pose")
-        self.declare_parameter("haptic_twist_topic_name", "/haptic_twist")
+        self.declare_parameter("haptic_pose_topic_name", "/fr3/target_pose")
+        self.declare_parameter("haptic_twist_topic_name", "/fr3/haptic_twist")
 
         self.declare_parameter("i3_wrench_topic_name", "/i3/wrench")
         self.declare_parameter("i3_pose_topic_name", "/i3/pose")

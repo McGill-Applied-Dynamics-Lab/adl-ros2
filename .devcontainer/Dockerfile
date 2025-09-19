@@ -70,7 +70,10 @@ RUN apt-get update && \
     python3-vcstool \
     python3-colcon-common-extensions \
     cmake \
-    dpkg
+    curl \
+    dpkg \
+    && curl --proto '=https' --tlsv1.2 -sSf https://just.systems/install.sh | bash -s -- --to /usr/local/bin \
+    && rm -rf /var/lib/apt/lists/*
 
 # ROS Packages
 RUN apt-get update && \

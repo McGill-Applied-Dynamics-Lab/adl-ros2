@@ -5,11 +5,11 @@
     "dockerComposeFile": "./docker-compose.yaml",
     "service": "devcontainer",
     "workspaceFolder": "/home/ros/ros2_ws/src/adg-ros2",
-    "runServices": [
-        "devcontainer",
-        "docs",
-        "foxglove"
-    ],
+    // "runServices": [
+    //     "devcontainer",
+    //     "docs",
+    //     "foxglove"
+    // ],
     // "workspaceMount": "source=${localWorkspaceFolder},target=/ros2_ws,type=bind",
     "features": {
         "ghcr.io/devcontainers/features/node:1": {

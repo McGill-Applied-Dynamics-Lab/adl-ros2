@@ -161,7 +161,7 @@
                 "franka_rim.launch.py",
                 "config_file:=rim_fr3_config.yaml", // rim_fr3_config, rim_fr3_sim_config
                 "fake_i3:=true",
-                "save_data:=true",
+                "save_data:=false",
             ],
             "console": "integratedTerminal",
             "env": {

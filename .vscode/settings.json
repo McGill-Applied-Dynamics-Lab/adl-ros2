@@ -1,5 +1,10 @@
 {
     "python.autoComplete.extraPaths": [
+        "${workspaceFolder}/src/arm_client",
+        "${workspaceFolder}/src/robot_arm",
+        "${workspaceFolder}/src/robot_tasks",
+        "${workspaceFolder}/src/teleop",
+        "${workspaceFolder}/src/adg_ros2_utils",
         "${workspaceFolder}/../../build/**",
         "${workspaceFolder}/../../install/**",
         // "/workspaces/build/ros2_control_demo_testing",
@@ -21,6 +26,11 @@
         "/usr/local/lib/python3.10/site-packages"
     ],
     "python.analysis.extraPaths": [
+        "${workspaceFolder}/src/arm_client",
+        "${workspaceFolder}/src/robot_arm",
+        "${workspaceFolder}/src/robot_tasks",
+        "${workspaceFolder}/src/teleop",
+        "${workspaceFolder}/src/adg_ros2_utils",
         "${workspaceFolder}/../../build/**",
         "${workspaceFolder}/../../install/**",
         // "/workspaces/build/ros2_control_demo_testing",

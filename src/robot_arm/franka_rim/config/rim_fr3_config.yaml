@@ -23,8 +23,8 @@ franka_rim_node:
 delay_rim_node:
   ros__parameters:
     rim_topic: "/fr3_rim_delayed"
-    haptic_pose_topic_name: "/haptic_pose"
-    haptic_twist_topic_name: "/haptic_twist"
+    haptic_pose_topic_name: "/fr3/target_pose"
+    haptic_twist_topic_name: "/fr3/target_twist"
     update_freq: 500.0 # 1000.0
     delay_compensation_method: "zoh"
     force_scaling: 0.1
