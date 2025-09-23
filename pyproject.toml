@@ -3,11 +3,11 @@ requires = ["setuptools>=45", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "adg-ros2"
+name = "adl-ros2"
 version = "0.1.0"
-description = "ADG ROS2 workspace for DelayRIM control, teleoperation, and policy deployment"
+description = "ADL ROS2 workspace for DelayRIM control, teleoperation, and policy deployment"
 readme = "README.md"
-authors = [{ name = "McGill Applied Dynamics Group" }]
+authors = [{ name = "McGill Applied Dynamics Lab" }]
 license = { file = "LICENSE" }
 classifiers = [
     "Development Status :: 3 - Alpha",

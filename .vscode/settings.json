@@ -22,7 +22,7 @@
         // "/workspaces/install/arm_interfaces/local/lib/python3.10/dist-packages",
         "/opt/ros/humble/lib/python3.10/site-packages",
         "/opt/ros/humble/local/lib/python3.10/dist-packages",
-        "/opt/openrobots/lib/python3.10/site-packages",
+        // "/opt/openrobots/lib/python3.10/site-packages",
         "/usr/local/lib/python3.10/site-packages"
     ],
     "python.analysis.extraPaths": [
@@ -48,7 +48,7 @@
         // "/workspaces/install/arm_interfaces/local/lib/python3.10/dist-packages",
         "/opt/ros/humble/lib/python3.10/site-packages",
         "/opt/ros/humble/local/lib/python3.10/dist-packages",
-        "/opt/openrobots/lib/python3.10/site-packages",
+        // "/opt/openrobots/lib/python3.10/site-packages",
         "/usr/local/lib/python3.10/site-packages"
     ],
     "files.associations": {

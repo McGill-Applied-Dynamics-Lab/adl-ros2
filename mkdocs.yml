@@ -1,10 +1,10 @@
-site_name: ADG ROS2 Documentation
-site_description: Documentation for the Applied Dynamics Group ROS2 packages
-site_author: McGill Applied Dynamics Group
-site_url: https://mcgill-applied-dynamics-group.github.io/adg-ros2/
+site_name: ADL ROS2 Documentation
+site_description: Documentation for the McGill Applied Dynamics Lab ROS2 packages
+site_author: McGill Applied Dynamics Lab
+site_url: https://mcgill-applied-dynamics-lab.github.io/adl-ros2/
 
-repo_name: McGill-Applied-Dynamics-Group/adg-ros2
-repo_url: https://github.com/McGill-Applied-Dynamics-Group/adg-ros2
+repo_name: McGill-Applied-Dynamics-Lab/adl-ros2
+repo_url: https://github.com/McGill-Applied-Dynamics-Lab/adl-ros2
 edit_uri: edit/main/
 
 # Navigation
@@ -153,4 +153,4 @@ extra:
 
 # Copyright
 copyright: |
-  &copy; 2024 <a href="https://github.com/McGill-Applied-Dynamics-Group"  target="_blank" rel="noopener">McGill Applied Dynamics Group</a>
+  &copy; 2025 <a href="https://github.com/McGill-Applied-Dynamics-Lab"  target="_blank" rel="noopener">McGill Applied Dynamics Lab</a>

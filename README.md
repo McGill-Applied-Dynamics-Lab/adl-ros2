@@ -1,5 +1,5 @@
-# adg-ros2
-ROS2 packages for the Applied Dynamics Group at McGill. 
+# adl-ros2
+ROS2 packages for the McGill Applied Dynamics Lab. 
 
 Main use:
 - Teleoperation using the Inverse3
@@ -31,13 +31,13 @@ docker exec -it franka_ros2 /bin/bash
 ## Installing
 TODO: NOT CURRENT INSTRUCTIONS
 1. Create a ros2 workspace
-2. In `src`, clone `adg_ros2`, `franka_ros2`, `isaac_ros2_messages`(?)
+2. In `src`, clone `adl_ros2`, `franka_ros2`, `isaac_ros2_messages`(?)
 TODO: commands
-*Note* name of folder needs to be `adg_ros2`, with an underscore and not an hyphen
+*Note* name of folder needs to be `adl_ros2`, with an underscore and not an hyphen
 
 3. Create symlink to .devcontainer
 ```
-ln -s src/adg_ros2/.devcontainer .devcontainer
+ln -s src/adl_ros2/.devcontainer .devcontainer
 ```
 
 4. Build Docker

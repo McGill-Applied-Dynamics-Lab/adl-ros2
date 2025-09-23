@@ -2,7 +2,6 @@ import rclpy
 from rclpy.node import Node
 from visualization_msgs.msg import Marker, MarkerArray
 from geometry_msgs.msg import PointStamped, PoseStamped
-from teleop_interfaces.msg import Inverse3State
 from std_msgs.msg import ColorRGBA
 import numpy as np
 

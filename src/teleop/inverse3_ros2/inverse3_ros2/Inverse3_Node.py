@@ -4,7 +4,7 @@ from rclpy.node import Node  # node class makes a ROS2 Node
 # from rclpy.executors import MultiThreadedExecutor
 
 from geometry_msgs.msg import WrenchStamped, Vector3, Point, PoseStamped, TwistStamped
-from teleop_interfaces.msg import Inverse3State
+# from teleop_interfaces.msg import Inverse3State
 
 # libraries needed for Inverse3
 from inverse3_ros2.websocket_inverse3 import Inverse3

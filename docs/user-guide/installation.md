@@ -1,9 +1,9 @@
 # Installation
+Detailed installation instructions for setting up the Franka arm and the ADL ROS2 packages.
+*Step 1 and 2 shouldn't really be needed now that everything is setup...*
 
-Detailed installation instructions for the MADL ROS2 packages.
 This just on how to get everything ready, see [getting started](./getting-started.md) for instructions on how to use the
 different parts of the project.
-
 
 
 ## 1. Franka Research 3

@@ -1,7 +1,0 @@
----
-# Result
-bool success
-string error
----
-# Feedback
-float64 current_width  # [m]
