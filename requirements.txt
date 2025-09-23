@@ -1,0 +1,37 @@
+# Core dependencies
+numpy==1.25.2
+pyyaml
+pandas<2.3.0
+# rclpy is provided by ROS2 system packages, not pip
+
+# Robotics and control
+HaplyHardwareAPI
+gymnasium
+
+# Machine learning
+torch
+torchvision
+torchaudio
+skrl[torch]
+robomimic
+
+# Development tools
+debugpy
+websockets
+orjson
+
+# Analysis dependencies
+matplotlib>=3.5.0
+# pandas already specified above with version constraint
+numpy>=1.21.0
+pyyaml>=6.0
+# rosbag2-py is provided by ROS2 system packages, not pip
+
+# Documentation dependencies
+mkdocs>=1.6.0
+mkdocs-material>=9.6.0
+mkdocstrings[python]>=0.30.0
+mkdocs-gen-files>=0.5.0
+mkdocs-literate-nav>=0.6.0
+mkdocs-section-index>=0.3.0
+markdown-callouts

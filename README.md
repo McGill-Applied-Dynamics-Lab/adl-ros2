@@ -1,5 +1,17 @@
-# adg-ros2
-ROS2 packages for the Applied Dynamics Group at McGill.
+# adl-ros2
+ROS2 packages for the McGill Applied Dynamics Lab. 
+
+Main use:
+- Teleoperation using the Inverse3
+- DelayRIM
+- Deployment of policies
+
+## Features
+
+## For Contributing
+See **[docs/README.md](docs/README.md)** on how to build and update the docs. 
+
+
 
 Developed for ROS2 Humble with Ubuntu 22.04. 
 
@@ -8,15 +20,24 @@ Developed for ROS2 Humble with Ubuntu 22.04.
 * **[teleop](teleop/README.md)**: To teleoperate a robotic arm with the inverse 3 or a joystick
 * **[robot_tasks](robot_tasks/README.md)**: To execute task w/ the robot arm
 
+## Usage
+
+Connecting to the docker container in a terminal
+```
+docker exec -it franka_ros2 /bin/bash
+```
+
+
 ## Installing
+TODO: NOT CURRENT INSTRUCTIONS
 1. Create a ros2 workspace
-2. In `src`, clone `adg_ros2`, `franka_ros2`, `isaac_ros2_messages`(?)
+2. In `src`, clone `adl_ros2`, `franka_ros2`, `isaac_ros2_messages`(?)
 TODO: commands
-*Note* name of folder needs to be `adg_ros2`, with an underscore and not an hyphen
+*Note* name of folder needs to be `adl_ros2`, with an underscore and not an hyphen
 
 3. Create symlink to .devcontainer
 ```
-ln -s src/adg_ros2/.devcontainer .devcontainer
+ln -s src/adl_ros2/.devcontainer .devcontainer
 ```
 
 4. Build Docker
@@ -41,7 +62,12 @@ python3 scripts/verify_installation.py
 colcon build --symlink-install --cmake-args '-DCMAKE_BUILD_TYPE=Debug'
 ```
 
-8. Launch example
+8. Source ros2
+```
+source install/setup.bash
+```
+
+9. Launch example
 TODO: Teleop example w/ rviz only
 
 ## Testing
@@ -82,3 +108,13 @@ ros2 launch foxglove_bridge foxglove_bridge_launch.xml
 
 **Note**
 The node can be launched in the docker container
+
+## Teleop
+```
+ros2 run inverse3_ros2 inverse3_node
+```
+
+## Delay Rim
+```
+ros2 launch franka_rim franka_rim.launch.py delay:=5g compensation:=zoh
+```

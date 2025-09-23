@@ -1,7 +1,12 @@
 {
     "python.autoComplete.extraPaths": [
-        "${workspaceFolder}/build/**",
-        "${workspaceFolder}/install/**",
+        "${workspaceFolder}/src/arm_client",
+        "${workspaceFolder}/src/robot_arm",
+        "${workspaceFolder}/src/robot_tasks",
+        "${workspaceFolder}/src/teleop",
+        "${workspaceFolder}/src/adg_ros2_utils",
+        "${workspaceFolder}/../../build/**",
+        "${workspaceFolder}/../../install/**",
         // "/workspaces/build/ros2_control_demo_testing",
         // "/workspaces/install/ros2_control_demo_testing/lib/python3.10/site-packages",
         // "/workspaces/build/robot_arm_bringup",
@@ -17,12 +22,17 @@
         // "/workspaces/install/arm_interfaces/local/lib/python3.10/dist-packages",
         "/opt/ros/humble/lib/python3.10/site-packages",
         "/opt/ros/humble/local/lib/python3.10/dist-packages",
-        "/opt/openrobots/lib/python3.10/site-packages",
+        // "/opt/openrobots/lib/python3.10/site-packages",
         "/usr/local/lib/python3.10/site-packages"
     ],
     "python.analysis.extraPaths": [
-        "${workspaceFolder}/build/**",
-        "${workspaceFolder}/install/**",
+        "${workspaceFolder}/src/arm_client",
+        "${workspaceFolder}/src/robot_arm",
+        "${workspaceFolder}/src/robot_tasks",
+        "${workspaceFolder}/src/teleop",
+        "${workspaceFolder}/src/adg_ros2_utils",
+        "${workspaceFolder}/../../build/**",
+        "${workspaceFolder}/../../install/**",
         // "/workspaces/build/ros2_control_demo_testing",
         // "/workspaces/install/ros2_control_demo_testing/lib/python3.10/site-packages",
         // "/workspaces/build/robot_arm_bringup",
@@ -38,7 +48,7 @@
         // "/workspaces/install/arm_interfaces/local/lib/python3.10/dist-packages",
         "/opt/ros/humble/lib/python3.10/site-packages",
         "/opt/ros/humble/local/lib/python3.10/dist-packages",
-        "/opt/openrobots/lib/python3.10/site-packages",
+        // "/opt/openrobots/lib/python3.10/site-packages",
         "/usr/local/lib/python3.10/site-packages"
     ],
     "files.associations": {
@@ -140,8 +150,8 @@
     "python.testing.pytestArgs": [
         // "src/adg_ros2/",  // Specific package test folder
         // "src/adg_ros2/teleop/network_sim/test",  // Specific package test folder
-        "src/adg_ros2",  // Specific package test folder
-        "--import-mode=importlib",  // Helps with import conflicts
+        "src/adg_ros2/robot_arm", // Specific package test folder
+        "--import-mode=importlib", // Helps with import conflicts
         "-s"
     ],
     "python.testing.unittestEnabled": false,
@@ -156,4 +166,6 @@
         "plaintext"
     ],
     // "python.testing.pytestPath": "/usr/bin/pytest-3"
+    //Docker
+    "containers.composeCommand": "docker compose"
 }

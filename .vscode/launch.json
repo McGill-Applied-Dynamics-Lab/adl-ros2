@@ -43,24 +43,10 @@
             "console": "integratedTerminal",
         },
         {
-            "name": "Task: fr3_lift",
-            "type": "debugpy",
-            "request": "launch",
-            "program": "src/adg_ros2/robot_tasks/scripts/fr3_lift.py",
-            "console": "integratedTerminal",
-        },
-        {
             "name": "Agent Node: insert",
             "type": "debugpy",
             "request": "launch",
             "program": "src/adg_ros2/robot_tasks/robot_tasks/rl_agent/Insert.py",
-            "console": "integratedTerminal",
-        },
-        {
-            "name": "Agent Node: lift",
-            "type": "debugpy",
-            "request": "launch",
-            "program": "src/adg_ros2/robot_tasks/robot_tasks/rl_agent/Lift.py",
             "console": "integratedTerminal",
         },
         {
@@ -85,14 +71,36 @@
             "console": "integratedTerminal",
         },
         {
+            "name": "Node: delay_rim",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "src/adg_ros2/robot_arm/franka_rim/franka_rim/delay_rim_node.py",
+            "args": [
+                "--ros-args",
+                "-p",
+                "delay_compensation_method:=zoh", // 'delay_rim', 'zoh', or 'zoh_phi'
+                "-p",
+                "control_period:=0.001",
+                "-p",
+                "max_workers:=1",
+                "-p",
+                "cmd_topic:=/osc_pd_controller/goal_pre_delay",
+                "-p",
+                "interface_stiffness:=500.0",
+                "-p",
+                "interface_damping:=50.0",
+            ],
+            "console": "integratedTerminal",
+        },
+        {
             "name": "Launch: i3_teleop.launch.py",
             "type": "debugpy",
             "request": "launch",
-            "program": "/opt/ros/humble/bin/ros2",  // Path to the ros2 executable
+            "program": "/opt/ros/humble/bin/ros2", // Path to the ros2 executable
             "args": [
-              "launch",
-              "teleop",
-              "i3_teleop.launch.py",
+                "launch",
+                "teleop",
+                "i3_teleop.launch.py",
             ],
             "console": "integratedTerminal",
         },
@@ -100,11 +108,11 @@
             "name": "Launch: joy_teleop.launch.py",
             "type": "debugpy",
             "request": "launch",
-            "program": "/opt/ros/humble/bin/ros2",  // Path to the ros2 executable
+            "program": "/opt/ros/humble/bin/ros2", // Path to the ros2 executable
             "args": [
-              "launch",
-              "teleop",
-              "joy_teleop.launch.py",
+                "launch",
+                "teleop",
+                "joy_teleop.launch.py",
             ],
             "console": "integratedTerminal",
         },
@@ -112,12 +120,12 @@
             "name": "Launch: fr3.launch.py",
             "type": "debugpy",
             "request": "launch",
-            "program": "/opt/ros/humble/bin/ros2",  // Path to the ros2 executable
+            "program": "/opt/ros/humble/bin/ros2", // Path to the ros2 executable
             "args": [
-              "launch",
-              "robot_arm_bringup",
-              "fr3.launch.py",
-              "hw_type:=fake"
+                "launch",
+                "robot_arm_bringup",
+                "fr3.launch.py",
+                "hw_type:=fake"
             ],
             "console": "integratedTerminal",
             // "env": {
@@ -126,5 +134,128 @@
             // },
             // "cwd": "${workspaceFolder}"  // Set the working directory
         },
+        {
+            "name": "Launch: i3_teleop_position.launch.py",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "/opt/ros/humble/bin/ros2", // Path to the ros2 executable
+            "args": [
+                "launch",
+                "teleop",
+                "i3_teleop_position.launch.py",
+                "fake_i3:=true",
+            ],
+            "console": "integratedTerminal",
+            "env": {
+                "DEBUG_NODE": "",
+            },
+        },
+        {
+            "name": "Launch: franka_rim.launch.py",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "/opt/ros/humble/bin/ros2",
+            "args": [
+                "launch",
+                "franka_rim",
+                "franka_rim.launch.py",
+                "config_file:=rim_fr3_config.yaml", // rim_fr3_config, rim_fr3_sim_config
+                "fake_i3:=true",
+                "save_data:=false",
+            ],
+            "console": "integratedTerminal",
+            "env": {
+                "DEBUG_NODE": "", // franka_rim_node, franka_model_node, delay_rim_node
+            }
+        },
+        {
+            "name": "Launch: i3_teleop_virual.launch.py",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "/opt/ros/humble/bin/ros2",
+            "args": [
+                "launch",
+                "franka_rim",
+                "i3_teleop.launch.py",
+                "config_file:=i3_teleop.yaml", // rim_fr3_config, rim_fr3_sim_config
+                "fake_i3:=false",
+                "save_data:=false",
+            ],
+            "console": "integratedTerminal",
+            "env": {
+                "DEBUG_NODE": "", // franka_rim_node, franka_model_node, delay_rim_node
+            }
+        },
+        {
+            "name": "Python: Process bag files",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "scripts/bag_data_processing.py",
+            "console": "integratedTerminal",
+            "args": [
+                "--config-file",
+                "${workspaceFolder}/config/experiment_configs.yaml",
+                "--config",
+                "int_force_free_space",
+                // "--force", // Uncomment to force processing even if output exists
+            ],
+            // "console": "externalTerminal",
+            // "sudo": true
+        },
+    ],
+    "inputs": [
+        {
+            "id": "bagFileName",
+            "description": "Bag file name",
+            "default": "franka_rim_data_20241215_143022",
+            "type": "promptString"
+        },
+        {
+            "id": "delay",
+            "description": "Network delay (ms)",
+            "default": "0",
+            "type": "promptString"
+        },
+        {
+            "id": "compensation",
+            "description": "Compensation method",
+            "default": "zoh",
+            "type": "pickString",
+            "options": [
+                "delay_rim",
+                "zoh",
+                "zoh_phi"
+            ]
+        },
+        {
+            "id": "fake_i3",
+            "description": "Use fake I3 device",
+            "default": "false",
+            "type": "pickString",
+            "options": [
+                "true",
+                "false"
+            ]
+        },
+        {
+            "id": "use_sim_time",
+            "description": "Use simulation time",
+            "default": "false",
+            "type": "pickString",
+            "options": [
+                "true",
+                "false"
+            ]
+        },
+        {
+            "id": "configFile",
+            "description": "Configuration file",
+            "default": "franka_rim_default.yaml",
+            "type": "pickString",
+            "options": [
+                "franka_rim_default.yaml",
+                "franka_rim_debug.yaml"
+            ]
+        }
     ]
 }

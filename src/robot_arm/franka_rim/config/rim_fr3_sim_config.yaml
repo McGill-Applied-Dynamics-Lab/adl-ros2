@@ -1,0 +1,61 @@
+# Global launch parameters (not node-specific)
+/**:
+  ros__parameters:
+    use_sim_time: true
+
+# Franka Model Node Parameters
+franka_model_node:
+  ros__parameters:
+    update_freq: 100.0
+    input_topic: "/franka_robot_state_broadcaster/robot_state"
+    output_topic: "/fr3_model"
+    robot_urdf_filename: "fr3_franka_hand.urdf"
+    vel_thres: 0.005
+
+# Franka RIM Node Parameters  
+franka_rim_node:
+  ros__parameters:
+    update_freq: 10.0
+    interface_stiffness: 500.0
+    interface_damping: 40.0
+
+# DelayRIM Node Parameters
+delay_rim_node:
+  ros__parameters:
+    rim_topic: "/fr3_rim_delayed"
+    cmd_topic: "/osc_pd_controller/goal_pre_delay"
+    control_period: 0.001
+    delay_compensation_method: "zoh"
+    force_scaling: 0.1
+    max_workers: 8
+    i3_position_scale: 1.5
+
+# I3 Sim Node Parameters
+i3_sim_node:
+  ros__parameters:
+    publish_frequency: 1000.0
+    sine_frequency: 0.2
+    amplitude: 0.1
+    n_cycles: 3
+    wait_to_start: true
+
+# Visualization Node Parameters
+rim_vis_node:
+  ros__parameters:
+    i3_sphere_size: 0.03
+    rim_sphere_size: 0.03
+
+# Network Simulation Parameters
+rim_msg_delay:
+  ros__parameters:
+    input_topic: "/fr3_rim"
+    output_topic: "/fr3_rim_delayed" 
+    delay: 0
+    message_type: "arm_interfaces/msg/FrankaRIM"
+
+ee_cmd_delay:
+  ros__parameters:
+    input_topic: "/osc_pd_controller/goal_pre_delay"
+    output_topic: "/osc_pd_controller/goal"
+    delay: 0
+    message_type: "geometry_msgs/msg/PointStamped"

@@ -1,0 +1,163 @@
+site_name: ADL ROS2 Documentation
+site_description: Documentation for the McGill Applied Dynamics Lab ROS2 packages
+site_author: McGill Applied Dynamics Lab
+site_url: https://mcgill-applied-dynamics-lab.github.io/adl-ros2/
+
+repo_name: McGill-Applied-Dynamics-Lab/adl-ros2
+repo_url: https://github.com/McGill-Applied-Dynamics-Lab/adl-ros2
+edit_uri: edit/main/
+
+# Navigation
+nav:
+  - Home: index.md
+  - User Guide:
+    - Installation: user-guide/installation.md
+    - Getting Started: user-guide/getting-started.md
+    - Franka Server: user-guide/franka-server.md
+    - DelayRIM: user-guide/delay-rim.md
+    - Experiments: user-guide/experiments.md
+  - Packages:
+    - Utils: packages/adg-ros2-utils.md
+    - Robot Arm: packages/robot-arm.md
+    - Robot Tasks: packages/robot-tasks.md
+    - Teleop: packages/teleop.md
+    - Arm Client: packages/arm-client.md
+  - API Reference:
+    - Overview: reference/index.md
+  - Developer Guide:
+    - Contributing: developer-guide/contributing.md
+    - Architecture: developer-guide/architecture.md
+    - Testing: developer-guide/testing.md
+  - Tutorials:
+    - tutorials/index.md
+
+# Drafts
+draft_docs: |
+  tutorials/**
+  reference/**
+  developer-guide/**
+  # !/foo_unpublished.md  # But keep this particular file.
+
+# Theme
+theme:
+  name: material
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.expand
+    - navigation.path
+    - navigation.top
+    - search.suggest
+    - search.highlight
+    - content.tabs.link
+    - content.code.annotation
+    - content.code.copy
+    - content.action.edit
+    - content.action.view
+  language: en
+  palette:
+    - scheme: default
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+      primary: indigo
+      accent: purple 
+    - scheme: slate
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+      primary: indigo
+      accent: lime
+  font:
+    text: Roboto
+    code: Roboto Mono
+  favicon: assets/favicon.png
+  # icon:
+  #   logo: media/logo.png
+  logo: media/MADL_logo-minimal.svg
+  
+# Plugins
+plugins:
+  - search:
+      separator: '[\s\-,:!=\[\]()"`/]+|\.(?!\d)|&[lg]t;|(?!\b)(?=[A-Z][a-z])'
+  - mkdocstrings:
+      handlers:
+        python:
+          options:
+            docstring_style: google
+            docstring_options:
+              ignore_init_summary: true
+            merge_init_into_class: true
+            show_submodules: true
+            show_source: false
+            show_bases: false
+            show_root_heading: false
+            show_root_toc_entry: false
+            heading_level: 1
+
+# Markdown Extensions
+markdown_extensions:
+  - abbr
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - callouts
+  - toc:
+      permalink: true
+  - pymdownx.arithmatex:
+      generic: true
+  - pymdownx.betterem:
+      smart_enable: all
+  - pymdownx.caret
+  - pymdownx.details
+  - pymdownx.emoji:
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.keys
+  - pymdownx.magiclink:
+      normalize_issue_symbols: true
+      repo_url_shorthand: true
+      user: McGill-Applied-Dynamics-Group
+      repo: adg-ros2
+  - pymdownx.mark
+  - pymdownx.smartsymbols
+  - pymdownx.snippets:
+      base_path: [!relative $config_dir]
+      check_paths: true
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+      combine_header_slug: true
+      slugify: !!python/object/apply:pymdownx.slugs.slugify
+        kwds:
+          case: lower
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - pymdownx.tilde
+
+
+
+# Extra
+extra:
+  version:
+    provider: mike
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/McGill-Applied-Dynamics-Group
+    - icon: fontawesome/brands/python
+      link: https://pypi.org/user/adg-mcgill/
+
+# Copyright
+copyright: |
+  &copy; 2025 <a href="https://github.com/McGill-Applied-Dynamics-Lab"  target="_blank" rel="noopener">McGill Applied Dynamics Lab</a>

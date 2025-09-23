@@ -1,0 +1,82 @@
+x-base: &base
+  image: adg_ros2:base
+  build:
+    context: ..
+    dockerfile: .devcontainer/Dockerfile
+    args:
+      ROS_DISTRO: humble
+
+  # --- Settings
+  network_mode: "host"
+  privileged: true
+  ipc: "host"
+  # ---
+
+  command: /bin/bash
+  tty: true
+  stdin_open: true
+
+  volumes:
+    - ../:/ros2_ws
+    - /tmp/.X11-unix:/tmp/.X11-unix
+    - $XAUTHORITY:$XAUTHORITY
+    - ./limits.conf:/etc/security/limits.conf
+    - ~/.gitconfig:/etc/gitconfig:ro
+
+  environment:
+    QT_X11_NO_MITSHM: 1
+    DISPLAY: $DISPLAY
+    PATH: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+    PKG_CONFIG_PATH: /usr/local/lib/pkgconfig:/usr/lib/pkgconfig
+    LD_LIBRARY_PATH: /usr/local/lib:/usr/lib
+    PYTHONPATH: /usr/local/lib/python3.10/site-packages
+    CMAKE_PREFIX_PATH: /usr/local
+
+  # user: "${UID:-1000}:${GID:-1000}"
+
+  cap_add:
+    - SYS_NICE
+
+  ulimits:
+    rtprio: 99
+    rttime: -1
+    memlock: 8428281856
+
+  device_cgroup_rules:
+    - 'c *:* rmw'
+
+  devices:
+    - "/dev/ttyACM0:/dev/ttyACM0"
+
+  deploy:
+    resources:
+      reservations:
+        devices:
+          - capabilities: [ gpu ]
+
+services:
+  devcontainer:
+    <<: *base
+    container_name: adg_ros2
+  # docs:
+  #   <<: *base
+  #   container_name: adg_ros2_docs
+
+  #   command: >
+  #     mkdocs serve
+
+  #   ports:
+  #     - "8000:8000"
+
+  #   depends_on:
+  #     - devcontainer
+
+  # foxglove:
+  #   <<: *base
+  #   container_name: adg_ros2_foxglove
+
+  #   command: >
+  #     ros2 launch foxglove_bridge foxglove_bridge_launch.xml
+
+  #   depends_on:
+  #     - devcontainer

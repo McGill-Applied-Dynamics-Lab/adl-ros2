@@ -1,1 +1,0 @@
-float64[] angles  # Angles of the joints [rad]
