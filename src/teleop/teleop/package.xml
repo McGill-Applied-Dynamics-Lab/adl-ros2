@@ -8,8 +8,8 @@
   <license>Apache-2.0</license>
 
   <depend>rclpy</depend>
-  <depend>arm_interfaces</depend>
-  <depend>teleop_interfaces</depend>
+  <!-- <depend>arm_interfaces</depend> -->
+  <!-- <depend>teleop_interfaces</depend> -->
 
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>

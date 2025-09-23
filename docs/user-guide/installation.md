@@ -32,7 +32,7 @@ Steps to setup the Franka PC.
 - Test libfranka
 - Test server
 
-## 3. ADG ROS 2
+## 3. ADL ROS 2
 > INFO: **System Requirements**
 > **Operating System**
 >
@@ -46,7 +46,30 @@ Steps to setup the Franka PC.
 
 How to setup the client packages to control the robot arm via ROS2, Python, or Matlab. 
 
+1. Install Docker
+    - [Instructions](https://docs.docker.com/engine/install/ubuntu/#install-using-the-repository)
+    - Make sure to also perform the [post-installation steps](https://docs.docker.com/engine/install/linux-postinstall/) 
 
+
+2. Clone the repo
+```
+git clone git@github.com:McGill-Applied-Dynamics-Lab/adl-ros2.git
+```
+Because the repo is private (for now...), you will probably have to 
+[setup ssh with github](https://docs.github.com/en/authentication/connecting-to-github-with-ssh). 
+
+3. Open the folder in VsCode 
+
+4. Install the [Vs Code Dev Containers extension](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-containers) (it's part of the [remote development extension pack](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.vscode-remote-extensionpack)).
+
+5. Build and open in the devcontainer
+    - `>Dev Containers: Rebuild and Reopen in Container` (ctrl+shift+P to open the command palette)
+    - *This takes a while as it clones the dependencies and builds the packages*
+
+6. Test installation
+    ```
+    python scripts/test_install.py
+    ```
 
 ## Next Steps
 

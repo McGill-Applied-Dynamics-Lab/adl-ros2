@@ -19,7 +19,7 @@
   <test_depend>rclpy</test_depend>
 
   <!-- <test_depend>turtlesim</test_depend> -->
-  <test_depend>robot_arm_bringup</test_depend>
+  <!-- <test_depend>robot_arm_bringup</test_depend> -->
 
 
   <export>

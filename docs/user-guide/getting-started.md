@@ -72,6 +72,8 @@ around the ROS2 functionalities to directly specify robot motion.
 
 For the following steps, we assume the server is running and you have the ADL ROS2 packages installed. 
 
+TODO: Project structure
+
 ### Arm Client - Python Scripting
 Look at the `scripts` folder of the 
 [arm_client](https://github.com/McGill-Applied-Dynamics-Lab/adl-ros2/tree/DelayRIM/src/arm_client/scripts) for examples

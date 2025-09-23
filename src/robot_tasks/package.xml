@@ -8,7 +8,7 @@
   <license>Apache-2.0</license>
 
   <depend>rclpy</depend>
-  <depend>robot_arm_interface</depend>
+  <!-- <depend>robot_arm_interface</depend> -->
   <depend>franka_msgs</depend>
   <depend>geometry_msgs</depend>
   

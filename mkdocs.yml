@@ -31,6 +31,13 @@ nav:
   - Tutorials:
     - tutorials/index.md
 
+# Drafts
+draft_docs: |
+  tutorials/**
+  reference/**
+  developer-guide/**
+  # !/foo_unpublished.md  # But keep this particular file.
+
 # Theme
 theme:
   name: material

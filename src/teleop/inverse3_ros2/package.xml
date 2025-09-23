@@ -7,7 +7,7 @@
   <maintainer email="charles.sirois@mail.mcgill.ca">user</maintainer>
   <license>Apache-2.0</license>
 
-  <depend>teleop_interfaces</depend>
+  <!-- <depend>teleop_interfaces</depend> -->
   
   <exec_depend>rclpy</exec_depend>
 

@@ -58,6 +58,6 @@
         // "--gpus",
         // "all"
     ],
-    // "postCreateCommand": "pip install -e python/robotic_arm_controller"
-    "postStartCommand": "/bin/bash /home/ros/ros2_ws/src/adg-ros2/.devcontainer/post_create.sh"
+    "postCreateCommand": "/bin/bash /home/ros/ros2_ws/src/adg-ros2/.devcontainer/post_create.sh",
+    "postStartCommand": "source /home/ros/ros2_ws/install/setup.bash 2>/dev/null || echo 'Workspace not built yet - run the colcon build task'"
 }

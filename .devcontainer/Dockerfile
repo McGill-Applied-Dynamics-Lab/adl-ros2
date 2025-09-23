@@ -140,7 +140,7 @@ USER root
 RUN usermod -a -G dialout $USERNAME
 
 #! Environment variables
-ENV PATH=/opt/openrobots/bin:$PATH \
+ENV PATH=$PATH \
     SHELL=/bin/bash \
     XDG_RUNTIME_DIR=/run/user/"${USER_UID}"  \
     WS_FOLDER=${WS_FOLDER}
@@ -151,6 +151,7 @@ USER $USERNAME
 WORKDIR /home/ros/ros2_ws
 
 # === FRANKA ROS2 ===
+# Install and build franka_ros2 packages
 RUN git clone https://github.com/frankarobotics/franka_ros2.git src/franka_ros2 \
     && cd src/franka_ros2 \
     && git checkout v2.0.2 \
@@ -162,3 +163,11 @@ RUN git clone https://github.com/frankarobotics/franka_ros2.git src/franka_ros2 
     && rosdep install --from-paths src --ignore-src --rosdistro $ROS_DISTRO -y \
     && colcon build --symlink-install --cmake-args -DCMAKE_BUILD_TYPE=Release \
     && touch src/franka_ros2/COLCON_IGNORE src/libfranka/COLCON_IGNORE src/franka_description/COLCON_IGNORE
+
+# # Copy and set up entrypoint
+# COPY --chown=$USER_UID:$USER_GID .devcontainer/entrypoint.sh /usr/local/bin/entrypoint.sh
+# RUN chmod +x /usr/local/bin/entrypoint.sh
+
+# ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
+# CMD ["/bin/bash"]
+
