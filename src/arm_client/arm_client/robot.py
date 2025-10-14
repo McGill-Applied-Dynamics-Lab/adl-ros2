@@ -115,6 +115,7 @@ class Robot:
         self._current_joint = None
         self._target_joint = None
         self._target_wrench = None
+        self._current_wrench = None # added current wrench
 
         self._callback_monitor = CallbackMonitor(
             node=self.node,
@@ -141,6 +142,13 @@ class Robot:
             JointState,
             self.config.current_joint_topic,
             self._callback_monitor.monitor(f"{namespace.capitalize()} Current Joint", self._callback_current_joint),
+            qos_profile_sensor_data,
+            callback_group=ReentrantCallbackGroup(),
+        )
+        self.node.create_subscription( # add subscription to wrench in base frame
+            WrenchStamped,
+            self.config.current_wrench_topic,
+            self._callback_monitor.monitor(f"{namespace.capitalize()} Current Wrench", self._callback_current_wrench),
             qos_profile_sensor_data,
             callback_group=ReentrantCallbackGroup(),
         )
@@ -195,6 +203,19 @@ class Robot:
                 "The robot has not received any poses yet. Run wait_until_ready() before running anything else."
             )
         return self._current_pose.copy()
+
+    @property
+    def end_effector_wrench(self) -> dict:
+        """Get the current wrench applied at the end effector.
+
+        Returns:
+            dict: The current wrench applied at the end effector, or None if not available.
+        """
+        if self._current_wrench is None:
+            raise RuntimeError(
+                "The robot has not received any wrenches yet. Run wait_until_ready() before running anything else."
+            )
+        return self._current_wrench.copy()
 
     @property
     def target_pose(self) -> Pose:
@@ -372,6 +393,32 @@ class Robot:
         wrench_msg.wrench.torque.y = wrench["torque"][1]
         wrench_msg.wrench.torque.z = wrench["torque"][2]
         return wrench_msg
+    
+    def _wrench_msg_to_wrench(self, msg: WrenchStamped) -> dict:
+        """Convert a ROS WrenchStamped message to a wrench dictionary.
+
+        Args:
+            msg (WrenchStamped): ROS message containing the wrench data.
+
+        Returns:
+            dict: Dictionary containing 'force' and 'torque' numpy arrays.
+        """
+        force = np.array([msg.wrench.force.x, msg.wrench.force.y, msg.wrench.force.z])
+        torque = np.array([msg.wrench.torque.x, msg.wrench.torque.y, msg.wrench.torque.z])
+        return {"force": force, "torque": torque}
+
+    def _callback_current_wrench(self, msg: WrenchStamped):
+        """Update the current wrench from a ROS message.
+
+        This callback is triggered when a new wrench message is received. It updates
+        the current wrench.
+
+        Args:
+            msg (WrenchStamped): ROS message containing the current wrench.
+        """
+        self._current_wrench = self._wrench_msg_to_wrench(msg)
+        if self._target_wrench is None:
+            self._target_wrench = self._current_wrench.copy()
 
     def _callback_current_pose(self, msg: PoseStamped):
         """Update the current pose from a ROS message.

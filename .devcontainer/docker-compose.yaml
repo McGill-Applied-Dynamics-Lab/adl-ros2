@@ -48,11 +48,11 @@ x-base: &base
   devices:
     - "/dev/ttyACM0:/dev/ttyACM0"
 
-  deploy:
-    resources:
-      reservations:
-        devices:
-          - capabilities: [ gpu ]
+  # deploy:
+  #   resources:
+  #     reservations:
+  #       devices:
+  #         - capabilities: [ gpu ]
 
 services:
   devcontainer:

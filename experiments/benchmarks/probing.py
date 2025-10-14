@@ -1,6 +1,7 @@
 # %%
 import matplotlib.pyplot as plt
 import numpy as np
+from scipy.spatial.transform import Rotation as R
 
 import time
 
@@ -13,6 +14,7 @@ robot.wait_until_ready()
 # %%
 print(robot.end_effector_pose)
 print(robot.joint_values)
+print(robot.end_effector_wrench)  # added to print initial wrench
 
 # # %%
 # print("Going to home position...")
@@ -22,11 +24,11 @@ print(robot.joint_values)
 
 # %%
 # Parameters for the trajectory
-start_position = np.array([0.55, 0.0, 0.20])
+start_position = np.array([0.40, 0.0, 0.30])
 traj_freq = 50.0
 sin_freq_x = 0.10  # rot / s
 # sin_freq_z = 0.125  # rot / s
-amplitude = 0.05  # [m]
+amplitude = 0.025  # [m]
 max_time = 10.0
 
 # %%
@@ -51,6 +53,7 @@ robot.move_to(position=start_position, speed=0.15)
 
 # %%
 # The set_target will directly publish the pose to /target_pose
+ee_forces = [] # added to record forces
 ee_poses = []
 target_poses = []
 ts = []
@@ -69,6 +72,8 @@ count = 0
 t = 0.0
 slow_loops_count = 0
 
+start_ori = target_pose.orientation
+
 while t < max_time:
     loop_start_time = time.perf_counter()
 
@@ -80,10 +85,21 @@ while t < max_time:
     z = start_position[2] + amplitude * np.sin(omega * t)
     target_pose.position = np.array([x, y, z])
 
+    # update orientation
+    """
+    yaw_amp_deg = 25.0
+    yaw_omega = 2.0 * np.pi * 0.2  # 0.2 Hz yaw wiggle
+    yaw_t = np.deg2rad(yaw_amp_deg) * np.sin(yaw_omega * t)
+    Rz = R.from_euler("y", yaw_t)
+    target_pose.orientation = Rz * start_ori
+    """
+    target_pose.orientation = R.from_euler("xyz", [-180, 0, 0], degrees=True)  # roll, pitch, yaw
+
     robot.set_target(pose=target_pose)
 
     data_start = time.perf_counter()
     ee_poses.append(robot.end_effector_pose.copy())
+    ee_forces.append(robot.end_effector_wrench['force'].copy())
     target_poses.append(target_pose.copy())
     ts.append(t)
 
@@ -95,6 +111,8 @@ while t < max_time:
         print(
             f"Count: {count}, Expected: {expected_time:.3f}s, Actual: {elapsed_time:.3f}s, Error: {elapsed_time - expected_time:.3f}s"
         )
+        # Print forces
+        print(f"  Current 'z' Force: {ee_forces[-1]}")
 
     count += 1
 
@@ -121,6 +139,7 @@ if len(ts) > 0:
     ts_array = np.array(ts)
     target_x = [pose.position[2] for pose in target_poses]
     actual_x = [pose.position[2] for pose in ee_poses]
+    actual_forces_z = [force[2] for force in ee_forces]
 
     plt.figure(figsize=(12, 8))
 
@@ -144,6 +163,7 @@ if len(ts) > 0:
     plt.grid(True)
 
     # Plot timing analysis
+    """
     plt.subplot(2, 2, 3)
     expected_times = np.linspace(0, max_time, len(ts_array))
     timing_error = ts_array - expected_times
@@ -151,6 +171,14 @@ if len(ts) > 0:
     plt.xlabel("Expected Time (s)")
     plt.ylabel("Timing Error (ms)")
     plt.title("Trajectory Timing Consistency")
+    plt.grid(True)
+    """
+    # Plot Z Force
+    plt.subplot(2, 2, 3)
+    plt.plot(ts_array, actual_forces_z, "m-", linewidth=1)
+    plt.xlabel("Time (s)")
+    plt.ylabel("Z Force (N)")
+    plt.title("End-Effector Z Force")
     plt.grid(True)
 
     # Plot frequency analysis
