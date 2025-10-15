@@ -86,7 +86,7 @@ def main():
     )
 
     # Parameters
-    z_surface = 0.35  # (m)
+    z_surface = 0.5  # (m)
     top_right_position = np.array([0.615, -0.0714, z_surface]) # top right dimple
     home_position = np.array([0.560, -0.0714, z_surface])  # button location
     approach_speed = 0.050  # (m/s)
