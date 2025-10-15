@@ -22,12 +22,13 @@ print(robot.joint_values)
 
 # %%
 # Parameters for the trajectory
-start_position = np.array([0.55, 0.0, 0.20])
-traj_freq = 50.0
-sin_freq_x = 0.10  # rot / s
+start_position = np.array([0.4, 0.0, 0.4])
+traj_freq = 20.0
+sin_freq_x = 0.2  # rot / s
 # sin_freq_z = 0.125  # rot / s
-amplitude = 0.05  # [m]
-max_time = 10.0
+amplitude = 0.2  # [m]
+max_time = 5.0
+
 
 # %%
 # robot.controller_switcher_client.switch_controller("cartesian_impedance_controller")
@@ -37,10 +38,9 @@ max_time = 10.0
 #     # file_path="config/control/clipped_cartesian_impedance.yaml"
 #     file_path=CONFIG_DIR / "controllers" / "default_cartesian_impedance.yaml"
 # )
-
 robot.controller_switcher_client.switch_controller("haptic_controller")
 robot.haptic_controller_parameters_client.load_param_config(
-    file_path=CONFIG_DIR / "controllers" / "probe_controller.yaml"
+    file_path=CONFIG_DIR / "controllers" / "haptic_controller.yaml"
 )
 
 
@@ -75,9 +75,9 @@ while t < max_time:
     # Use deterministic time based on count, not wall clock time
     t = loop_start_time - start_time
 
-    x = start_position[0] 
+    x = start_position[0] + amplitude * np.sin(omega * t)
     y = start_position[1]
-    z = start_position[2] + amplitude * np.sin(omega * t)
+    z = start_position[2]
     target_pose.position = np.array([x, y, z])
 
     robot.set_target(pose=target_pose)
@@ -119,8 +119,8 @@ print(f"Total points collected: {len(ts)}")
 # Plot the trajectory results
 if len(ts) > 0:
     ts_array = np.array(ts)
-    target_x = [pose.position[2] for pose in target_poses]
-    actual_x = [pose.position[2] for pose in ee_poses]
+    target_x = [pose.position[0] for pose in target_poses]
+    actual_x = [pose.position[0] for pose in ee_poses]
 
     plt.figure(figsize=(12, 8))
 
