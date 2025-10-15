@@ -110,12 +110,23 @@ class Robot:
         )
         self.haptic_controller_parameters_client = ParametersClient(self.node, target_node="haptic_controller")
 
+        self.joint_space_controller_parameters_client = ParametersClient(
+            self.node, target_node="joint_space_controller"
+        )
+
+        # Joint space states
+        self._q_current = None
+        self._q_target = None
+        self._dq_current = None
+        self._dq_target = None
+        self._tau_current = None
+        self._tau_target = None
+
+        # Task space states
         self._current_pose = None
         self._target_pose = None
-        self._current_joint = None
-        self._target_joint = None
         self._target_wrench = None
-        self._current_wrench = None # added current wrench
+        self._current_wrench = None  # added current wrench
 
         self._callback_monitor = CallbackMonitor(
             node=self.node,
@@ -145,7 +156,7 @@ class Robot:
             qos_profile_sensor_data,
             callback_group=ReentrantCallbackGroup(),
         )
-        self.node.create_subscription( # add subscription to wrench in base frame
+        self.node.create_subscription(  # add subscription to wrench in base frame
             WrenchStamped,
             self.config.current_wrench_topic,
             self._callback_monitor.monitor(f"{namespace.capitalize()} Current Wrench", self._callback_current_wrench),
@@ -231,30 +242,82 @@ class Robot:
         return self._target_pose.copy()
 
     @property
-    def joint_values(self) -> NDArray:
+    def q(self) -> NDArray:
         """Get the current joint values of the robot.
 
         Returns:
             numpy.ndarray: Copy of current joint values, or None if not available.
         """
-        if self._current_joint is None:
+        if self._q_current is None:
             raise RuntimeError(
                 "The robot has not received any joints yet. Run wait_until_ready() before running anything else."
             )
-        return self._current_joint.copy()
+        return self._q_current.copy()
 
     @property
-    def target_joint(self) -> NDArray:
+    def q_target(self) -> NDArray:
         """Get the target joint values of the robot.
 
         Returns:
             numpy.ndarray: Copy of target joint values, or None if not available.
         """
-        if self._target_joint is None:
+        if self._q_target is None:
             raise RuntimeError(
                 "The robot has not received any joints yet. Run wait_until_ready() before running anything else."
             )
-        return self._target_joint.copy()
+        return self._q_target.copy()
+
+    @property
+    def dq(self) -> NDArray:
+        """Get the current joint velocities of the robot.
+
+        Returns:
+            numpy.ndarray: Copy of current joint velocities, or None if not available.
+        """
+        if self._dq_current is None:
+            raise RuntimeError(
+                "The robot has not received any joints yet. Run wait_until_ready() before running anything else."
+            )
+        return self._dq_current.copy()
+
+    @property
+    def dq_target(self) -> NDArray:
+        """Get the target joint velocities of the robot.
+
+        Returns:
+            numpy.ndarray: Copy of target joint velocities, or None if not available.
+        """
+        if self._dq_target is None:
+            raise RuntimeError(
+                "The robot has not received any joints yet. Run wait_until_ready() before running anything else."
+            )
+        return self._dq_target.copy()
+
+    @property
+    def tau(self) -> NDArray:
+        """Get the current joint torques of the robot.
+
+        Returns:
+            numpy.ndarray: Copy of current joint torques, or None if not available.
+        """
+        if self._tau_current is None:
+            raise RuntimeError(
+                "The robot has not received any joints yet. Run wait_until_ready() before running anything else."
+            )
+        return self._tau_current.copy()
+
+    @property
+    def tau_target(self) -> NDArray:
+        """Get the target joint torques of the robot.
+
+        Returns:
+            numpy.ndarray: Copy of target joint torques, or None if not available.
+        """
+        if self._tau_target is None:
+            raise RuntimeError(
+                "The robot has not received any joints yet. Run wait_until_ready() before running anything else."
+            )
+        return self._tau_target.copy()
 
     def is_ready(self) -> bool:
         """Check if the robot is ready for operation.
@@ -265,8 +328,8 @@ class Robot:
         return (
             self._current_pose is not None
             and self._target_pose is not None
-            and self._current_joint is not None
-            and self._target_joint is not None
+            and self._q_current is not None
+            and self._q_target is not None
         )
 
     def reset_targets(self):
@@ -276,7 +339,7 @@ class Robot:
         effectively stopping any ongoing movement or force application.
         """
         self._target_pose = None
-        self._target_joint = None
+        self._q_target = None
         self._target_wrench = None
 
     def wait_until_ready(self, timeout: float = 10.0, check_frequency: float = 10.0):
@@ -322,7 +385,7 @@ class Robot:
             AssertionError: If q is not the same size as the number of joints.
         """
         assert len(q) == self.nq, "Joint state must be of size nq."
-        self._target_joint = q
+        self._q_target = q
 
     def _callback_publish_target_pose(self):
         """Publish the current target pose if one exists.
@@ -340,9 +403,9 @@ class Robot:
         This callback is triggered periodically to publish the target joint values
         to the ROS topic for the robot controller.
         """
-        if self._target_joint is None or not rclpy.ok():
+        if self._q_target is None or not rclpy.ok():
             return
-        self._target_joint_publisher.publish(self._joint_to_joint_msg(self._target_joint))
+        self._target_joint_publisher.publish(self._joint_to_joint_msg(self._q_target))
 
     def _callback_publish_target_wrench(self):
         """Publish the target wrench if one exists.
@@ -393,7 +456,7 @@ class Robot:
         wrench_msg.wrench.torque.y = wrench["torque"][1]
         wrench_msg.wrench.torque.z = wrench["torque"][2]
         return wrench_msg
-    
+
     def _wrench_msg_to_wrench(self, msg: WrenchStamped) -> dict:
         """Convert a ROS WrenchStamped message to a wrench dictionary.
 
@@ -442,17 +505,31 @@ class Robot:
         Args:
             msg (JointState): ROS message containing joint states.
         """
-        if self._current_joint is None:
-            self._current_joint = np.zeros(self.nq)
+        if self._q_current is None:
+            self._q_current = np.zeros(self.nq)
+            self._dq_current = np.zeros(self.nq)
+            self._tau_current = np.zeros(self.nq)
 
         # self.node.get_logger().info(f"Current joint state: {msg.name} {msg.position}", throttle_duration_sec=1.0)
-        for joint_name, joint_position in zip(msg.name, msg.position):
-            if joint_name.removeprefix(self._prefix) not in self.config.joint_names:
+        for joint_name, joint_position, joint_velocity, joint_torque in zip(
+            msg.name, msg.position, msg.velocity, msg.effort
+        ):
+            if joint_name not in self.config.joint_names:
                 continue
-            self._current_joint[self.config.joint_names.index(joint_name.removeprefix(self._prefix))] = joint_position
 
-        if self._target_joint is None:
-            self._target_joint = self._current_joint.copy()
+            jnt_idx = self.config.joint_names.index(joint_name)
+            self._q_current[jnt_idx] = joint_position
+            self._dq_current[jnt_idx] = joint_velocity
+            self._tau_current[jnt_idx] = joint_torque
+
+        if self._q_target is None:
+            self._q_target = self._q_current.copy()
+
+        if self._dq_target is None:
+            self._dq_target = self._dq_current.copy()
+
+        if self._tau_target is None:
+            self._tau_target = self._tau_current.copy()
 
     def move_to(self, position: List | NDArray | None = None, pose: Pose | None = None, speed: float = 0.05):
         """Move the end-effector to a given pose by interpolating linearly between the poses.
@@ -498,7 +575,7 @@ class Robot:
 
         # Set to none to avoid publishing the previous target pose after activating the next controller
         self._target_pose = None
-        self._target_joint = None
+        self._q_target = None
 
         if blocking:
             self.wait_until_ready()

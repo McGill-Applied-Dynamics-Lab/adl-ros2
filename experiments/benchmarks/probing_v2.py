@@ -2,10 +2,12 @@ import time
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.spatial.transform import Rotation as R
+from arm_client import robot
 from arm_client.robot import Robot
 from arm_client import CONFIG_DIR
 from pathlib import Path
 import pickle
+
 
 # Helper functions
 def plunge(
@@ -80,14 +82,19 @@ def main():
     robot.wait_until_ready()
 
     # Choose controller that accepts /target_pose
-    robot.controller_switcher_client.switch_controller("haptic_controller")
-    robot.haptic_controller_parameters_client.load_param_config(
-        file_path=CONFIG_DIR / "controllers" / "probe_controller.yaml"
+    # robot.controller_switcher_client.switch_controller("haptic_controller")
+    # robot.haptic_controller_parameters_client.load_param_config(
+    #     file_path=CONFIG_DIR / "controllers" / "probe_controller.yaml"
+    # )
+
+    robot.controller_switcher_client.switch_controller("joint_space_controller")
+    robot.joint_space_controller_parameters_client.load_param_config(
+        file_path=CONFIG_DIR / "controllers" / "joint_space_controller.yaml"
     )
 
     # Parameters
     z_surface = 0.35  # (m)
-    top_right_position = np.array([0.615, -0.0714, z_surface]) # top right dimple
+    top_right_position = np.array([0.615, -0.0714, z_surface])  # top right dimple
     home_position = np.array([0.560, -0.0714, z_surface])  # button location
     approach_speed = 0.050  # (m/s)
     settle_sec = 0.25  # wait time (s)
@@ -100,9 +107,7 @@ def main():
     trig_depth = 0.0200  # trigger depth (m)
     trig_plunge_time = 0.5  # trigger plunge duration (s)
 
-    base_ori = R.from_euler(
-        "xyz", [-180, 0, 0], degrees=True
-    )  # base orientation ([roll, pitch, yaw], degrees)
+    base_ori = R.from_euler("xyz", [-180, 0, 0], degrees=True)  # base orientation ([roll, pitch, yaw], degrees)
 
     # Probe locations: [x, y, z_surface], load from numpy files
     PROJECT_ROOT = Path(__file__).resolve().parent  # or Path.cwd()
@@ -111,8 +116,8 @@ def main():
 
     # Offset all (x,y) values
     probe_locations = np.hstack([_grid, z_surface * np.ones((len(_grid), 1))])
-    probe_locations[:, 0] = -probe_locations[:, 0] - 2.5/100 + top_right_position[0]  # x offset
-    probe_locations[:, 1] = -probe_locations[:, 1] - 2.5/100 + top_right_position[1]  # y offset
+    probe_locations[:, 0] = -probe_locations[:, 0] - 2.5 / 100 + top_right_position[0]  # x offset
+    probe_locations[:, 1] = -probe_locations[:, 1] - 2.5 / 100 + top_right_position[1]  # y offset
 
     # Initialize results
     exp_dict = {
@@ -130,9 +135,7 @@ def main():
     # Iterate over probe locations
     for i, loc in enumerate(probe_locations):
         x, y, z_surface = loc
-        print(
-            f"\n=== Probe {i+1}/{len(probe_locations)} at [{x:.3f}, {y:.3f}, {z_surface:.3f}] ==="
-        )
+        print(f"\n=== Probe {i + 1}/{len(probe_locations)} at [{x:.3f}, {y:.3f}, {z_surface:.3f}] ===")
 
         # Maintain orientation at surface
         start_pose = robot.end_effector_pose.copy()
@@ -203,6 +206,7 @@ def main():
     # Save dict using pickle
     with open(results_dir / "64_GRID_TRAIN.pkl", "wb") as f:
         pickle.dump(exp_dict, f)
+
 
 if __name__ == "__main__":
     main()
