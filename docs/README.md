@@ -5,6 +5,14 @@ This directory contains the MkDocs-based documentation for the ADG ROS2 project.
 - **Static Site Generation**: Uses MkDocs with Material theme
 - **API Documentation**: Automatically generates documentation from Python docstrings
 
+## To Add
+Robot Setup:
+- Franka Desk logins
+- SSH Instructions
+- FCI screenshots
+
+
+
 ## Quick Start
 ### Prerequisites
 ```bash
