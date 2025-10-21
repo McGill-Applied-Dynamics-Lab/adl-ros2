@@ -7,7 +7,7 @@ from typing import List
 import numpy as np
 import rclpy
 import rclpy.executors
-from geometry_msgs.msg import PoseStamped, WrenchStamped
+from geometry_msgs.msg import PoseStamped, WrenchStamped, TwistStamped
 from numpy.typing import NDArray
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.node import Node
@@ -49,6 +49,36 @@ class Pose:
         return Pose(
             self.position + other.position,
             other.orientation * self.orientation,
+        )
+
+
+@dataclass
+class Twist:
+    """Compact representation of a twist (linear + angular velocity)."""
+
+    linear: np.ndarray
+    angular: np.ndarray
+
+    def copy(self) -> "Twist":
+        """Create a copy of this twist."""
+        return Twist(self.linear.copy(), self.angular.copy())
+
+    def __str__(self) -> str:
+        """Return a string representation of a Twist."""
+        return f"Linear: {np.array2string(self.linear, suppress_small=True, precision=2, floatmode='fixed')},\n Angular: {np.array2string(self.angular, suppress_small=True, precision=2, floatmode='fixed')}"
+
+    def __sub__(self, other: "Twist") -> "Twist":
+        """Subtract another twist from this twist, i.e. compute the relative twist."""
+        return Twist(
+            self.linear - other.linear,
+            self.angular - other.angular,
+        )
+
+    def __add__(self, other: "Twist") -> "Twist":
+        """Add another twist to this twist, i.e. add a relative twist."""
+        return Twist(
+            self.linear + other.linear,
+            self.angular + other.angular,
         )
 
 
@@ -111,10 +141,15 @@ class Robot:
         self.haptic_controller_parameters_client = ParametersClient(self.node, target_node="haptic_controller")
 
         self._current_pose = None
-        self._target_pose = None
+        self._current_twist = None
         self._current_joint = None
+        self._current_joint_velocity = None
+        self._current_joint_torque = None
+
+        self._target_pose = None
         self._target_joint = None
         self._target_wrench = None
+        self._target_twist = None
 
         self._callback_monitor = CallbackMonitor(
             node=self.node,
@@ -130,6 +165,10 @@ class Robot:
         self._target_joint_publisher = self.node.create_publisher(
             JointState, self.config.target_joint_topic, qos_profile_system_default
         )
+        self._target_twist_publisher = self.node.create_publisher(
+            TwistStamped, "target_twist", qos_profile_system_default
+        )
+
         self.node.create_subscription(
             PoseStamped,
             self.config.current_pose_topic,
@@ -160,6 +199,11 @@ class Robot:
         self.node.create_timer(
             1.0 / self.config.publish_frequency,
             self._callback_publish_target_wrench,
+            ReentrantCallbackGroup(),
+        )
+        self.node.create_timer(
+            1.0 / self.config.publish_frequency,
+            self._callback_publish_target_twist,
             ReentrantCallbackGroup(),
         )
 
@@ -210,7 +254,7 @@ class Robot:
         return self._target_pose.copy()
 
     @property
-    def joint_values(self) -> NDArray:
+    def q(self) -> NDArray:
         """Get the current joint values of the robot.
 
         Returns:
@@ -221,6 +265,32 @@ class Robot:
                 "The robot has not received any joints yet. Run wait_until_ready() before running anything else."
             )
         return self._current_joint.copy()
+
+    @property
+    def dq(self) -> NDArray:
+        """Get the current joint velocities of the robot.
+
+        Returns:
+            numpy.ndarray: Copy of current joint velocities, or None if not available.
+        """
+        if self._current_joint_velocity is None:
+            raise RuntimeError(
+                "The robot has not received any joint velocities yet. Run wait_until_ready() before running anything else."
+            )
+        return self._current_joint_velocity.copy()
+
+    @property
+    def tau(self) -> NDArray:
+        """Get the current joint torques of the robot.
+
+        Returns:
+            numpy.ndarray: Copy of current joint torques, or None if not available.
+        """
+        if self._current_joint_torque is None:
+            raise RuntimeError(
+                "The robot has not received any joint torques yet. Run wait_until_ready() before running anything else."
+            )
+        return self._current_joint_torque.copy()
 
     @property
     def target_joint(self) -> NDArray:
@@ -333,6 +403,16 @@ class Robot:
             return
         self._target_wrench_publisher.publish(self._wrench_to_wrench_msg(self._target_wrench))
 
+    def _callback_publish_target_twist(self):
+        """Publish the current target twist if one exists.
+
+        This callback is triggered periodically to publish the target twist
+        to the ROS topic for the robot controller.
+        """
+        if self._target_twist is None or not rclpy.ok():
+            return
+        self._target_twist_publisher.publish(self._twist_to_twist_msg(self._target_twist))
+
     def set_target_wrench(self, force: List | NDArray | None = None, torque: List | NDArray | None = None):
         """Set the target wrench (force/torque) to be applied by the robot.
 
@@ -387,7 +467,7 @@ class Robot:
             self._target_pose = self._current_pose.copy()
 
     def _callback_current_joint(self, msg: JointState):
-        """Update the current joint state from a ROS message.
+        """Update the current joint state (position, velocity and torque) from a ROS message.
 
         This callback filters the joint state message to only include joints
         that are part of this robot's configuration.
@@ -397,12 +477,22 @@ class Robot:
         """
         if self._current_joint is None:
             self._current_joint = np.zeros(self.nq)
+            self._current_joint_velocity = np.zeros(self.nq)
+            self._current_joint_torque = np.zeros(self.nq)
 
         # self.node.get_logger().info(f"Current joint state: {msg.name} {msg.position}", throttle_duration_sec=1.0)
-        for joint_name, joint_position in zip(msg.name, msg.position):
+        for joint_name, joint_position, joint_velocity, joint_torque in zip(
+            msg.name, msg.position, msg.velocity, msg.effort
+        ):
             if joint_name.removeprefix(self._prefix) not in self.config.joint_names:
                 continue
             self._current_joint[self.config.joint_names.index(joint_name.removeprefix(self._prefix))] = joint_position
+            self._current_joint_velocity[self.config.joint_names.index(joint_name.removeprefix(self._prefix))] = (
+                joint_velocity
+            )
+            self._current_joint_torque[self.config.joint_names.index(joint_name.removeprefix(self._prefix))] = (
+                joint_torque
+            )
 
         if self._target_joint is None:
             self._target_joint = self._current_joint.copy()
@@ -499,6 +589,16 @@ class Robot:
         joint_msg.velocity = dq.tolist() if dq is not None else [0.0] * len(q)
         joint_msg.effort = tau.tolist() if tau is not None else [0.0] * len(q)
         return joint_msg
+
+    def _twist_to_twist_msg(self, twist: Twist) -> TwistStamped:
+        msg = TwistStamped()
+
+        msg.header.frame_id = self.config.base_frame
+        msg.header.stamp = self.node.get_clock().now().to_msg()
+        msg.twist.linear.x, msg.twist.linear.y, msg.twist.linear.z = twist.linear
+        msg.twist.angular.x, msg.twist.angular.y, msg.twist.angular.z = twist.angular
+
+        return msg
 
     def _parse_pose_or_position(self, position: List | NDArray | None = None, pose: Pose | None = None) -> Pose:
         """Parse a pose from a desired position or pose.

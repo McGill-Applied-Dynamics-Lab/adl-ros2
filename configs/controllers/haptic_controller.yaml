@@ -1,6 +1,6 @@
 virtual_coupling.k_pos_x: 600.0
 virtual_coupling.k_pos_y: 1000.0
-virtual_coupling.k_pos_z: 1000.0
+virtual_coupling.k_pos_z: 600.0
 
 virtual_coupling.d_pos_x: -1.0
 virtual_coupling.d_pos_y: -1.0

@@ -10,13 +10,13 @@ if [ -z "$WS_FOLDER" ]; then
 fi
 
 #! ros2 dependencies
-# Update rosdep and install dependencies if src directory has files
-if [ -d "/ros2_ws/src" ] && [ "$(ls -A /ros2_ws/src)" ]; then
-    cd /ros2_ws
-    apt update
-    rosdep update
-    rosdep install --from-paths src --ignore-src --rosdistro humble -y --skip-keys "libfranka pinocchio" || true
-fi
+# # Update rosdep and install dependencies if src directory has files
+# if [ -d "/home/ros/ros2_ws/src" ] && [ "$(ls -A /home/ros/ros2_ws/src)" ]; then
+#     cd /home/ros/ros2_ws
+#     rosdep update
+#     rosdep install --from-paths src --ignore-src --rosdistro humble -y --skip-keys "libfranka pinocchio" || true
+# fi
+
 
 # Execute the command passed to docker run
 exec "$@"

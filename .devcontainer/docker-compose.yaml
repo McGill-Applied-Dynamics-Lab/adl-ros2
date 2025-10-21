@@ -3,6 +3,7 @@ x-base: &base
   build:
     context: ..
     dockerfile: .devcontainer/Dockerfile
+    target: base
     args:
       ROS_DISTRO: humble
 
@@ -17,7 +18,7 @@ x-base: &base
   stdin_open: true
 
   volumes:
-    - ../:/ros2_ws
+    - ../:/home/ros/ros2_ws/src/adg-ros2
     - /tmp/.X11-unix:/tmp/.X11-unix
     - $XAUTHORITY:$XAUTHORITY
     - ./limits.conf:/etc/security/limits.conf
@@ -48,36 +49,35 @@ x-base: &base
   devices:
     - "/dev/ttyACM0:/dev/ttyACM0"
 
-  deploy:
-    resources:
-      reservations:
-        devices:
-          - capabilities: [ gpu ]
+# deploy:
+#   resources:
+#     reservations:
+#       devices:
+#         - capabilities: [ gpu ]
 
 services:
   devcontainer:
     <<: *base
     container_name: adg_ros2
+  # docs:
+  #   <<: *base
+  #   container_name: adg_ros2_docs
 
-  docs:
-    <<: *base
-    container_name: adg_ros2_docs
+  #   command: >
+  #     mkdocs serve
 
-    command: >
-      mkdocs serve
+  #   ports:
+  #     - "8000:8000"
 
-    ports:
-      - "8000:8000"
+  #   depends_on:
+  #     - devcontainer
 
-    depends_on:
-      - devcontainer
+  # foxglove:
+  #   <<: *base
+  #   container_name: adg_ros2_foxglove
 
-  foxglove:
-    <<: *base
-    container_name: adg_ros2_foxglove
+  #   command: >
+  #     ros2 launch foxglove_bridge foxglove_bridge_launch.xml
 
-    command: >
-      ros2 launch foxglove_bridge foxglove_bridge_launch.xml
-
-    depends_on:
-      - devcontainer
+  #   depends_on:
+  #     - devcontainer

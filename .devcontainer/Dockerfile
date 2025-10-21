@@ -109,6 +109,7 @@ RUN apt-get update && \
     ros-${ROS_DISTRO}-pinocchio \
     ros-${ROS_DISTRO}-joy \
     ros-${ROS_DISTRO}-foxglove-bridge \
+    ros-${ROS_DISTRO}-rqt-graph \
     && rm -rf /var/lib/apt/lists/*
 
 # Symlink python3 to python
@@ -116,7 +117,7 @@ RUN ln -s /usr/bin/python3 /usr/bin/python
 
 USER $USERNAME
 
-RUN mkdir -p /home/ros/ros2_ws
+RUN mkdir -p /home/ros/ros2_ws/src
 
 #! Python deps
 # Upgrade pip
@@ -151,6 +152,19 @@ USER $USERNAME
 WORKDIR /home/ros/ros2_ws
 
 # === FRANKA ROS2 ===
+# Skipping Franka ROS2 installation due to build issues
+# Uncomment and modify the section below if you need Franka packages
+# Install additional dependencies that might be missing
+USER root
+RUN apt-get update && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+    libeigen3-dev \
+    libxml2-dev \
+    libxmlrpc-c++8-dev \
+    libssl-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+USER $USERNAME
 RUN git clone https://github.com/frankarobotics/franka_ros2.git src/franka_ros2 \
     && cd src/franka_ros2 \
     && git checkout v2.0.2 \
@@ -160,5 +174,15 @@ RUN git clone https://github.com/frankarobotics/franka_ros2.git src/franka_ros2 
     && vcs import src < src/franka_ros2/franka.repos --recursive --skip-existing \
     && rosdep update \
     && rosdep install --from-paths src --ignore-src --rosdistro $ROS_DISTRO -y \
-    && colcon build --symlink-install --cmake-args -DCMAKE_BUILD_TYPE=Release \
+    && colcon build --symlink-install --cmake-args -DCMAKE_BUILD_TYPE=Release --packages-skip franka_semantic_components \
     && touch src/franka_ros2/COLCON_IGNORE src/libfranka/COLCON_IGNORE src/franka_description/COLCON_IGNORE
+
+# Create an entrypoint script for initialization
+COPY .devcontainer/entrypoint.sh /entrypoint.sh
+USER root
+RUN chmod +x /entrypoint.sh
+USER $USERNAME
+
+# Set the entrypoint
+# ENTRYPOINT ["/entrypoint.sh"]
+CMD ["/bin/bash"]
