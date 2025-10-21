@@ -4,7 +4,7 @@
     "remoteUser": "ros",
     "dockerComposeFile": "./docker-compose.yaml",
     "service": "devcontainer",
-    "workspaceFolder": "/home/ros/ros2_ws/src/adg-ros2",
+    "workspaceFolder": "/home/ros/ros2_ws/src/adl-ros2",
     // "runServices": [
     //     "devcontainer",
     //     "docs",
@@ -48,7 +48,7 @@
         "ROS_DOMAIN_ID": "01"
     },
     "mounts": [
-        "source=${localWorkspaceFolder},target=/home/ros/ros2_ws/src/adg-ros2,type=bind,consistency=cached",
+        "source=${localWorkspaceFolder},target=/home/ros/ros2_ws/src/adl-ros2,type=bind,consistency=cached",
         "source=/tmp/.X11-unix,target=/tmp/.X11-unix,type=bind,consistency=cached",
         "source=/dev/dri,target=/dev/dri,type=bind,consistency=cached"
     ],
@@ -58,6 +58,6 @@
         // "--gpus",
         // "all"
     ],
-    "postCreateCommand": "/bin/bash /home/ros/ros2_ws/src/adg-ros2/.devcontainer/post_create.sh",
+    "postCreateCommand": "/bin/bash /home/ros/ros2_ws/src/adl-ros2/.devcontainer/post_create.sh",
     "postStartCommand": "source /home/ros/ros2_ws/install/setup.bash 2>/dev/null || echo 'Workspace not built yet - run the colcon build task'"
 }

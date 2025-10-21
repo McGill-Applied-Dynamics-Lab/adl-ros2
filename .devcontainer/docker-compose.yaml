@@ -1,5 +1,5 @@
 x-base: &base
-  image: adg_ros2:base
+  image: adl_ros2:base
   build:
     context: ..
     dockerfile: .devcontainer/Dockerfile
@@ -22,6 +22,7 @@ x-base: &base
     - $XAUTHORITY:$XAUTHORITY
     - ./limits.conf:/etc/security/limits.conf
     - ~/.gitconfig:/etc/gitconfig:ro
+    - ~/.ssh:/home/ros/.ssh:ro
 
   environment:
     QT_X11_NO_MITSHM: 1
@@ -47,7 +48,6 @@ x-base: &base
 
   devices:
     - "/dev/ttyACM0:/dev/ttyACM0"
-
   # deploy:
   #   resources:
   #     reservations:
@@ -57,10 +57,10 @@ x-base: &base
 services:
   devcontainer:
     <<: *base
-    container_name: adg_ros2
+    container_name: adl_ros2
   # docs:
   #   <<: *base
-  #   container_name: adg_ros2_docs
+  #   container_name: adl_ros2_docs
 
   #   command: >
   #     mkdocs serve
@@ -73,7 +73,7 @@ services:
 
   # foxglove:
   #   <<: *base
-  #   container_name: adg_ros2_foxglove
+  #   container_name: adl_ros2_foxglove
 
   #   command: >
   #     ros2 launch foxglove_bridge foxglove_bridge_launch.xml
