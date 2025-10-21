@@ -109,6 +109,7 @@ RUN apt-get update && \
     ros-${ROS_DISTRO}-pinocchio \
     ros-${ROS_DISTRO}-joy \
     ros-${ROS_DISTRO}-foxglove-bridge \
+    ros-${ROS_DISTRO}-rqt-graph \
     && rm -rf /var/lib/apt/lists/*
 
 # Symlink python3 to python
@@ -116,6 +117,7 @@ RUN ln -s /usr/bin/python3 /usr/bin/python
 
 USER $USERNAME
 
+RUN mkdir -p /home/ros/ros2_ws/src
 RUN mkdir -p /home/ros/ros2_ws/src
 
 #! Python deps

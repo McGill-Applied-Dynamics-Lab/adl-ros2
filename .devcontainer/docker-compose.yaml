@@ -3,6 +3,7 @@ x-base: &base
   build:
     context: ..
     dockerfile: .devcontainer/Dockerfile
+    target: base
     args:
       ROS_DISTRO: humble
 
@@ -17,7 +18,7 @@ x-base: &base
   stdin_open: true
 
   volumes:
-    - ../:/ros2_ws
+    - ../:/home/ros/ros2_ws/src/adg-ros2
     - /tmp/.X11-unix:/tmp/.X11-unix
     - $XAUTHORITY:$XAUTHORITY
     - ./limits.conf:/etc/security/limits.conf
@@ -64,10 +65,16 @@ services:
 
   #   command: >
   #     mkdocs serve
+  #   command: >
+  #     mkdocs serve
 
   #   ports:
   #     - "8000:8000"
+  #   ports:
+  #     - "8000:8000"
 
+  #   depends_on:
+  #     - devcontainer
   #   depends_on:
   #     - devcontainer
 
@@ -77,6 +84,10 @@ services:
 
   #   command: >
   #     ros2 launch foxglove_bridge foxglove_bridge_launch.xml
+  #   command: >
+  #     ros2 launch foxglove_bridge foxglove_bridge_launch.xml
 
+  #   depends_on:
+  #     - devcontainer
   #   depends_on:
   #     - devcontainer
