@@ -55,6 +55,10 @@ class I3TeleopVirtualCoupling(Node):
 
         self.declare_parameter("pos_radius", 0.060)  # Radius for the position control region
 
+        self.declare_parameter(
+            "active_axis", "x"
+        )  # Active axis for the position control. Options: "x", "y", "z", "xy", "xz", "yz", "xyz"
+
         #! ROS2 Params
         self._i3_pose_topic_name = self.get_parameter("i3_pose_topic_name").get_parameter_value().string_value
         self._i3_twist_topic_name = self.get_parameter("i3_twist_topic_name").get_parameter_value().string_value
@@ -90,7 +94,19 @@ class I3TeleopVirtualCoupling(Node):
 
         self._i3_scale = self.get_parameter("position_scale").get_parameter_value().double_value
         self._T_i3_robot = np.array([[0, 1, 0], [-1, 0, 0], [0, 0, 1]])  # Swap x and y, invert i3_xs
-        self._active_axis = np.array([[1, 0, 0], [0, 0, 0], [0, 0, 0]])  # Only X axis active
+
+        # Active axis
+        active_axis_str = self.get_parameter("active_axis").get_parameter_value().string_value.lower()
+        x_val = 0
+        y_val = 0
+        z_val = 0
+        if "x" in active_axis_str:
+            x_val = 1
+        if "y" in active_axis_str:
+            y_val = 1
+        if "z" in active_axis_str:
+            z_val = 1
+        self._active_axis = np.array([[x_val, 0, 0], [0, y_val, 0], [0, 0, z_val]])
 
         self._force_calibrated = False
         self._n_force_cal_msgs = 0

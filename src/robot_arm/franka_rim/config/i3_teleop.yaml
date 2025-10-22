@@ -3,6 +3,13 @@
   ros__parameters:
     use_sim_time: false
 
+# I3 Node Parameters
+inverse3_node:
+  ros__parameters:
+    frequency: 1000.0
+    scale: 1.0  # scale between i3 position and published position 
+    disable_forces: false
+
 # I3 Sim Node Parameters
 i3_sim_node:
   ros__parameters:
@@ -12,6 +19,20 @@ i3_sim_node:
     n_cycles: 3
     use_start_srv: false
     start_time: 2.0
+
+i3_teleop_virtual_coupling:
+  ros__parameters:
+    i3_pose_topic_name: /i3/pose
+    i3_twist_topic_name: /i3/twist
+    i3_wrench_topic_name: /i3/wrench
+    haptic_pose_topic_name: /fr3/target_pose
+    haptic_twist_topic_name: /fr3/target_twist
+    interface_force_topic_name: /fr3/interface_force
+    frequency: 100.0
+    force_scale: 0.05
+    position_scale: 1.0
+    pos_radius: 0.060
+    active_axis: "z"
 
 # Visualization Node Parameters
 rim_vis_node:

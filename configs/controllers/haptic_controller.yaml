@@ -1,17 +1,17 @@
-virtual_coupling.k_pos_x: 1000.0
-virtual_coupling.k_pos_y: 1000.0
+virtual_coupling.k_pos_x: 600.0
+virtual_coupling.k_pos_y: 600.0
 virtual_coupling.k_pos_z: 600.0
 
-virtual_coupling.d_pos_x: 50.0
+virtual_coupling.d_pos_x: -1.0
 virtual_coupling.d_pos_y: -1.0
 virtual_coupling.d_pos_z: -1.0
 
 virtual_coupling.k_rot_x: 50.0
-virtual_coupling.k_rot_y: 500.0
+virtual_coupling.k_rot_y: 50.0
 virtual_coupling.k_rot_z: 50.0
   
 virtual_coupling.d_rot_x: -1.0
-virtual_coupling.d_rot_y: 20.0
+virtual_coupling.d_rot_y: -1.0
 virtual_coupling.d_rot_z: -1.0  
 
 nullspace.damping: 0.0

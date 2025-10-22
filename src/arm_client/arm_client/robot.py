@@ -709,7 +709,7 @@ class Robot:
         Returns:
             bool: True if the robot is homed, False otherwise.
         """
-        return np.allclose(self.joint_values, self.config.home_config, atol=1e-3)
+        return np.allclose(self.q, self.config.home_config, atol=1e-1)
 
     def shutdown(self):
         """Shutdown the node."""
