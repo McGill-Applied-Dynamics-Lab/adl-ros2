@@ -1,115 +1,144 @@
+"""
+To teleop the FR3 with the Inverse 3. The i3 position is mapped to the robot workspace and sent as /target_pose.
+
+If OSC_PD controller is used, renders the force (scaled) of the virtual coupling.
+
+This needs the `osc_pd_controller` running on the server to work.
+
+Only publishes the state of the I3 in the robot's base frame.
+"""
+
 # ROS imports
 from typing import Literal
 import rclpy
 from rclpy.node import Node  # node class makes a ROS2 Node
 
-from arm_interfaces.msg import Teleop
-from teleop_interfaces.msg import Inverse3State
-from geometry_msgs.msg import PoseStamped, Pose, TwistStamped, Twist, WrenchStamped, Vector3, Point, Quaternion
+from geometry_msgs.msg import (
+    PoseStamped,
+    TwistStamped,
+    WrenchStamped,
+    Vector3,
+    Point,
+    Quaternion,
+    PointStamped,
+)
 
 # Other
 import numpy as np
 from enum import Enum
 
 from adg_ros2_utils.debug_utils import wait_for_debugger
+from adg_ros2_utils.msg_utils import ros2np, np2ros
 
-NODE_NAME = "i3_teleop"
+NODE_NAME = "i3_teleop_virtual_coupling"
 
 DEBUG = False
-
-
-class ControlModes(Enum):
-    POSITION = 0
-    VELOCITY = 1
-
-
-def np2ros(array: np.ndarray, msg_type: Literal["Vector3", "Point"] = "Vector3") -> Vector3:
-    """
-    Converts a numpy array to a Vector 3 ROS message.
-
-    Args:
-        array (np.ndarray): Numpy array to convert.
-
-    Returns:
-        Vector3: ROS message.
-    """
-    # if len(array) != 3:
-    #     raise ValueError("Array must have 3 elements.")
-    if not isinstance(array, np.ndarray):
-        raise ValueError("Input must be a numpy array.")
-
-    if msg_type == "Vector3":
-        msg = Vector3()
-        msg.x = array[0]
-        msg.y = array[1]
-        msg.z = array[2]
-    elif msg_type == "Point":
-        msg = Point()
-        msg.x = array[0]
-        msg.y = array[1]
-        msg.z = array[2]
-    elif msg_type == "Quaternion":
-        msg = Quaternion()
-        msg.x = array[0]
-        msg.y = array[1]
-        msg.z = array[2]
-        msg.w = array[3]
-    else:
-        raise ValueError("Invalid message type.")
-
-    return msg
-
-
-def ros2np(msg: Vector3 | Point) -> np.ndarray:
-    """
-    Converts a Vector 3 ROS message to a numpy array.
-
-    Args:
-        msg (Vector3): ROS message to convert.
-
-    Returns:
-        np.ndarray: Numpy array.
-    """
-    array = np.array([msg.x, msg.y, msg.z])
-
-    return array
 
 
 class I3Teleop(Node):
     def __init__(self):
         super().__init__(NODE_NAME)
-        self.get_logger().info("Initializing I3Teleop...")
+        self.get_logger().info("Initializing I3 Teleop with Virtual Coupling...")
 
-        #! Attributes
-        # Joystick
+        self.declare_parameter("i3_pose_topic_name", "/i3/pose")
+        self.declare_parameter("i3_twist_topic_name", "/i3/twist")
+        self.declare_parameter("i3_wrench_topic_name", "/i3/wrench")
+
+        self.declare_parameter("target_pose_topic_name", "/fr3/target_pose")
+        self.declare_parameter("target_twist_topic_name", "/fr3/target_twist")
+
+        self.declare_parameter("interface_force_topic_name", "/fr3/interface_force")
+
+        self.declare_parameter("frequency", 100.0)  # frequency of the node
+
+        self.declare_parameter("force_scale", 0.05)  # Scale for the forces applied to the i3
+        self.declare_parameter("position_scale", 1.0)
+        # self.declare_parameter("velocity_scale", 500)
+
+        self.declare_parameter("pos_radius", 0.060)  # Radius for the position control region
+
+        self.declare_parameter(
+            "active_axis", "x"
+        )  # Active axis for the position control. Options: "x", "y", "z", "xy", "xz", "yz", "xyz"
+
+        #! ROS2 Params
+        self._i3_pose_topic_name = self.get_parameter("i3_pose_topic_name").get_parameter_value().string_value
+        self._i3_twist_topic_name = self.get_parameter("i3_twist_topic_name").get_parameter_value().string_value
+        self._i3_wrench_topic_name = self.get_parameter("i3_wrench_topic_name").get_parameter_value().string_value
+        self._interface_force_topic_name = (
+            self.get_parameter("interface_force_topic_name").get_parameter_value().string_value
+        )
+
+        self._target_pose_topic_name = self.get_parameter("target_pose_topic_name").get_parameter_value().string_value
+        self._target_twist_topic_name = self.get_parameter("target_twist_topic_name").get_parameter_value().string_value
+
+        self._cmd_pub_freq = self.get_parameter("frequency").get_parameter_value().double_value
+
+        #! Important Arrays
+        self._i3_position = np.zeros(3)  # Position of the i3
+        self._i3_velocities = np.zeros(3)  # Velocities of the i3
+        self._i3_forces_des = np.zeros(3)  # Forces to apply to the i3
+
+        self._haptic_position = np.zeros(3)  # Position of the haptic device in the robot's base frame
+        self._haptic_linear_vel = np.zeros(3)  # Velocities of the haptic device in the robot's base frame
+
+        self._ee_pose = None  # np.zeros(3)  # End effector position for the robot
+        self._ee_quat = np.array([0, 0, 0, 1])  # End effector orientation for the robot
+        self._ee_vel = np.zeros(3)  # Velocities of the end effector.
+        self._ws_center = np.zeros(3)  # Workspace center position of the I3 in the robot's base frame
+
+        self._interface_forces = np.zeros(3)
+        self._ee_contact_forces = np.zeros(3)  # Forces applied at the end effector
+
+        #! Parameters
         self._start_time = None
         self._is_initialized = False
-        self._cmd_pub_freq = 100  # Frequency to publish the commands
+
+        self._i3_scale = self.get_parameter("position_scale").get_parameter_value().double_value
+        self._T_i3_robot = np.array([[0, 1, 0], [-1, 0, 0], [0, 0, 1]])  # Swap x and y, invert i3_xs
+
+        # Active axis
+        active_axis_str = self.get_parameter("active_axis").get_parameter_value().string_value.lower()
+        x_val = 0
+        y_val = 0
+        z_val = 0
+        if "x" in active_axis_str:
+            x_val = 1
+        if "y" in active_axis_str:
+            y_val = 1
+        if "z" in active_axis_str:
+            z_val = 1
+        self._active_axis = np.array([[x_val, 0, 0], [0, y_val, 0], [0, 0, z_val]])
 
         self._force_calibrated = False
         self._n_force_cal_msgs = 0
         self._force_bias = np.zeros(3)  # Bias for the force sensor
         self._force_deadzone = 5.0  # Deadzone for the force to apply
 
-        self._i3_position = np.zeros(3)  # Position of the i3
-        self._i3_velocities = np.zeros(3)  # Velocities of the i3
-        self._i3_forces_des = np.zeros(3)  # Forces to apply to the i3
+        # Scale for the forces applied to the i3
+        self._i3_forces_scale = self.get_parameter("force_scale").get_parameter_value().double_value
+        # Scale for the position of the i3
+        # self._i3_position_scale = self.get_parameter("position_scale").get_parameter_value().double_value
+        # self._i3_vel_scale = self.get_parameter("velocity_scale").get_parameter_value().double_value
 
-        # TODO: Move to ros params
-        self._i3_forces_scale = 0.05  # Scale for the forces applied to the i3
-        self._i3_position_scale = 3  # Scale for the position of the i3
-        self._i3_vel_scale = 500  # Scale for the velocity
-        self._pos_radius = 0.060  # Radius for the position control region
+        # Radius for the position control region
+        self._pos_radius = self.get_parameter("pos_radius").get_parameter_value().double_value
 
-        # Robot
-        self._control_mode = ControlModes.POSITION
-        self._ee_pos = np.zeros(3)  # End effector position for the robot
-
-        self._ee_center = np.zeros(3)  # Center position for the ee
-        self._ee_des = np.zeros(3)  # Desired end effector position
-
-        self._ee_forces = np.zeros(3)  # Forces applied to the end effector
-        self._ee_vel = np.zeros(3)  # Velocities of the end effector. Desired one from control
+        # Log parameter values
+        self.get_logger().info(
+            f"Parameters\n"
+            f"- Update frequency: {self._cmd_pub_freq}, \n"
+            f"- Position radius: {self._pos_radius}, \n"
+            f"- Active axis: {active_axis_str}, \n"
+            f"- I3 position scale: {self._i3_scale}, \n"
+            f"- I3 force scale: {self._i3_forces_scale}, \n"
+            f"- Topic, I3 Pose: {self._i3_pose_topic_name}, \n"
+            f"- Topic, I3 twist: {self._i3_twist_topic_name}, \n"
+            f"- Topic, I3 wrench: {self._i3_wrench_topic_name}, \n"
+            f"- Topic, interface force: {self._interface_force_topic_name}, \n"
+            f"- Topic, target pose: {self._target_pose_topic_name}, \n"
+            f"- Topic, target twist: {self._target_twist_topic_name}, \n"
+        )
 
         #! Init functions
         self._init_subscribers()
@@ -117,21 +146,36 @@ class I3Teleop(Node):
 
         # self._calibrate()
 
+        self._main_timer = self.create_timer(1 / self._cmd_pub_freq, self._main_loop)
+
     def _init_subscribers(self):
         self.get_logger().info("Initializing subscribers...")
 
-        # --- joystick ---
-        i3_topic = "/inverse3/state"
-        self._i3_sub = self.create_subscription(Inverse3State, i3_topic, self._i3_topic_callback, 10)
+        # --- I3 State ---
+        self._i3_pose_sub = self.create_subscription(
+            PoseStamped, self._i3_pose_topic_name, self._i3_pose_topic_callback, 10
+        )
+        self._i3_twist_sub = self.create_subscription(
+            TwistStamped, self._i3_twist_topic_name, self._i3_twist_topic_callback, 10
+        )
 
-        # --- ee pose ---
-        robot_topic = "/fr3_pose"
-        self._robot_sub = self.create_subscription(PoseStamped, robot_topic, self._robot_topic_callback, 10)
+        # --- EE Pose ---
+        robot_pose_topic = "/fr3/current_pose"
+        self._robot_sub = self.create_subscription(PoseStamped, robot_pose_topic, self._robot_pose_topic_callback, 10)
 
-        # --- contact forces ---
+        # --- Contact Forces ---
+        # Estimated contact forces from the FR3
         contact_forces_topic = "/franka_robot_state_broadcaster/external_wrench_in_base_frame"
         self._contact_forces_sub = self.create_subscription(
             WrenchStamped, contact_forces_topic, self._contact_forces_topic_callback, 10
+        )
+
+        # Virtual Coupling force
+        self._interface_force_sub = self.create_subscription(
+            WrenchStamped,
+            self._interface_force_topic_name,
+            self._interface_forces_topic_callback,
+            10,
         )
 
         # # --- ee vel ---
@@ -141,70 +185,77 @@ class I3Teleop(Node):
     def _init_publishers(self):
         self.get_logger().info("Initializing publishers...")
 
-        # Pose Publisher
-        self._ee_cmd_pub_topic = "/teleop/ee_cmd"
-        self._ee_cmd_pub = self.create_publisher(Teleop, self._ee_cmd_pub_topic, 10)
-        self._ee_cmd_msg = Teleop()
-        self._ee_cmd_timer = self.create_timer(1 / self._cmd_pub_freq, self._pub_ee_des)
+        # Haptic State Publisher
+        self._haptic_pose_pub = self.create_publisher(PoseStamped, self._target_pose_topic_name, 10)
+        self._haptic_twist_pub = self.create_publisher(TwistStamped, self._target_twist_topic_name, 10)
 
         # Contact forces publisher
-        self._i3_forces_pub_topic = "/inverse3/wrench_des"
-        self._i3_forces_pub = self.create_publisher(WrenchStamped, self._i3_forces_pub_topic, 10)
+        self._i3_forces_pub = self.create_publisher(WrenchStamped, self._i3_wrench_topic_name, 10)
         self._i3_forces_msg = WrenchStamped()
-        self._i3_forces_timer = self.create_timer(0.01, self._pub_i3_forces)
 
     #! Callbacks
-    def _i3_topic_callback(self, msg: Inverse3State):
+    def _i3_pose_topic_callback(self, msg: PoseStamped):
         """
-        Callback to get the state of the inverse 3 form the '/inverse3/state' topic.
-
-        Parameters
-        ----------
-        msg : Inverse3State
-            Message received from the topic.
-        """
-        # Raw values
-        i3_position = ros2np(msg.pose.position)
-        i3_vel = ros2np(msg.twist.linear)
-
-        # Switch axis 0 and 1 of i3_position
-        i3_position[0], i3_position[1] = i3_position[1], -i3_position[0]
-        i3_vel[0], i3_vel[1] = i3_vel[1], -i3_vel[0]
-
-        # Convert axes
-        self._i3_position = i3_position
-        self._i3_velocities = i3_vel
-
-    def _robot_topic_callback(self, msg: PoseStamped):
-        """
-        Callback for the '/fr3_pose' topic.
+        Callback to get the state of the inverse 3 form the '/i3/pose' topic.
 
         Parameters
         ----------
         msg : PoseStamped
-            Message received from the '/robot' topic.
+            Message received from the topic.
         """
-        self._ee_pos = ros2np(msg.pose.position)
+        # Raw values
+        i3_position = ros2np(msg.pose.position)
+
+        # Switch axis 0 and 1 of i3_position
+        # i3_position[0], i3_position[1] = i3_position[1], -i3_position[0]
+        # i3_vel[0], i3_vel[1] = i3_vel[1], -i3_vel[0]
+
+        # Convert axes
+        self._i3_position = i3_position
+
+    def _i3_twist_topic_callback(self, msg: TwistStamped):
+        """
+        Callback to get the state of the inverse 3 form the '/i3/twist' topic.
+
+        Parameters
+        ----------
+        msg : TwistStamped
+            Message received from the topic.
+        """
+        # Raw values
+        i3_vel = ros2np(msg.twist.linear)
+
+        # # Switch axis 0 and 1 of i3_position
+        # i3_vel[0], i3_vel[1] = i3_vel[1], -i3_vel[0]
+
+        # Convert axes
+        self._i3_velocities = i3_vel
+
+    def _robot_pose_topic_callback(self, msg: PoseStamped):
+        """
+        Callback for the '/fr3/current_pose' topic.
+
+        Parameters
+        ----------
+        msg : PoseStamped
+        """
+        self._ee_pose = ros2np(msg.pose.position)
         self._ee_quat = np.array(
             [msg.pose.orientation.x, msg.pose.orientation.y, msg.pose.orientation.z, msg.pose.orientation.w]
         )
 
         # self.get_logger().info(f"Robot EE: {self._ee_des}")
 
-        if not self._is_initialized:
-            self._ee_center = self._ee_pos
-            # self._n_robot_cal_msgs += 1
-            self._is_initialized = True
-            self.get_logger().info(f"Robot center: {self._ee_center}")
+        # TODO: Move to main loop
 
     def _contact_forces_topic_callback(self, msg: WrenchStamped):
         """
-        Callback for the '/franka_broadcaster/...' topic.
+        Callback for the 'contact_forces_topic' topic.
 
         Parameters
         ----------
         msg : WrenchStamped
-            Message received from the '/franka_broadcaster/...' topic.
+            Estimated contact forces from the FR3.
         """
         self._ee_forces = ros2np(msg.wrench.force)
 
@@ -231,6 +282,17 @@ class I3Teleop(Node):
             # deadzone
             self._ee_forces = np.where(np.abs(self._ee_forces) < self._force_deadzone, 0, self._ee_forces)
 
+    def _interface_forces_topic_callback(self, msg: WrenchStamped):
+        """
+        Callback for the '/interface_force' topic.
+
+        Parameters
+        ----------
+        msg : WrenchStamped
+            Message received from the '/interface_force' topic.
+        """
+        self._interface_forces = ros2np(msg.wrench.force)
+
     def _ee_vel_topic_callback(self, msg: TwistStamped):
         """
         Callback for the '/franka_broadcaster/...' topic.
@@ -242,148 +304,68 @@ class I3Teleop(Node):
         """
         self._ee_vel = ros2np(msg.twist.linear)
 
-    def _pub_ee_des(self):
+    # Publishers
+    def _pub_haptic_state(self):
         """
         Publish the desired end effector position to the '/teleop/ee_des_pose' topic.
         """
-        if not self._is_initialized:
-            self.get_logger().warn("Robot not initialized, skipping publishing ee command.", throttle_duration_sec=2.0)
+        # Publish the haptic position
+        haptic_pose_msg = PoseStamped()
+        haptic_pose_msg.header.stamp = self.get_clock().now().to_msg()
+        haptic_pose_msg.pose.position = np2ros(self._haptic_position, msg_type="Point")
 
-            return
+        # TODO: Update orientation based on robot orientation or i3 orientation
+        # For now, just set to a fixed orientation (pointing downwards)
+        haptic_pose_msg.pose.orientation = Quaternion(x=1.0, y=0.0, z=0.0, w=0.0)
 
-        self._compute_ee_command()
+        self._haptic_pose_pub.publish(haptic_pose_msg)
 
-        self._ee_cmd_pub.publish(self._ee_cmd_msg)
+        # Publish the haptic twist
+        haptic_twist_msg = TwistStamped()
+        haptic_twist_msg.header.stamp = self.get_clock().now().to_msg()
+        haptic_twist_msg.twist.linear = np2ros(self._haptic_linear_vel, msg_type="Vector3")
+
+        self._haptic_twist_pub.publish(haptic_twist_msg)
 
     def _pub_i3_forces(self):
         """
         Publish the desired forces to the i3 robot.
         """
-        if not self._force_calibrated:
-            return
-
-        # Transform the ee forces
-        self._i3_forces_des = self._i3_forces_scale * self._ee_forces
-
-        # Deadzone
-        # self._i3_forces_des = np.where(np.abs(self._i3_forces_des) < self._force_deadzone, 0, self._i3_forces_des)
-
-        # print(
-        #     f"F des: {self._i3_forces_des[0]:>8.4f} | {self._i3_forces_des[1]:>8.4f} | {self._i3_forces_des[2]:>8.4f}"
-        # )
-
         # Publish
         self._i3_forces_msg.header.stamp = self.get_clock().now().to_msg()
         self._i3_forces_msg.wrench.force = np2ros(self._i3_forces_des)
         self._i3_forces_pub.publish(self._i3_forces_msg)
 
     #! Methods
-    def _update_control_mode(self):
+    def _main_loop(self):
         """
-        Update the control mode based on the joystick values.
-
-        If RT is pressed, the control mode is changed to velocity.
+        Main loop of the node.
         """
-        dist = np.linalg.norm(self._i3_position)
+        if not self._is_initialized:
+            if self._ee_pose is None:
+                self.get_logger().warn("Waiting for the robot pose...", throttle_duration_sec=2.0)
+                return
 
-        # pos -> vel
-        if self._control_mode == ControlModes.POSITION and dist > self._pos_radius:
-            self.get_logger().info("Control mode changed to VELOCITY.")
-            self._control_mode = ControlModes.VELOCITY
+            self.get_logger().info("Initializing teleop node...")
+            self._ws_center = self._ee_pose
 
-        # vel -> pos
-        elif self._control_mode == ControlModes.VELOCITY and dist <= self._pos_radius:
-            self.get_logger().info("Control mode changed to POSITION.")
-            self._control_mode = ControlModes.POSITION
+            # self._n_robot_cal_msgs += 1
 
-            # Update ee center
-            self._ee_center = self._ee_pos - self._i3_position * self._i3_position_scale
+            self._is_initialized = True
+            self.get_logger().info(f"Robot center: {self._ws_center}")
+            return
 
-    def _compute_ee_command(self):
-        """
-        Compute the command to send to the robot based on the joystick values.
+        # Transform the i3 position to the robot's base frame
+        T_i3_ee = self._i3_scale * self._active_axis @ self._T_i3_robot
+        self._haptic_position = T_i3_ee @ self._i3_position + self._ws_center
+        self._haptic_linear_vel = T_i3_ee @ self._i3_velocities
 
-        If RT is pressed, the control mode is changed to velocity.
-        (called from `self._pub_ee_des`)
-        """
-        self._update_control_mode()
+        # Scale the forces
+        T_ee_i3 = -self._i3_forces_scale * self._T_i3_robot.T @ self._active_axis
+        self._i3_forces_des = T_ee_i3 @ self._interface_forces
 
-        self._ee_cmd_msg.header.stamp = self.get_clock().now().to_msg()
-
-        if self._control_mode == ControlModes.POSITION:
-            ee_pose_des, ee_quat_des = self._compute_ee_des()
-
-            self._ee_cmd_msg.control_mode = ControlModes.POSITION.value
-            self._ee_cmd_msg.ee_des.position = np2ros(ee_pose_des, msg_type="Point")
-            self._ee_cmd_msg.ee_des.orientation = np2ros(ee_quat_des, msg_type="Quaternion")
-
-            self._ee_cmd_msg.ee_vel_des = Twist()
-
-        else:
-            ee_vel_des = self._compute_ee_vel()
-
-            self._ee_cmd_msg.control_mode = ControlModes.VELOCITY.value
-            self._ee_cmd_msg.ee_vel_des.linear = np2ros(ee_vel_des)
-
-            self._ee_cmd_msg.ee_des = Pose()
-
-    def _compute_ee_des(self):
-        """
-        Compute the desired end effector position based on the i3 position.
-
-        Returns
-        -------
-        np.ndarray
-            Desired end effector position.
-        """
-        # # Apply the deadzone
-        # js_axes = np.where(np.abs(js_axes) < self._js_deadzone_thres, 0, js_axes)
-
-        # Compute the desired end effector position
-        ee_pos_des = self._ee_center + self._i3_position * self._i3_position_scale
-
-        ee_quat_des = self._ee_quat.copy()
-
-        return ee_pos_des, ee_quat_des
-
-    def _compute_ee_vel(self) -> np.ndarray:
-        """Compute the desired end effector velocity based on the inverse 3 position."""
-        # Compute the velocity to apply
-        distance = np.linalg.norm(self._i3_position)
-        direction = self._i3_position / distance
-        velocity = direction * ((distance - self._pos_radius) ** 3) * self._i3_vel_scale
-
-        # distance = np.sqrt(sum([(device_pos[i] - center[i]) ** 2 for i in range(3)]))
-        # direction = [(device_pos[i] - center[i]) / distance for i in range(3)]
-        # velocity = [direction[i] * ((distance - radius) ** 3) * Kd for i in range(3)]
-
-        # get the velocity of movement in vel-ctl region
-        # Va = velocity_applied(self._workspace_center, self._R, self._raw_positions, 100)
-
-        # magVa = math.sqrt(Va[0] * Va[0] + Va[1] * Va[1] + Va[2] * Va[2])
-        vel_norm = np.linalg.norm(velocity)
-
-        max_vel = 0.1
-        if vel_norm > max_vel:
-            # Va = [(self._maxVa / Va_norm) * Va[0], (self._maxVa / Va_norm) * Va[1], (self._maxVa / Va_norm) * Va[2]]
-            print("MAX VEL")
-            velocity = velocity * max_vel / vel_norm
-
-        # self._velocity_ball_center = [(self._velocity_ball_center[i] + Va[i]) for i in range(3)]
-        # self._velocity_ball_center += Va
-
-        # # Apply the deadzone
-        # js_axes = np.where(np.abs(js_axes) < self._js_deadzone_thres, 0, js_axes)
-
-        # Compute the desired end effector position
-        ee_vel_des = velocity
-
-        # # Update ee_center
-        # self._ee_center += self._ee_vel * 1 / self._cmd_pub_freq
-
-        # print(f"EE vel des: {ee_vel_des} \t EE center: {self._ee_center}")
-
-        return ee_vel_des.astype(float)
+        self._pub_haptic_state()
+        self._pub_i3_forces()
 
 
 def main(args=None):

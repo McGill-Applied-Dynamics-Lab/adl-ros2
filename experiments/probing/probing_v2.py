@@ -82,14 +82,14 @@ def main():
     robot.wait_until_ready()
 
     # Choose controller that accepts /target_pose
-    # robot.controller_switcher_client.switch_controller("haptic_controller")
+    # robot.controller_switcher_client.switch_controller("osc_pd_controller")
     # robot.haptic_controller_parameters_client.load_param_config(
-    #     file_path=CONFIG_DIR / "controllers" / "probe_controller.yaml"
+    #     file_path=CONFIG_DIR / "controllers" / "osc_pd" /"probe_controller.yaml"
     # )
 
     robot.controller_switcher_client.switch_controller("joint_space_controller")
     robot.joint_space_controller_parameters_client.load_param_config(
-        file_path=CONFIG_DIR / "controllers" / "joint_space_controller.yaml"
+        file_path=CONFIG_DIR / "controllers" / "joint_space" / "default.yaml"
     )
 
     # Parameters

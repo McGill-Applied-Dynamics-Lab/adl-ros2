@@ -57,7 +57,7 @@ omega = 2.0 * np.pi / (4 * plunge_time)  # radians per second
 
 robot.controller_switcher_client.switch_controller("joint_space_controller")
 robot.joint_space_controller_parameters_client.load_param_config(
-    file_path=CONFIG_DIR / "controllers" / "joint_space_controller.yaml"
+    file_path=CONFIG_DIR / "controllers" / "joint_space" / "default.yaml"
 )
 
 # %%

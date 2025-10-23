@@ -31,7 +31,7 @@ robot.wait_until_ready()
 
 #! Or load them from a yaml file
 robot.cartesian_controller_parameters_client.load_param_config(
-    file_path=CONFIG_DIR / "control/default_cartesian_impedance.yaml"
+    file_path=CONFIG_DIR / "controllers" / "crips" / "default_cartesian_impedance.yaml"
 )
 
 

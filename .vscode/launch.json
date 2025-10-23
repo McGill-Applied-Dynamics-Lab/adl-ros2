@@ -32,49 +32,49 @@
             "name": "Python: robot_arm_test",
             "type": "debugpy",
             "request": "launch",
-            "program": "src/adg_ros2/robot_arm/robot_arm_client/scripts/robot_arm_test.py",
+            "program": "src/adl_ros2/robot_arm/robot_arm_client/scripts/robot_arm_test.py",
             "console": "integratedTerminal",
         },
         {
             "name": "Task: fr3_insert",
             "type": "debugpy",
             "request": "launch",
-            "program": "src/adg_ros2/robot_tasks/scripts/fr3_insert.py",
+            "program": "src/adl_ros2/robot_tasks/scripts/fr3_insert.py",
             "console": "integratedTerminal",
         },
         {
             "name": "Agent Node: insert",
             "type": "debugpy",
             "request": "launch",
-            "program": "src/adg_ros2/robot_tasks/robot_tasks/rl_agent/Insert.py",
+            "program": "src/adl_ros2/robot_tasks/robot_tasks/rl_agent/Insert.py",
             "console": "integratedTerminal",
         },
         {
             "name": "Node: i3_teleop",
             "type": "debugpy",
             "request": "launch",
-            "program": "src/adg_ros2/teleop/teleop/teleop/i3_teleop.py",
+            "program": "src/adl_ros2/teleop/teleop/teleop/i3_teleop.py",
             "console": "integratedTerminal",
         },
         {
             "name": "Node: inverse3_node",
             "type": "debugpy",
             "request": "launch",
-            "program": "src/adg_ros2/teleop/inverse3_ros2/inverse3_ros2/Inverse3_Node.py",
+            "program": "src/adl_ros2/teleop/inverse3_ros2/inverse3_ros2/Inverse3_Node.py",
             "console": "integratedTerminal",
         },
         {
             "name": "Node: fr3_interface",
             "type": "debugpy",
             "request": "launch",
-            "program": "src/adg_ros2/robot_arm/robot_arm_interface/robot_arm_interface/fr3_interface.py",
+            "program": "src/adl_ros2/robot_arm/robot_arm_interface/robot_arm_interface/fr3_interface.py",
             "console": "integratedTerminal",
         },
         {
             "name": "Node: delay_rim",
             "type": "debugpy",
             "request": "launch",
-            "program": "src/adg_ros2/robot_arm/franka_rim/franka_rim/delay_rim_node.py",
+            "program": "src/adl_ros2/robot_arm/franka_rim/franka_rim/delay_rim_node.py",
             "args": [
                 "--ros-args",
                 "-p",
@@ -92,18 +92,18 @@
             ],
             "console": "integratedTerminal",
         },
-        {
-            "name": "Launch: i3_teleop.launch.py",
-            "type": "debugpy",
-            "request": "launch",
-            "program": "/opt/ros/humble/bin/ros2", // Path to the ros2 executable
-            "args": [
-                "launch",
-                "teleop",
-                "i3_teleop.launch.py",
-            ],
-            "console": "integratedTerminal",
-        },
+        // {
+        //     "name": "Launch: i3_teleop.launch.py",
+        //     "type": "debugpy",
+        //     "request": "launch",
+        //     "program": "/opt/ros/humble/bin/ros2", // Path to the ros2 executable
+        //     "args": [
+        //         "launch",
+        //         "teleop",
+        //         "i3_teleop.launch.py",
+        //     ],
+        //     "console": "integratedTerminal",
+        // },
         {
             "name": "Launch: joy_teleop.launch.py",
             "type": "debugpy",
@@ -134,22 +134,22 @@
             // },
             // "cwd": "${workspaceFolder}"  // Set the working directory
         },
-        {
-            "name": "Launch: i3_teleop_position.launch.py",
-            "type": "debugpy",
-            "request": "launch",
-            "program": "/opt/ros/humble/bin/ros2", // Path to the ros2 executable
-            "args": [
-                "launch",
-                "teleop",
-                "i3_teleop_position.launch.py",
-                "fake_i3:=true",
-            ],
-            "console": "integratedTerminal",
-            "env": {
-                "DEBUG_NODE": "",
-            },
-        },
+        // {
+        //     "name": "Launch: i3_teleop_position.launch.py",
+        //     "type": "debugpy",
+        //     "request": "launch",
+        //     "program": "/opt/ros/humble/bin/ros2", // Path to the ros2 executable
+        //     "args": [
+        //         "launch",
+        //         "teleop",
+        //         "i3_teleop_position.launch.py",
+        //         "fake_i3:=true",
+        //     ],
+        //     "console": "integratedTerminal",
+        //     "env": {
+        //         "DEBUG_NODE": "",
+        //     },
+        // },
         {
             "name": "Launch: franka_rim.launch.py",
             "type": "debugpy",
@@ -169,7 +169,7 @@
             }
         },
         {
-            "name": "Launch: i3_teleop_virual.launch.py",
+            "name": "Launch: i3_teleop.launch.py",
             "type": "debugpy",
             "request": "launch",
             "program": "/opt/ros/humble/bin/ros2",

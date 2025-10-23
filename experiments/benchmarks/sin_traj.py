@@ -21,7 +21,7 @@ DURATION = 5.0  # Experiment duration in seconds
 
 # Robot Configuration
 ROBOT_NAMESPACE = "fr3"  # Robot namespace
-CONTROLLER = "haptic_controller"  # "haptic_controller" or "cartesian_impedance_controller"
+CONTROLLER = "osc_pd_controller"  # "osc_pd_controller" or "cartesian_impedance_controller"
 CONTROLLER_CONFIG = None  # Path to custom config file (None for default)
 CONNECTION_TIMEOUT = 2.0  # Robot connection timeout in seconds
 HOME_ROBOT = True  # Whether to home robot before experiment
@@ -182,8 +182,8 @@ class ExperimentManager:
         """Collect experiment metadata including controller parameters."""
         try:
             # Get controller parameters
-            ctrl_params = robot.haptic_controller_parameters_client.list_parameters()
-            params_values = robot.haptic_controller_parameters_client.get_parameters(ctrl_params)
+            ctrl_params = robot.osc_pd_controller_parameters_client.list_parameters()
+            params_values = robot.osc_pd_controller_parameters_client.get_parameters(ctrl_params)
             controller_parameters = dict(zip(ctrl_params, params_values))
         except Exception as e:
             print(f"Warning: Could not retrieve controller parameters: {e}")
@@ -423,18 +423,18 @@ else:
 # %%
 # Controller setup
 controller_config_map = {
-    "haptic_controller": "haptic_controller.yaml",
-    "cartesian_impedance_controller": "default_cartesian_impedance.yaml",
+    "osc_pd_controller": "osc_pd/default.yaml",
+    "cartesian_impedance_controller": "crips/default_cartesian_impedance.yaml",
 }
 
-config_file = CONTROLLER_CONFIG or controller_config_map.get(CONTROLLER, "haptic_controller.yaml")
+config_file = CONTROLLER_CONFIG or controller_config_map.get(CONTROLLER, "osc_pd/default.yaml.yaml")
 config_path = CONFIG_DIR / "controllers" / config_file
 
 print(f"🎮 Switching to controller: {CONTROLLER}")
 robot.controller_switcher_client.switch_controller(CONTROLLER)
 
-if CONTROLLER == "haptic_controller":
-    robot.haptic_controller_parameters_client.load_param_config(file_path=config_path)
+if CONTROLLER == "osc_pd_controller":
+    robot.osc_pd_controller_parameters_client.load_param_config(file_path=config_path)
     metadata = experiment.collect_controller_metadata(robot, trajectory_params)
 elif CONTROLLER == "cartesian_impedance_controller":
     robot.cartesian_controller_parameters_client.load_param_config(file_path=config_path)

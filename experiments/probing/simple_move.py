@@ -16,14 +16,14 @@ print(robot.end_effector_pose)
 print(robot.joint_values)
 print(robot.end_effector_wrench)  # added to print initial wrench
 
-robot.controller_switcher_client.switch_controller("haptic_controller")
-robot.haptic_controller_parameters_client.load_param_config(
-    file_path=CONFIG_DIR / "controllers" / "probe_controller.yaml"
+robot.controller_switcher_client.switch_controller("osc_pd_controller")
+robot.osc_pd_controller_parameters_client.load_param_config(
+    file_path=CONFIG_DIR / "controllers" / "osc_pd" / "default.yaml"
 )
 
 
 print("Moving to start position...")
-start_position = np.array([0.615, -0.0714, 0.331 + 0.05]) # 0.331
+start_position = np.array([0.615, -0.0714, 0.331 + 0.05])  # 0.331
 start_position = np.array([0.550, -0.0714, 0.35])  # button location
 
 # inc = np.array([-0.05,-0.05,0])

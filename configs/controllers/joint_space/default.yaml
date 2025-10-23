@@ -1,3 +1,5 @@
+# Controller: joint_space_controller
+# Default configuration for the joint space controller
 arm_id: fr3
 joints:
   - fr3_joint1
@@ -8,7 +10,7 @@ joints:
   - fr3_joint6
   - fr3_joint7
 
-pd_gains.kp: [500.0, 600.0, 500.0, 600.0, 200.0, 275.0, 50.0]
+pd_gains.kp: [500.0, 700.0, 500.0, 600.0, 200.0, 275.0, 50.0]
 # pd_gains.kd: [10.0, 10.0, 10.0, 10.0, 10.0, 10.0, 10.0]
 pd_gains.kd: [-1.0, -1.0, -1.0, -1.0, -1.0, 25.0, -1.0] # Use negative values for automatic damping calculation
 

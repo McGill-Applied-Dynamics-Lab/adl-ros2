@@ -138,7 +138,7 @@ class Robot:
         self.joint_controller_parameters_client = ParametersClient(
             self.node, target_node=self.config.joint_trajectory_controller_name
         )
-        self.haptic_controller_parameters_client = ParametersClient(self.node, target_node="haptic_controller")
+        self.osc_pd_controller_parameters_client = ParametersClient(self.node, target_node="osc_pd_controller")
 
         self.joint_space_controller_parameters_client = ParametersClient(
             self.node, target_node="joint_space_controller"
@@ -180,6 +180,8 @@ class Robot:
             TwistStamped, "target_twist", qos_profile_system_default
         )
 
+        # Current state subscriptions
+        # pose
         self.node.create_subscription(
             PoseStamped,
             self.config.current_pose_topic,
@@ -187,6 +189,7 @@ class Robot:
             qos_profile_sensor_data,
             callback_group=ReentrantCallbackGroup(),
         )
+        # joint states
         self.node.create_subscription(
             JointState,
             self.config.current_joint_topic,
@@ -194,6 +197,7 @@ class Robot:
             qos_profile_sensor_data,
             callback_group=ReentrantCallbackGroup(),
         )
+        # external wrench
         self.node.create_subscription(  # add subscription to wrench in base frame
             WrenchStamped,
             self.config.current_wrench_topic,
@@ -709,7 +713,7 @@ class Robot:
         Returns:
             bool: True if the robot is homed, False otherwise.
         """
-        return np.allclose(self.joint_values, self.config.home_config, atol=1e-3)
+        return np.allclose(self.q, self.config.home_config, atol=1e-1)
 
     def shutdown(self):
         """Shutdown the node."""
