@@ -1,3 +1,5 @@
+# Controller: joint_space_controller
+# Default configuration for the joint space controller
 arm_id: fr3
 joints:
   - fr3_joint1

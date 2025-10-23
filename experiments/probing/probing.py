@@ -40,9 +40,9 @@ max_time = 10.0
 #     file_path=CONFIG_DIR / "controllers" / "default_cartesian_impedance.yaml"
 # )
 
-robot.controller_switcher_client.switch_controller("haptic_controller")
-robot.haptic_controller_parameters_client.load_param_config(
-    file_path=CONFIG_DIR / "controllers" / "probe_controller.yaml"
+robot.controller_switcher_client.switch_controller("osc_pd_controller")
+robot.osc_pd_controller_parameters_client.load_param_config(
+    file_path=CONFIG_DIR / "controllers" / "osc_pd" / "probe_controller.yaml"
 )
 
 
@@ -53,7 +53,7 @@ robot.move_to(position=start_position, speed=0.15)
 
 # %%
 # The set_target will directly publish the pose to /target_pose
-ee_forces = [] # added to record forces
+ee_forces = []  # added to record forces
 ee_poses = []
 target_poses = []
 ts = []
@@ -80,7 +80,7 @@ while t < max_time:
     # Use deterministic time based on count, not wall clock time
     t = loop_start_time - start_time
 
-    x = start_position[0] 
+    x = start_position[0]
     y = start_position[1]
     z = start_position[2] + amplitude * np.sin(omega * t)
     target_pose.position = np.array([x, y, z])
@@ -99,7 +99,7 @@ while t < max_time:
 
     data_start = time.perf_counter()
     ee_poses.append(robot.end_effector_pose.copy())
-    ee_forces.append(robot.end_effector_wrench['force'].copy())
+    ee_forces.append(robot.end_effector_wrench["force"].copy())
     target_poses.append(target_pose.copy())
     ts.append(t)
 

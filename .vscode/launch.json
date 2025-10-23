@@ -92,18 +92,18 @@
             ],
             "console": "integratedTerminal",
         },
-        {
-            "name": "Launch: i3_teleop.launch.py",
-            "type": "debugpy",
-            "request": "launch",
-            "program": "/opt/ros/humble/bin/ros2", // Path to the ros2 executable
-            "args": [
-                "launch",
-                "teleop",
-                "i3_teleop.launch.py",
-            ],
-            "console": "integratedTerminal",
-        },
+        // {
+        //     "name": "Launch: i3_teleop.launch.py",
+        //     "type": "debugpy",
+        //     "request": "launch",
+        //     "program": "/opt/ros/humble/bin/ros2", // Path to the ros2 executable
+        //     "args": [
+        //         "launch",
+        //         "teleop",
+        //         "i3_teleop.launch.py",
+        //     ],
+        //     "console": "integratedTerminal",
+        // },
         {
             "name": "Launch: joy_teleop.launch.py",
             "type": "debugpy",
@@ -134,22 +134,22 @@
             // },
             // "cwd": "${workspaceFolder}"  // Set the working directory
         },
-        {
-            "name": "Launch: i3_teleop_position.launch.py",
-            "type": "debugpy",
-            "request": "launch",
-            "program": "/opt/ros/humble/bin/ros2", // Path to the ros2 executable
-            "args": [
-                "launch",
-                "teleop",
-                "i3_teleop_position.launch.py",
-                "fake_i3:=true",
-            ],
-            "console": "integratedTerminal",
-            "env": {
-                "DEBUG_NODE": "",
-            },
-        },
+        // {
+        //     "name": "Launch: i3_teleop_position.launch.py",
+        //     "type": "debugpy",
+        //     "request": "launch",
+        //     "program": "/opt/ros/humble/bin/ros2", // Path to the ros2 executable
+        //     "args": [
+        //         "launch",
+        //         "teleop",
+        //         "i3_teleop_position.launch.py",
+        //         "fake_i3:=true",
+        //     ],
+        //     "console": "integratedTerminal",
+        //     "env": {
+        //         "DEBUG_NODE": "",
+        //     },
+        // },
         {
             "name": "Launch: franka_rim.launch.py",
             "type": "debugpy",
@@ -169,7 +169,7 @@
             }
         },
         {
-            "name": "Launch: i3_teleop_virual.launch.py",
+            "name": "Launch: i3_teleop.launch.py",
             "type": "debugpy",
             "request": "launch",
             "program": "/opt/ros/humble/bin/ros2",

@@ -138,7 +138,7 @@ class Robot:
         self.joint_controller_parameters_client = ParametersClient(
             self.node, target_node=self.config.joint_trajectory_controller_name
         )
-        self.haptic_controller_parameters_client = ParametersClient(self.node, target_node="haptic_controller")
+        self.osc_pd_controller_parameters_client = ParametersClient(self.node, target_node="osc_pd_controller")
 
         self.joint_space_controller_parameters_client = ParametersClient(
             self.node, target_node="joint_space_controller"

@@ -20,19 +20,19 @@ i3_sim_node:
     use_start_srv: false
     start_time: 2.0
 
-i3_teleop_virtual_coupling:
+i3_teleop:
   ros__parameters:
     i3_pose_topic_name: /i3/pose
     i3_twist_topic_name: /i3/twist
     i3_wrench_topic_name: /i3/wrench
-    haptic_pose_topic_name: /fr3/target_pose
-    haptic_twist_topic_name: /fr3/target_twist
+    target_pose_topic_name: /fr3/target_pose
+    target_twist_topic_name: /fr3/target_twist
     interface_force_topic_name: /fr3/interface_force
     frequency: 100.0
     force_scale: 0.05
     position_scale: 1.0
     pos_radius: 0.060
-    active_axis: "z"
+    active_axis: "xyz"
 
 # Visualization Node Parameters
 rim_vis_node:

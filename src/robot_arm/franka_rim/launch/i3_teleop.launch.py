@@ -77,8 +77,8 @@ def generate_launch_description():
     # -- Teleop Node
     fr3_teleop_node = Node(
         package="teleop",
-        executable="i3_teleop_virtual_coupling",
-        name="i3_teleop_virtual_coupling",
+        executable="i3_teleop",
+        name="i3_teleop",
         output="screen",
         parameters=[config_file_path],
     )

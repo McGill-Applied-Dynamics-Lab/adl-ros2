@@ -138,8 +138,8 @@ class ExperimentManager:
         """Collect experiment metadata including controller parameters."""
         try:
             # Get controller parameters
-            ctrl_params = robot.haptic_controller_parameters_client.list_parameters()
-            params_values = robot.haptic_controller_parameters_client.get_parameters(ctrl_params)
+            ctrl_params = robot.osc_pd_controller_parameters_client.list_parameters()
+            params_values = robot.osc_pd_controller_parameters_client.get_parameters(ctrl_params)
             controller_parameters = dict(zip(ctrl_params, params_values))
         except Exception as e:
             print(f"Warning: Could not retrieve controller parameters: {e}")
@@ -367,7 +367,7 @@ trajectory_params = {
 
 # %%
 robot.controller_switcher_client.switch_controller("osc_pd_controller")
-robot.haptic_controller_parameters_client.load_param_config(
+robot.osc_pd_controller_parameters_client.load_param_config(
     file_path=CONFIG_DIR / "controllers" / "osc_pd" / "default.yaml"
 )
 

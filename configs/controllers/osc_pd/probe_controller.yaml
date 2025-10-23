@@ -17,6 +17,6 @@ gains.d_rot_z: 1.0
 log.enabled: true
 log.timing: true
 log.robot_state: true
-log.haptic_input: false
+log.targets: false
 log.virtual_coupling: false
 log.controller_parameters: true
