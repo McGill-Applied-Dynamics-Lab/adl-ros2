@@ -1,0 +1,29 @@
+gains.k_pos_x: 600.0
+gains.k_pos_y: 600.0
+gains.k_pos_z: 600.0
+
+gains.d_pos_x: -1.0
+gains.d_pos_y: -1.0
+gains.d_pos_z: -1.0
+
+gains.k_rot_x: 100.0
+gains.k_rot_y: 100.0
+gains.k_rot_z: 50.0
+  
+gains.d_rot_x: -1.0
+gains.d_rot_y: -1.0
+gains.d_rot_z: -1.0  
+
+nullspace.damping: 0.0
+
+workspace.force_limit: 90.0  # Maximum allowed force magnitude (N) (at EE)
+workspace.torque_limit: 10.0  # Maximum allowed torque magnitude (Nm) (at EE)
+
+tool.length: -0.06 # length of the tool attached to the flange, in meters
+
+log.enabled: true
+log.timing: true
+log.robot_state: false  #  ee position, velocity, joint states, ...
+log.haptic_input: false  # target pose
+log.virtual_coupling: true  # interface variables and forces
+log.controller_parameters: false  # Gains

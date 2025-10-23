@@ -21,7 +21,7 @@ DURATION = 5.0  # Experiment duration in seconds
 
 # Robot Configuration
 ROBOT_NAMESPACE = "fr3"  # Robot namespace
-CONTROLLER = "haptic_controller"  # "haptic_controller" or "cartesian_impedance_controller"
+CONTROLLER = "osc_pd_controller"  # "osc_pd_controller" or "cartesian_impedance_controller"
 CONTROLLER_CONFIG = None  # Path to custom config file (None for default)
 CONNECTION_TIMEOUT = 2.0  # Robot connection timeout in seconds
 HOME_ROBOT = True  # Whether to home robot before experiment
@@ -423,17 +423,17 @@ else:
 # %%
 # Controller setup
 controller_config_map = {
-    "haptic_controller": "haptic_controller.yaml",
-    "cartesian_impedance_controller": "default_cartesian_impedance.yaml",
+    "osc_pd_controller": "osc_pd/default.yaml",
+    "cartesian_impedance_controller": "crips/default_cartesian_impedance.yaml",
 }
 
-config_file = CONTROLLER_CONFIG or controller_config_map.get(CONTROLLER, "haptic_controller.yaml")
+config_file = CONTROLLER_CONFIG or controller_config_map.get(CONTROLLER, "osc_pd/default.yaml.yaml")
 config_path = CONFIG_DIR / "controllers" / config_file
 
 print(f"🎮 Switching to controller: {CONTROLLER}")
 robot.controller_switcher_client.switch_controller(CONTROLLER)
 
-if CONTROLLER == "haptic_controller":
+if CONTROLLER == "osc_pd_controller":
     robot.haptic_controller_parameters_client.load_param_config(file_path=config_path)
     metadata = experiment.collect_controller_metadata(robot, trajectory_params)
 elif CONTROLLER == "cartesian_impedance_controller":

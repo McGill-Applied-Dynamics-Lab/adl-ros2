@@ -366,9 +366,9 @@ trajectory_params = {
 }
 
 # %%
-robot.controller_switcher_client.switch_controller("haptic_controller")
+robot.controller_switcher_client.switch_controller("osc_pd_controller")
 robot.haptic_controller_parameters_client.load_param_config(
-    file_path=CONFIG_DIR / "controllers" / "haptic_controller.yaml"
+    file_path=CONFIG_DIR / "controllers" / "osc_pd" / "default.yaml"
 )
 
 # Collect experiment metadata

@@ -180,6 +180,8 @@ class Robot:
             TwistStamped, "target_twist", qos_profile_system_default
         )
 
+        # Current state subscriptions
+        # pose
         self.node.create_subscription(
             PoseStamped,
             self.config.current_pose_topic,
@@ -187,6 +189,7 @@ class Robot:
             qos_profile_sensor_data,
             callback_group=ReentrantCallbackGroup(),
         )
+        # joint states
         self.node.create_subscription(
             JointState,
             self.config.current_joint_topic,
@@ -194,6 +197,7 @@ class Robot:
             qos_profile_sensor_data,
             callback_group=ReentrantCallbackGroup(),
         )
+        # external wrench
         self.node.create_subscription(  # add subscription to wrench in base frame
             WrenchStamped,
             self.config.current_wrench_topic,

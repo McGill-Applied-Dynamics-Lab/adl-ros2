@@ -6,7 +6,7 @@ import importlib.metadata
 
 __version__ = importlib.metadata.version("arm_client")
 # CONFIG_DIR = Path(__file__).parent.parent.parent.parent / "src" /"configs"
-CONFIG_DIR = Path("/home/ros/ros2_ws/src/adg-ros2/configs")
+CONFIG_DIR = Path("/home/ros/ros2_ws/src/adl-ros2/configs")
 
 try:
     import rclpy  # noqa: F401

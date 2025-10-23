@@ -70,10 +70,10 @@ experiment = ExperimentManager(experiment_name="my_custom_experiment")
 #### Controller Selection
 ```python
 # Switch between different controllers:
-robot.controller_switcher_client.switch_controller("cartesian_impedance_controller")
+robot.controller_switcher_client.switch_controller("osc_pd_controller")
 # Load corresponding parameters:
 robot.cartesian_controller_parameters_client.load_param_config(
-    file_path=CONFIG_DIR / "controllers" / "default_cartesian_impedance.yaml"
+    file_path=CONFIG_DIR / "controllers" / "osc_pd" / "default.yaml"
 )
 ```
 

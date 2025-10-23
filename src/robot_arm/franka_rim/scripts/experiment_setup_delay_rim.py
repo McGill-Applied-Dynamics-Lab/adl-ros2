@@ -17,9 +17,11 @@ robot.wait_until_ready(timeout=2.0)
 #     robot.home(time_to_home=3.0)
 
 # --- To Switch Controllers ---
-controller_name = "haptic_controller"  # osc_pd_controller, gravity_compensation, ....
+controller_name = "osc_pd_controller"  # osc_pd_controller, gravity_compensation, ....
 robot.controller_switcher_client.switch_controller(controller_name)
-robot.haptic_controller_parameters_client.load_param_config(file_path=CONFIG_DIR / "control" / "haptic_controller.yaml")
+robot.haptic_controller_parameters_client.load_param_config(
+    file_path=CONFIG_DIR / "controllers" / "osc_pd" / "default.yaml"
+)
 
 
 robot.shutdown()
