@@ -13,8 +13,6 @@ from adg_ros2_utils.debug_utils import wait_for_debugger
 
 NODE_NAME = "franka_rim_node"
 
-MONITOR_TIMING = True  # To log running frequency
-
 
 class FrankaRIMNode(Node):
     def __init__(self):
@@ -26,6 +24,14 @@ class FrankaRIMNode(Node):
         self.declare_parameter("interface_stiffness", 3000.0)  # Default stiffness
         self.declare_parameter("interface_damping", 2.0)  # Default damping
 
+        self.declare_parameter("rim_axis", "x")  # Axis for RIM ('x', 'y', 'z')
+
+        self.declare_parameter("log.enabled", False)
+        self.declare_parameter("log.timing", False)
+        self.declare_parameter("log.period", 1.0)
+
+        self._rim_axis_str = self.get_parameter("rim_axis").get_parameter_value().string_value
+
         self._interface_stiffness = self.get_parameter("interface_stiffness").get_parameter_value().double_value
         self._interface_damping = self.get_parameter("interface_damping").get_parameter_value().double_value
 
@@ -36,10 +42,9 @@ class FrankaRIMNode(Node):
         self._timer_create_time = time.time()
         self._actual_periods = deque(maxlen=100)
 
-        self.get_logger().info(
-            f"FrankaRIMNode initialized with rim_period={self._update_period}s, "
-            f"interface_stiffness={self._interface_stiffness}, interface_damping={self._interface_damping}"
-        )
+        self._log_enabled = self.get_parameter("log.enabled").get_parameter_value().bool_value
+        self._log_timing = self.get_parameter("log.timing").get_parameter_value().bool_value
+        self._log_period = self.get_parameter("log.period").get_parameter_value().double_value
 
         self._last_model_msg = None
 
@@ -55,12 +60,20 @@ class FrankaRIMNode(Node):
         self.Ai_dot_q_dot = None
         self.fa = None
 
+        self._rim_axis_idx = None  # Index of the RIM axis in the task space
+        if self._rim_axis_str == "x":
+            self._rim_axis_idx = 0
+        elif self._rim_axis_str == "y":
+            self._rim_axis_idx = 1
+        elif self._rim_axis_str == "z":
+            self._rim_axis_idx = 2
+
         self._model_sub = self.create_subscription(FrankaModel, "/fr3_model", self._franka_model_callback, 10)
 
         # Subscribe to cartesian force from OSC PD controller
         self._cartesian_force_sub = self.create_subscription(
             WrenchStamped,
-            "/fr3/osc_pd_controller/cartesian_force",
+            "/fr3/interface_force",
             self._cartesian_force_callback,
             10,
         )
@@ -69,6 +82,9 @@ class FrankaRIMNode(Node):
         self.m = 1  # Interface dimension
         self._rim_msg = None
         self._rim_pub = self.create_publisher(FrankaRIM, "/fr3_rim", 10)
+
+        # State variables
+        self.cartesian_force = None  # Cartesian force from OSC PD controller (6D wrench)
 
         # RIM Timer - automatically use wall timer when sim_time is enabled to bypass /clock quantization
         use_sim_time = self.get_parameter("use_sim_time").get_parameter_value().bool_value
@@ -84,13 +100,21 @@ class FrankaRIMNode(Node):
             self.get_logger().info("Using standard ROS timer for real-time operation")
             self._rim_timer = self.create_timer(self._update_period, self._rim_timer_callback)
 
-        # Add sim time diagnostic
-        self.get_logger().info(f"Using simulation time: {use_sim_time}")
-        # State variables
-        self.cartesian_force = None  # Cartesian force from OSC PD controller (6D wrench)
-
+        self.get_logger().info(f"FrankaRIMNode initialized.")
         self.get_logger().info(
-            f"FrankaRIMNode started, subscribing to /fr3_model, publishing to /fr3_rim, rim_period={self._update_period}s"
+            f"Parameters\n"
+            f"- use sim time: {use_sim_time}, \n"
+            f"- frequency: {self._update_freq} Hz ({self._update_period * 1000} ms), \n"
+            f"- interface_stiffness: {self._interface_stiffness}, \n"
+            f"- interface_damping: {self._interface_damping}, \n"
+            f"- rim_axis: {self._rim_axis_str} (idx: {self._rim_axis_idx}), \n"
+            f"- interface dimension: {self.m}, \n"
+            f"- [Topic] Model input: '/fr3_model', \n"
+            f"- [Topic] Ctrl force topic: '/fr3/interface_force', \n"
+            f"- [Topic] RIM state: '/fr3_rim', \n"
+            f"- log.enabled: {self._log_enabled}, \n"
+            f"- log.period: {self._log_period}, \n"
+            f"- log.timing: {self._log_timing}, \n"
         )
 
     def _franka_model_callback(self, msg: FrankaModel):
@@ -148,15 +172,6 @@ class FrankaRIMNode(Node):
             return None
 
         try:
-            loop_time = time.time()
-
-            # -- Track timing
-            if self._loop_count > 0:
-                actual_period = loop_time - self._last_timer_time
-                self._actual_periods.append(actual_period)
-
-            self._last_timer_time = loop_time
-
             # --- Create RIM message
             self._rim_msg = FrankaRIM()  # Create RIM message
 
@@ -185,8 +200,8 @@ class FrankaRIMNode(Node):
             #     effective_force = np.array([[0.0]])
 
             # RIM state
-            rim_position = self.x_ee[0]
-            rim_velocity = self.v_ee[0]
+            rim_position = self.x_ee[self._rim_axis_idx]
+            rim_velocity = self.v_ee[self._rim_axis_idx]
 
             # Fill message fields
             self._rim_msg.effective_mass = M_eff.flatten().tolist()
@@ -195,49 +210,55 @@ class FrankaRIMNode(Node):
             self._rim_msg.rim_velocity = rim_velocity.flatten().tolist()
 
             # Monitoring
-            # self._log_timer_monitoring(log_period=3.0)
-
             self._loop_count += 1
-            self._last_loop_time = loop_time
 
         except Exception as e:
             self.get_logger().error(f"RIM computation failed: {e}")
             self._rim_msg = None
 
     def _rim_timer_callback(self):
-        tic = time.perf_counter()
-        # Compute RIM
+        # -- Track timing
+        loop_time = time.time()
+        if self._loop_count > 0:
+            actual_period = loop_time - self._last_timer_time
+            self._actual_periods.append(actual_period)
+
+        self._last_timer_time = loop_time
+
+        # --- Compute RIM
         self._compute_rim()
 
-        # Publish RIM message
+        # --- Publish RIM message
         if self._rim_msg is not None:
             self._rim_pub.publish(self._rim_msg)
             self.get_logger().debug("Published RIM message")
 
-        # self.get_logger().info(
-        #     f"RIM publish frequency: {1.0 / (time.perf_counter() - tic):.2f} Hz", throttle_duration_sec=3.0
-        # )
+        self._log_debug_info()
 
-    def _log_timer_monitoring(self, log_period=1.0):
+    def _log_debug_info(self, log_period=1.0):
         """
-        To log timer diagnostics at a specified period.
+        To log debug information about the model update loop.
+        Logs every `log_period` seconds.
         """
-        if self._loop_count % (log_period * self._update_freq) == 0 and self._loop_count > 0:
+        if not self._log_enabled:
+            return
+
+        if self._loop_count % (self._log_period * self._update_freq) == 0 and self._loop_count > 0:
             avg_period = statistics.mean(self._actual_periods) * 1000  # Convert to ms
-            min_period = min(self._actual_periods) * 1000
-            max_period = max(self._actual_periods) * 1000
-            std_period = statistics.stdev(self._actual_periods) * 1000 if len(self._actual_periods) > 1 else 0
+            # min_period = min(self._actual_periods) * 1000
+            # max_period = max(self._actual_periods) * 1000
+            # std_period = statistics.stdev(self._actual_periods) * 1000 if len(self._actual_periods) > 1 else 0
 
-            if MONITOR_TIMING:
+            if avg_period > self._update_period * 1.2 * 1000:
+                self.get_logger().warn(
+                    f"High update period detected: {avg_period:.2f}ms (target: {self._update_period * 1000:.2f}ms)"
+                )
+
+            if self._log_timing:
                 self.get_logger().info(
                     f"Timer diagnostics - Avg: {avg_period:.2f}ms | Target: {self._update_period * 1000:.2f}ms | "
                     # f"Min: {min_period:.2f}ms | Max: {max_period:.2f}ms | "
                     # f"Std: {std_period:.2f}ms | Thread: {threading.current_thread().name}"
-                )
-
-            if avg_period > self._update_period * 1.5 * 1000:
-                self.get_logger().warn(
-                    f"High update period detected: {avg_period:.2f}ms (target: {self._update_period * 1000:.2f}ms)"
                 )
 
 

@@ -11,7 +11,6 @@ from enum import Enum
 import rclpy
 from rclpy.node import Node
 from arm_interfaces.msg import FrankaRIM
-from teleop_interfaces.msg import Inverse3State
 
 from copy import copy
 

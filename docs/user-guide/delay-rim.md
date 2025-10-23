@@ -59,7 +59,15 @@ Input: /fr3_model
 Out: /fr3_rim
 
 ### `delay_rim_node`
-Compute the target_pose and interaction forces from the history of the I3 states and 
+Compute the target_pose and interaction forces from the history of the I3 states.
+
+Main Loops
+- `_update`: Runs at `update_freq` param (default 1 KhZ). 
+    - Calls:
+        - `_pub_rim_interface_force`: Publish the last computed interface forces between estimated rim and I3
+        - `_pub_rim_state`: Publish estimated RIM state 
+- 
 
 In: I3 state, rim
 Out: target_pose, i3_wrench
+

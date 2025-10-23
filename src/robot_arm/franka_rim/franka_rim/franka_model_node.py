@@ -20,8 +20,6 @@ NODE_NAME = "franka_model_node"
 
 PIN_FRAME = pin.LOCAL_WORLD_ALIGNED  # pin.WORLD or pin.LOCAL_WORLD_ALIGNED
 
-MONITOR_TIMING = True  # To log running frequency
-
 
 class FrankaModelNode(Node):
     def __init__(self):
@@ -36,14 +34,27 @@ class FrankaModelNode(Node):
         self.declare_parameter("output_topic", "/fr3_model")
         self.declare_parameter("vel_thres", 0.005)  # Velocity threshold for applied forces
 
+        self.declare_parameter("log.enabled", False)
+        self.declare_parameter("log.timing", False)
+        self.declare_parameter("log.period", 1.0)
+
+        self.declare_parameter("rim_axis", "x")  # Axis for RIM ('x', 'y', 'z')
+
         input_topic = self.get_parameter("input_topic").get_parameter_value().string_value
         output_topic = self.get_parameter("output_topic").get_parameter_value().string_value
 
         # Loop monitoring
         self._update_freq = self.get_parameter("update_freq").get_parameter_value().double_value
         self._update_period = 1.0 / self._update_freq
+
+        self._rim_axis_str = self.get_parameter("rim_axis").get_parameter_value().string_value
+
         self._loop_count: int = 0
         self._last_loop_time = self.get_clock().now().nanoseconds / 1e9
+
+        self._log_enabled = self.get_parameter("log.enabled").get_parameter_value().bool_value
+        self._log_timing = self.get_parameter("log.timing").get_parameter_value().bool_value
+        self._log_period = self.get_parameter("log.period").get_parameter_value().double_value
 
         # Add detailed timing diagnostics
         self._timer_create_time = time.time()
@@ -110,7 +121,16 @@ class FrankaModelNode(Node):
         self.f_ext_robot = None  # Robot's own force estimates (6D wrench)
         self.cartesian_force = None  # Cartesian force from OSC PD controller (6D wrench)
 
-        self.p_i = np.array([-1, 0, 0])  # Interaction surface normal in base frame
+        # Interaction surface normal in base frame
+        if self._rim_axis_str == "x":
+            self.p_i = np.array([-1, 0, 0])
+        elif self._rim_axis_str == "y":
+            self.p_i = np.array([0, -1, 0])
+        elif self._rim_axis_str == "z":
+            self.p_i = np.array([0, 0, -1])
+        else:
+            raise ValueError(f"Invalid rim_axis: {self._rim_axis_str}, must be 'x', 'y', or 'z'")
+
         self.Di = np.hstack([self.p_i, np.zeros(3)])
 
         # Timer for computing and publishing model matrices
@@ -129,13 +149,24 @@ class FrankaModelNode(Node):
             self._model_update_timer = self.create_timer(self._update_period, self._update_model)
 
         # Log timing and threading information
-        self.get_logger().info(f"Model update frequency: {self._update_freq} Hz ({self._update_period * 1000} ms)")
+        self.get_logger().info(
+            f"Parameters\n"
+            f"- rim_axis: {self._rim_axis_str}, \n"
+            f"- use sim time: {use_sim_time}, \n"
+            f"- frequency: {self._update_freq} Hz ({self._update_period * 1000} ms), \n"
+            f"- input_topic: {input_topic}, \n"
+            f"- output_topic: {output_topic}, \n"
+            f"- vel_thres: {self._vel_thres}, \n"
+            f"- log.enabled: {self._log_enabled}, \n"
+            f"- log.period: {self._log_period}, \n"
+            f"- log.timing: {self._log_timing}, \n"
+        )
+
         self.get_logger().info(f"Timer created at: {self._timer_create_time}")
         self.get_logger().info(f"Current thread: {threading.current_thread().name}")
         self.get_logger().info(f"Thread ID: {threading.get_ident()}")
 
         # Add sim time diagnostic
-        self.get_logger().info(f"Using simulation time: {use_sim_time}")
         if use_sim_time:
             self.get_logger().info("Wall timer enabled automatically to prevent timer quantization to /clock rate")
 
@@ -277,7 +308,7 @@ class FrankaModelNode(Node):
         # self.get_logger().info("Published FrankaModel message to fr3_model topic")
 
         # Enhanced loop monitoring
-        # self._log_timer_monitoring(log_period=3.0)
+        self._log_debug_info()
 
         self._loop_count += 1
         self._last_loop_time = loop_time
@@ -531,26 +562,31 @@ class FrankaModelNode(Node):
         self._f_ext_est_pub.publish(est_msg)
 
     # --- Utilities
-    def _log_timer_monitoring(self, log_period=1.0):
+    def _log_debug_info(self):
         """
-        To log timer diagnostics at a specified period.
+        To log debug information about the model update loop.
+        Logs every `log_period` seconds.
         """
-        if self._loop_count % (log_period * self._update_freq) == 0 and self._loop_count > 0:
-            avg_period = statistics.mean(self._actual_periods) * 1000  # Convert to ms
-            min_period = min(self._actual_periods) * 1000
-            max_period = max(self._actual_periods) * 1000
-            std_period = statistics.stdev(self._actual_periods) * 1000 if len(self._actual_periods) > 1 else 0
 
-            if MONITOR_TIMING:
-                self.get_logger().info(
-                    f"Timer diagnostics - Avg: {avg_period:.2f}ms | Target: {self._update_period * 1000:.2f}ms | "
-                    # f"Min: {min_period:.2f}ms | Max: {max_period:.2f}ms | "
-                    # f"Std: {std_period:.2f}ms | Thread: {threading.current_thread().name}"
-                )
+        if not self._log_enabled:
+            return
+
+        if self._loop_count % (self._log_period * self._update_freq) == 0 and self._loop_count > 0:
+            avg_period = statistics.mean(self._actual_periods) * 1000  # Convert to ms
+            # min_period = min(self._actual_periods) * 1000
+            # max_period = max(self._actual_periods) * 1000
+            # std_period = statistics.stdev(self._actual_periods) * 1000 if len(self._actual_periods) > 1 else 0
 
             if avg_period > self._update_period * 1.5 * 1000:
                 self.get_logger().warn(
                     f"High update period detected: {avg_period:.2f}ms (target: {self._update_period * 1000:.2f}ms)"
+                )
+
+            if self._log_timing:
+                self.get_logger().info(
+                    f"Timer diagnostics - Avg: {avg_period:.2f}ms | Target: {self._update_period * 1000:.2f}ms | "
+                    # f"Min: {min_period:.2f}ms | Max: {max_period:.2f}ms | "
+                    # f"Std: {std_period:.2f}ms | Thread: {threading.current_thread().name}"
                 )
 
 

@@ -1,0 +1,51 @@
+cmake_minimum_required(VERSION 3.8)
+project(arm_interfaces)
+
+if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+  add_compile_options(-Wall -Wextra -Wpedantic)
+endif()
+
+# find dependencies
+find_package(ament_cmake REQUIRED)
+find_package(geometry_msgs REQUIRED)
+find_package(rosidl_default_generators REQUIRED)
+
+if(BUILD_TESTING)
+  find_package(ament_lint_auto REQUIRED)
+  # the following line skips the linter which checks for copyrights
+  # comment the line when a copyright and license is added to all source files
+  set(ament_cmake_copyright_FOUND TRUE)
+  # the following line skips cpplint (only works in a git repo)
+  # comment the line when this package is in a git repo and when
+  # a copyright and license is added to all source files
+  set(ament_cmake_cpplint_FOUND TRUE)
+  ament_lint_auto_find_test_dependencies()
+endif()
+
+rosidl_generate_interfaces(${PROJECT_NAME}
+  # "msg/Joints.msg"
+  # "msg/Teleop.msg"
+  "msg/Delayed.msg"
+  "msg/FrankaModel.msg"
+  "msg/FrankaRIM.msg"
+  # "action/Empty.action"
+  # "action/GotoJoints.action"
+  # "action/GotoPose.action"
+  # "action/GotoJointVelocities.action"
+  # "action/GotoEEVelocity.action"
+  # "action/GripperHoming.action"
+  # "action/GripperToggle.action"
+  # "action/GripperOpen.action"
+  # "action/GripperClose.action"
+  # "action/PegInHole.action"
+  # "action/RlAgent.action"
+  # "srv/GetControlMode.srv"
+  # "srv/SetControlMode.srv"
+  # "srv/GetGoalSource.srv"
+  # "srv/SetGoalSource.srv"
+  DEPENDENCIES 
+  geometry_msgs
+  builtin_interfaces
+)
+
+ament_package()

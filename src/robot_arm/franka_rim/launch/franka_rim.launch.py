@@ -185,7 +185,7 @@ def generate_launch_description():
             fake_i3_arg,
             save_data_arg,
             # -- Nodes
-            # inverse3_node,  # Add real inverse3 node back
+            inverse3_node,  # Add real inverse3 node back
             i3_sim_node,
             franka_model_node,
             franka_rim_node,
