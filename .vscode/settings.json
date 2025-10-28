@@ -147,16 +147,21 @@
         "syncstream": "cpp",
         "valarray": "cpp"
     },
+    //! Pytest
     "python.testing.pytestArgs": [
-        // "src/adg_ros2/",  // Specific package test folder
-        // "src/adg_ros2/teleop/network_sim/test",  // Specific package test folder
-        "src/adg_ros2/robot_arm", // Specific package test folder
-        "--import-mode=importlib", // Helps with import conflicts
-        "-s"
+        "src/",
+        "--ignore=src/_legacy",
     ],
+    // "python.testing.pytestPath": "/usr/bin/pytest-3"
     "python.testing.unittestEnabled": false,
     "python.testing.pytestEnabled": true,
+    "python.testing.autoTestDiscoverOnSaveEnabled": false,
+    "terminal.integrated.env.linux": {
+        "BASH_ENV": "/home/ros/ros2_ws/install/setup.bash"
+    },
+    //
     "ros.distro": "humble",
+    // Spell Right
     "spellright.language": [
         "en_CA"
     ],
@@ -165,8 +170,7 @@
         "latex",
         "plaintext"
     ],
-    // "python.testing.pytestPath": "/usr/bin/pytest-3"
-    //Docker
+    //--- Docker
     "containers.composeCommand": "docker compose",
-    "cmake.sourceDirectory": "/home/ros/ros2_ws/src/adg-ros2/src/robot_arm/robot_arm_testing"
+    "cmake.sourceDirectory": "/home/ros/ros2_ws/src/adg-ros2/src/robot_arm/robot_arm_testing",
 }

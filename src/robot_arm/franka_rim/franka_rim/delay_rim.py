@@ -1,3 +1,7 @@
+"""
+DelayRIM Algorithm Implementation.
+"""
+
 import time
 import threading
 import math
@@ -118,33 +122,24 @@ class DelayRIM:
         # Persistent state for continuous 1kHz stepping
         self.rim_state: Optional[ReducedModelState] = None  # Latest computed RIM state
 
-    def add_haptic_state(self, i3_position: np.array, i3_velocity: np.array) -> None:
+    def add_haptic_state(self, i3_position: np.ndarray, i3_velocity: np.ndarray) -> None:
         """
-        Add new haptic state to history.
+        Add new haptic state to history. The position and velocity need to be in the rim frame.
 
-        Only add the state in along the interfaces.
+            - i3_position (np.ndarray (m,)): Position from I3 device, in the RIM frame
+            - i3_velocity (np.ndarray (m,)): Velocity from I3 device, in the RIM frame
         """
         timestamp = self._node.get_clock().now().nanoseconds / 1e9
 
-        # Extract position and velocity (coordinate transform as needed)
-        position = np.array(
-            [
-                i3_position[0],
-                # i3_position[1],
-                # i3_position[2]
-            ]
-        ).reshape((self._interface_dim,))
+        if i3_position.shape[0] != self._interface_dim or i3_velocity.shape[0] != self._interface_dim:
+            raise ValueError(
+                f"Haptic state dimension mismatch: expected {self._interface_dim}, "
+                f"got position {i3_position.shape[0]}, velocity {i3_velocity.shape[0]}"
+            )
 
-        # position[0] += 0.4253  # For robot arm
-        # position = position * 5  # For simple mass
+        position = i3_position.reshape((self._interface_dim,))
 
-        velocity = np.array(
-            [
-                i3_velocity[0],
-                # i3_velocity[1],
-                # i3_velocity[2]
-            ]
-        ).reshape((self._interface_dim,))
+        velocity = i3_velocity.reshape((self._interface_dim,))
 
         haptic_state = HapticState(timestamp, position, velocity)
 
@@ -389,7 +384,11 @@ class DelayRIM:
     # Force Computations
     ###
     def get_interface_force(self) -> Optional[np.ndarray]:
-        """Get the most recent interface force computed using the selected delay compensation method."""
+        """Get the most recent interface force computed using the selected delay compensation method.
+
+        Returns:
+            np.ndarray (m, 1): Latest interface force
+        """
         ready_results = []
         completed_ids = []
         loop_time = time.perf_counter()

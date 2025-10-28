@@ -14,11 +14,14 @@ import time
 import statistics
 from collections import deque
 
+from rcl_interfaces.srv import GetParameters
+from rcl_interfaces.msg import ParameterType
+
 from adg_ros2_utils.debug_utils import wait_for_debugger
 
 NODE_NAME = "franka_model_node"
 
-PIN_FRAME = pin.LOCAL_WORLD_ALIGNED  # pin.WORLD or pin.LOCAL_WORLD_ALIGNED
+PIN_FRAME = pin.WORLD  # pin.WORLD or pin.LOCAL_WORLD_ALIGNED
 
 
 class FrankaModelNode(Node):
@@ -172,14 +175,15 @@ class FrankaModelNode(Node):
 
         # Declare URDF filename as a parameter
         self.declare_parameter("robot_urdf_filename", "fr3_franka_hand.urdf")
-        self._load_pinocchio_model()
+        # self._load_pinocchio_model_from_file()
+        self._load_pinocchio_model_from_param()
 
         self.get_logger().info(f"Model update frequency: {self._update_freq} Hz ({self._update_period * 1000} ms)")
         self.get_logger().info(
             f"FrankaModelNode initialized successfully - subscribing to {input_topic}, publishing to {output_topic}"
         )
 
-    def _load_pinocchio_model(self):
+    def _load_pinocchio_model_from_file(self):
         # Get URDF path from package share and parameter
         urdf_filename = self.get_parameter("robot_urdf_filename").get_parameter_value().string_value
         try:
@@ -224,6 +228,140 @@ class FrankaModelNode(Node):
         except Exception as e:
             self.get_logger().error(f"Failed to load Pinocchio models: {e}")
             self._model_loaded = False
+
+    def _load_pinocchio_model_from_param(self):
+        # Load URDF from robot_state_publisher node parameter
+        try:
+            # Create a service client to get parameters from the robot_state_publisher node
+            # Create service client
+            get_params_client = self.create_client(GetParameters, "/fr3/robot_state_publisher/get_parameters")
+
+            # Wait for the service to be available
+            if not get_params_client.wait_for_service(timeout_sec=10.0):
+                raise RuntimeError("GetParameters service for /fr3/robot_state_publisher not available")
+
+            # Create request
+            request = GetParameters.Request()
+            request.names = ["robot_description"]
+
+            # Call the service
+            future = get_params_client.call_async(request)
+            rclpy.spin_until_future_complete(self, future, timeout_sec=10.0)
+
+            if not future.done():
+                raise RuntimeError("Failed to get robot_description parameter - service call timeout")
+
+            response = future.result()
+            if len(response.values) == 0:
+                raise ValueError("robot_description parameter not found")
+
+            robot_description_param = response.values[0]
+
+            if robot_description_param.type != ParameterType.PARAMETER_STRING:
+                raise ValueError("robot_description parameter is not a string")
+
+            urdf_string = robot_description_param.string_value
+
+            if not urdf_string:
+                raise ValueError("robot_description parameter is empty")
+
+            # Build models from URDF string
+            # Create temporary file and use ROS package path substitution
+            import tempfile
+
+            # Create a temporary URDF file
+            with tempfile.NamedTemporaryFile(mode="w", suffix=".urdf", delete=False) as temp_file:
+                temp_file.write(urdf_string)
+                temp_urdf_path = temp_file.name
+
+            try:
+                # Use xacro to process package:// paths if needed, otherwise use direct file loading
+                # First try with pinocchio directly
+                model, collision_model, visual_model = pin.buildModelsFromUrdf(temp_urdf_path)
+            except Exception as e:
+                self.get_logger().warn(f"Failed to load URDF with meshes: {e}")
+                # Fallback: try building model without visual/collision data
+                try:
+                    # Create a simplified URDF without mesh references for dynamics only
+                    import xml.etree.ElementTree as ET
+
+                    root = ET.fromstring(urdf_string)
+
+                    # Remove visual and collision elements that reference meshes
+                    for elem in root.iter():
+                        if elem.tag in ["visual", "collision"]:
+                            mesh_elem = elem.find(".//mesh")
+                            if mesh_elem is not None:
+                                elem.clear()  # Remove the visual/collision element
+
+                    # Write simplified URDF
+                    simplified_urdf = ET.tostring(root, encoding="unicode")
+                    with tempfile.NamedTemporaryFile(mode="w", suffix=".urdf", delete=False) as simple_file:
+                        simple_file.write(simplified_urdf)
+                        simple_urdf_path = simple_file.name
+
+                    try:
+                        model = pin.buildModelFromUrdf(simple_urdf_path)
+                        collision_model = None
+                        visual_model = None
+                        self.get_logger().info("Loaded simplified URDF model without meshes for dynamics calculations")
+                    finally:
+                        import os
+
+                        os.unlink(simple_urdf_path)
+
+                except Exception as fallback_e:
+                    raise RuntimeError(f"Failed to load URDF even without meshes: {fallback_e}")
+            finally:
+                # Clean up temp file
+                import os
+
+                os.unlink(temp_urdf_path)
+
+            # Lock Fingers (same as file-based method)
+            jointsToLock = ["fr3_finger_joint1", "fr3_finger_joint2"]
+            joints2lock_IDs = []
+            for jn in jointsToLock:
+                if model.existJointName(jn):
+                    joints2lock_IDs.append(model.getJointId(jn))
+                else:
+                    self.get_logger().warn(f"Joint {jn} does not belong to the model!")
+
+            initial_joint_config = np.array(
+                [
+                    0,
+                    -np.pi / 4,
+                    0,
+                    -3 * np.pi / 4,
+                    0,
+                    np.pi / 2,
+                    np.pi / 4,
+                    0,
+                    0,
+                ]
+            )
+
+            model_reduced = pin.buildReducedModel(model, joints2lock_IDs, initial_joint_config)
+
+            self._robot_model = model_reduced
+            self._collision_model = collision_model
+            self._visual_model = visual_model
+            self._robot_data = self._robot_model.createData()
+            self._model_loaded = True
+            self._n = self._robot_model.nv  # Number of degrees of freedom
+
+            self.get_logger().info(
+                f"Loaded Pinocchio model from /fr3/robot_state_publisher/robot_description parameter with {self._n} DOF"
+            )
+
+        except Exception as e:
+            self.get_logger().error(f"Failed to load Pinocchio models from /fr3/robot_state_publisher parameter: {e}")
+            self.get_logger().info("Falling back to file-based model loading...")
+            self._load_pinocchio_model_from_file()
+        finally:
+            # Clean up the service client
+            if "get_params_client" in locals():
+                self.destroy_client(get_params_client)
 
     def _robot_state_callback(self, msg: FrankaRobotState):
         self.get_logger().debug("Received FrankaRobotState message")
@@ -335,7 +473,7 @@ class FrankaModelNode(Node):
             q_ddot: Joint accelerations (n,)
         """
         # Update Pinocchio data with current joint state
-        pin.forwardKinematics(self._robot_model, self._robot_data, q, q_dot)
+        pin.computeAllTerms(self._robot_model, self._robot_data, q, q_dot)
         pin.updateFramePlacements(self._robot_model, self._robot_data)
 
         # --- Jacobians ---
@@ -354,17 +492,20 @@ class FrankaModelNode(Node):
         # Return computed matrices
         self.Ai_dot_q_dot = self.Ai_dot @ q_dot
 
-        v_ee_jaco = self.J_ee @ q_dot  # Interaction velocity in x direction
-        v_ee_x_int = self.Ai @ q_dot  # Interaction velocity in x direction
+        v_ee_jaco = self.J_ee @ q_dot  # End-effector velocity from Jacobian
 
-        # print(f"Vx: {self.v_ee[0]:>10.3f} | {v_ee_jaco[0]:>10.3f} | {v_ee_x_int:>10.3f}")
         self.v_ee = v_ee_jaco[:3]  # End-effector velocity (3D vector)
+        # print(f"Vz: {self.v_ee[2]:>10.3f} | {v_ee_jaco[2]:>10.3f} | {self.Ai @ q_dot:>10.3f}")
 
         # --- Dynamics ---
         # Mass matrix
-        self.M = pin.crba(self._robot_model, self._robot_data, q)
+        self.M = self._robot_data.M.copy()
+
         # Coriolis and nonlinear terms
-        self.c = pin.nle(self._robot_model, self._robot_data, q, q_dot)
+        q_dot = np.zeros(self._n)
+        self.c = self._robot_data.nle - self._robot_data.g  # Remove gravity
+        self.g = self._robot_data.g
+        ...
 
         # # Joint torques
         # if self.tau is None:

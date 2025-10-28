@@ -2,7 +2,7 @@
 # Default parameters for the OSC PD controller
 gains.k_pos_x: 600.0
 gains.k_pos_y: 600.0
-gains.k_pos_z: 600.0
+gains.k_pos_z: 1000.0
 
 gains.d_pos_x: -1.0
 gains.d_pos_y: -1.0

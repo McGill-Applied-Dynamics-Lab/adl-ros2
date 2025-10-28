@@ -7,7 +7,7 @@
 # Franka Model Node Parameters
 franka_model_node:
   ros__parameters:
-    rim_axis: "x"
+    rim_axis: "z"
     update_freq: 100.0
     input_topic: "/fr3/franka_robot_state_broadcaster/robot_state"
     output_topic: "/fr3_model"
@@ -21,7 +21,7 @@ franka_model_node:
 # Franka RIM Node Parameters  
 franka_rim_node:
   ros__parameters:
-    rim_axis: "x"
+    rim_axis: "z"
     update_freq: 10.0
     interface_stiffness: 500.0
     interface_damping: 40.0
@@ -33,7 +33,7 @@ franka_rim_node:
 # --- DelayRIM ---
 delay_rim_node:
   ros__parameters:
-    rim_axis: "x"
+    rim_axis: "z"
     update_freq: 500.0 # 1000.0
     delay_compensation_method: "zoh"
     force_scaling: 0.1
