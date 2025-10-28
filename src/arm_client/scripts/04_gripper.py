@@ -49,8 +49,12 @@ if success:
     time.sleep(2)
     print(f"Gripper width after closing: {gripper.value:.4f} m")
 
-print("\nResetting gripper...")
-success = gripper.reset()
-print(f"Reset action {'succeeded' if success else 'failed'}")
+# print("\nResetting gripper...")
+# success = gripper.reset()
+# print(f"Reset action {'succeeded' if success else 'failed'}")
 
 print("\nGripper demonstration complete!")
+
+print("\nNote: All actions above are blocking (wait for completion).")
+print("For non-blocking operations, use: gripper.open(block=False)")
+print("See 06_gripper_blocking_demo.py for non-blocking examples.")

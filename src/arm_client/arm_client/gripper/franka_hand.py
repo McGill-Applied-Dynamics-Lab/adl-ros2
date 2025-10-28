@@ -74,6 +74,82 @@ class GripperConfig:
         return cls(**config)
 
 
+class GripperActionFuture:
+    """A future-like object for non-blocking gripper actions."""
+
+    def __init__(self, goal_future, server_available: bool, error_message: str | None):
+        """Initialize the gripper action future.
+
+        Args:
+            goal_future: The ROS2 action goal future or None if server unavailable.
+            server_available (bool): Whether the action server was available.
+            error_message (str | None): Error message if any.
+        """
+        self._goal_future = goal_future
+        self._server_available = server_available
+        self._error_message = error_message
+        self._goal_handle = None
+        self._result_future = None
+        self._final_result = None
+
+    def done(self) -> bool:
+        """Check if the action is complete."""
+        if not self._server_available:
+            return True
+
+        # Check if we have the final result
+        if self._final_result is not None:
+            return True
+
+        # Check if we have a result future and it's done
+        if self._result_future is not None:
+            if self._result_future.done():
+                result = self._result_future.result()
+                self._final_result = result.result.success
+                return True
+            return False
+
+        # Check if goal was accepted
+        if self._goal_future is not None and self._goal_future.done():
+            self._goal_handle = self._goal_future.result()
+            if not self._goal_handle.accepted:
+                self._final_result = False
+                return True
+            # Goal was accepted, now wait for result
+            self._result_future = self._goal_handle.get_result_async()
+            return False
+
+        return False
+
+    def result(self) -> bool:
+        """Get the result of the action.
+
+        Returns:
+            bool: True if action succeeded, False otherwise.
+
+        Raises:
+            RuntimeError: If action is not complete yet.
+        """
+        if not self.done():
+            raise RuntimeError("Action is not complete yet. Check done() first.")
+
+        if not self._server_available:
+            return False
+
+        return self._final_result if self._final_result is not None else False
+
+    def cancelled(self) -> bool:
+        """Check if the action was cancelled."""
+        # For simplicity, we don't implement cancellation in this version
+        return False
+
+    def exception(self) -> Exception | None:
+        """Get any exception that occurred."""
+        if not self._server_available and self._error_message:
+            return RuntimeError(self._error_message)
+        return None
+
+
 class Gripper:
     """Franka gripper client using ROS2 actions."""
 
@@ -191,15 +267,17 @@ class Gripper:
             raise RuntimeError("Gripper value is not initialized. Call wait_until_ready() first.")
         return self.value > open_threshold
 
-    def close(self, force: float | None = None, speed: float | None = None) -> bool:
+    def close(self, force: float | None = None, speed: float | None = None, block: bool = True):
         """Close the gripper using grasp action.
 
         Args:
             force (float, optional): Grasping force in N. Uses default_force if None.
             speed (float, optional): Movement speed in m/s. Uses default_speed if None.
+            block (bool, optional): If True, wait for action to complete. If False, return immediately.
 
         Returns:
-            bool: True if the action succeeded, False otherwise.
+            bool: True if the action succeeded, False otherwise (when block=True).
+            rclpy.task.Future: Future object for the action result (when block=False).
         """
         force = force if force is not None else self.config.default_force
         speed = speed if speed is not None else self.config.default_speed
@@ -211,16 +289,21 @@ class Gripper:
         goal.epsilon.inner = self.config.grasp_epsilon_inner
         goal.epsilon.outer = self.config.grasp_epsilon_outer
 
-        return self._send_goal(self._grasp_client, goal)
+        if block:
+            return self._send_goal_blocking(self._grasp_client, goal)
+        else:
+            return self._send_goal_non_blocking(self._grasp_client, goal)
 
-    def open(self, speed: float | None = None) -> bool:
+    def open(self, speed: float | None = None, block: bool = True):
         """Open the gripper using move action.
 
         Args:
             speed (float, optional): Movement speed in m/s. Uses default_speed if None.
+            block (bool, optional): If True, wait for action to complete. If False, return immediately.
 
         Returns:
-            bool: True if the action succeeded, False otherwise.
+            bool: True if the action succeeded, False otherwise (when block=True).
+            rclpy.task.Future: Future object for the action result (when block=False).
         """
         speed = speed if speed is not None else self.config.default_speed
 
@@ -228,26 +311,38 @@ class Gripper:
         goal.width = self.config.max_width
         goal.speed = speed
 
-        return self._send_goal(self._move_client, goal)
+        if block:
+            return self._send_goal_blocking(self._move_client, goal)
+        else:
+            return self._send_goal_non_blocking(self._move_client, goal)
 
-    def reset(self) -> bool:
+    def reset(self, block: bool = True):
         """Reset/home the gripper using homing action.
 
+        Args:
+            block (bool, optional): If True, wait for action to complete. If False, return immediately.
+
         Returns:
-            bool: True if the action succeeded, False otherwise.
+            bool: True if the action succeeded, False otherwise (when block=True).
+            rclpy.task.Future: Future object for the action result (when block=False).
         """
         goal = Homing.Goal()
-        return self._send_goal(self._homing_client, goal)
+        if block:
+            return self._send_goal_blocking(self._homing_client, goal)
+        else:
+            return self._send_goal_non_blocking(self._homing_client, goal)
 
-    def set_target(self, target_width: float, speed: float | None = None) -> bool:
+    def set_target(self, target_width: float, speed: float | None = None, block: bool = True):
         """Set target width for the gripper using move action.
 
         Args:
             target_width (float): Target width in meters.
             speed (float, optional): Movement speed in m/s. Uses default_speed if None.
+            block (bool, optional): If True, wait for action to complete. If False, return immediately.
 
         Returns:
-            bool: True if the action succeeded, False otherwise.
+            bool: True if the action succeeded, False otherwise (when block=True).
+            rclpy.task.Future: Future object for the action result (when block=False).
         """
         if not (self.config.min_width <= target_width <= self.config.max_width):
             raise ValueError(
@@ -260,9 +355,12 @@ class Gripper:
         goal.width = target_width
         goal.speed = speed
 
-        return self._send_goal(self._move_client, goal)
+        if block:
+            return self._send_goal_blocking(self._move_client, goal)
+        else:
+            return self._send_goal_non_blocking(self._move_client, goal)
 
-    def _send_goal(self, client: ActionClient, goal) -> bool:
+    def _send_goal_blocking(self, client: ActionClient, goal) -> bool:
         """Send a goal to an action client and wait for result.
 
         Args:
@@ -308,6 +406,23 @@ class Gripper:
             self.node.get_logger().error(f"Action failed: {result.result.error}")
             return False
 
+    def _send_goal_non_blocking(self, client: ActionClient, goal):
+        """Send a goal to an action client without waiting for result.
+
+        Args:
+            client (ActionClient): The action client to use.
+            goal: The goal to send.
+
+        Returns:
+            GripperActionFuture: A future-like object that can be used to check status and get results.
+        """
+        if not client.wait_for_server(timeout_sec=2.0):
+            self.node.get_logger().error(f"Action server {client._action_name} not available")
+            return GripperActionFuture(None, False, "Action server not available")
+
+        future = client.send_goal_async(goal)
+        return GripperActionFuture(future, True, None)
+
     def _callback_joint_state(self, msg: JointState):
         """Save the latest joint state values and calculate current width.
 
@@ -319,6 +434,54 @@ class Gripper:
             self._joint_positions = np.array(msg.position[:2])
             # Calculate width from joint positions (sum of both finger positions)
             self._current_width = self._joint_positions[0] + self._joint_positions[1]
+
+    def wait_for_action(self, action_future: GripperActionFuture, timeout: float = None) -> bool:
+        """Wait for a non-blocking action to complete.
+
+        Args:
+            action_future (GripperActionFuture): The future returned by a non-blocking action.
+            timeout (float, optional): Maximum time to wait. Uses action_timeout if None.
+
+        Returns:
+            bool: True if action succeeded, False otherwise.
+
+        Raises:
+            TimeoutError: If timeout is reached before action completes.
+        """
+        timeout = timeout if timeout is not None else self.config.action_timeout
+        start_time = self.node.get_clock().now()
+
+        while not action_future.done():
+            if (self.node.get_clock().now() - start_time).nanoseconds / 1e9 > timeout:
+                raise TimeoutError(f"Timeout waiting for action to complete")
+            rclpy.spin_once(self.node, timeout_sec=0.1)
+
+        return action_future.result()
+
+    def is_action_done(self, action_future: GripperActionFuture) -> bool:
+        """Check if a non-blocking action is complete without blocking.
+
+        Args:
+            action_future (GripperActionFuture): The future returned by a non-blocking action.
+
+        Returns:
+            bool: True if action is complete, False otherwise.
+        """
+        return action_future.done()
+
+    def get_action_result(self, action_future: GripperActionFuture) -> bool:
+        """Get the result of a completed non-blocking action.
+
+        Args:
+            action_future (GripperActionFuture): The future returned by a non-blocking action.
+
+        Returns:
+            bool: True if action succeeded, False otherwise.
+
+        Raises:
+            RuntimeError: If action is not complete yet.
+        """
+        return action_future.result()
 
     def shutdown(self):
         """Shutdown the node and allow the gripper to be instantiated again."""

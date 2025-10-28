@@ -14,12 +14,17 @@ The Franka gripper client provides the following functionality:
 - `is_ready()`: Returns True if the gripper is ready to operate
 
 ### Methods
-- `close(force=None, speed=None)`: Close the gripper using the grasp action
-- `open(speed=None)`: Open the gripper to maximum width using the move action
-- `reset()`: Reset/home the gripper using the homing action
-- `set_target(target_width, speed=None)`: Set a specific target width using the move action
+- `close(force=None, speed=None, block=True)`: Close the gripper using the grasp action
+- `open(speed=None, block=True)`: Open the gripper to maximum width using the move action
+- `reset(block=True)`: Reset/home the gripper using the homing action
+- `set_target(target_width, speed=None, block=True)`: Set a specific target width using the move action
 - `wait_until_ready(timeout=10.0)`: Wait until the gripper is ready
 - `is_open(threshold=0.01)`: Check if the gripper is open
+
+### Non-blocking Operation Helpers
+- `wait_for_action(future, timeout=None)`: Wait for a non-blocking action to complete
+- `is_action_done(future)`: Check if a non-blocking action is complete
+- `get_action_result(future)`: Get the result of a completed non-blocking action
 
 ## Usage
 
