@@ -13,27 +13,38 @@ robot.wait_until_ready()
 
 # %%
 print(robot.end_effector_pose)
-print(robot.joint_values)
 print(robot.end_effector_wrench)  # added to print initial wrench
 
+<<<<<<< HEAD:experiments/probing/simple_move.py
 robot.controller_switcher_client.switch_controller("osc_pd_controller")
 robot.osc_pd_controller_parameters_client.load_param_config(
     file_path=CONFIG_DIR / "controllers" / "osc_pd" / "default.yaml"
+=======
+robot.controller_switcher_client.switch_controller("joint_space_controller")
+robot.joint_space_controller_parameters_client.load_param_config(
+    file_path=CONFIG_DIR / "controllers" / "joint_space_controller.yaml"
+>>>>>>> origin/tactile_probing:experiments/benchmarks/simple_move.py
 )
 
 
 print("Moving to start position...")
+<<<<<<< HEAD:experiments/probing/simple_move.py
 start_position = np.array([0.615, -0.0714, 0.331 + 0.05])  # 0.331
 start_position = np.array([0.550, -0.0714, 0.35])  # button location
 
 # inc = np.array([-0.05,-0.05,0])
 # start_position = start_position + inc
+=======
+start_position = np.array([0.50, -0.10, 0.40])
+>>>>>>> origin/tactile_probing:experiments/benchmarks/simple_move.py
 robot.move_to(position=start_position, speed=0.05)
 time.sleep(1.0)
+
 target_pose = robot.end_effector_pose.copy()
 target_pose.orientation = R.from_euler("xyz", [-180, 0, 0], degrees=True)  # roll, pitch, yaw
 robot.set_target(pose=target_pose)
 time.sleep(1.0)
+
 """
 for step in np.arange(0,50,5):
     target_pose.orientation = R.from_euler("xyz", [-180, 0, 0], degrees=True)  # roll, pitch, yaw

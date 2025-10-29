@@ -2,6 +2,7 @@ import time
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.spatial.transform import Rotation as R
+from sympy import rf
 from arm_client import robot
 from arm_client.robot import Robot
 from arm_client import CONFIG_DIR
@@ -93,18 +94,17 @@ def main():
     )
 
     # Parameters
-    z_surface = 0.35  # (m)
-    top_right_position = np.array([0.615, -0.0714, z_surface])  # top right dimple
-    home_position = np.array([0.560, -0.0714, z_surface])  # button location
+    z_surface = 0.15  # (m)
+    home_position = np.array([0.60, -0.060, z_surface])  # button location
     approach_speed = 0.050  # (m/s)
     settle_sec = 0.25  # wait time (s)
 
-    depth = 0.0500  # plunge depth (m)
+    depth = 0.0575  # plunge depth (m)
     plunge_time = 1.0  # plunge duration (s)
     plunge_rest = 1.0  # rest time at depth (s)
     traj_freq = 200.0  # Hz
 
-    trig_depth = 0.0200  # trigger depth (m)
+    trig_depth = 0.0250  # trigger depth (m)
     trig_plunge_time = 0.5  # trigger plunge duration (s)
 
     base_ori = R.from_euler("xyz", [-180, 0, 0], degrees=True)  # base orientation ([roll, pitch, yaw], degrees)
@@ -112,16 +112,18 @@ def main():
     # Probe locations: [x, y, z_surface], load from numpy files
     PROJECT_ROOT = Path(__file__).resolve().parent  # or Path.cwd()
     base_loc = PROJECT_ROOT / "grids"
-    _grid = np.load(f"{base_loc}/train_grid.npy")
+    rf_grid = np.load(f"{base_loc}/test_grid_rf.npy") # (N, 2) array in world/robot frame
+    sf_grid = np.load(f"{base_loc}/test_grid_sf.npy") # (N, 2) array in sensor frame
 
     # Offset all (x,y) values
-    probe_locations = np.hstack([_grid, z_surface * np.ones((len(_grid), 1))])
-    probe_locations[:, 0] = -probe_locations[:, 0] - 2.5 / 100 + top_right_position[0]  # x offset
-    probe_locations[:, 1] = -probe_locations[:, 1] - 2.5 / 100 + top_right_position[1]  # y offset
+    rf_probe_locations = np.hstack([rf_grid, z_surface * np.ones((len(rf_grid), 1))])
+    sf_probe_locations = np.hstack([sf_grid, z_surface * np.ones((len(sf_grid), 1))])
 
     # Initialize results
     exp_dict = {
         "ts": [],
+        "sf_positions": [],
+        "rf_positions": [],
         "target_poses": [],
         "ee_poses": [],
         "ee_forces": [],
@@ -133,9 +135,11 @@ def main():
     time.sleep(settle_sec)
 
     # Iterate over probe locations
-    for i, loc in enumerate(probe_locations):
-        x, y, z_surface = loc
-        print(f"\n=== Probe {i + 1}/{len(probe_locations)} at [{x:.3f}, {y:.3f}, {z_surface:.3f}] ===")
+    for i, loc in enumerate(zip(rf_probe_locations, sf_probe_locations)):
+        (x, y, z_surface), (x_sf, y_sf, z_surface_sf) = loc
+        exp_dict["rf_positions"].append([x, y, z_surface])
+        exp_dict["sf_positions"].append([x_sf, y_sf, z_surface_sf])
+        print(f"\n=== Probe {i + 1}/{len(sf_probe_locations)} at [{x_sf:.3f}, {y_sf:.3f}, {z_surface_sf:.3f}] ===")
 
         # Maintain orientation at surface
         start_pose = robot.end_effector_pose.copy()
@@ -152,6 +156,7 @@ def main():
             traj_freq=traj_freq,
             fixed_ori=base_ori,
         )  # do not record data here
+        t_ref = time.perf_counter() # reference time for this probe location
 
         # Approach XY at home Z (safe height), then go to surface Z
         approach_xy = np.array([x, y, home_position[2]], dtype=float)
@@ -168,6 +173,7 @@ def main():
         time.sleep(settle_sec)
 
         # Plunge: quarter-sine to final depth (velocity = 0 at end)
+        t_plunge = time.perf_counter()
         ts, target_poses, ee_poses, ee_forces = plunge(
             robot,
             start_xyz=surface_xyz,
@@ -176,7 +182,7 @@ def main():
             traj_freq=traj_freq,
             fixed_ori=base_ori,
         )
-        exp_dict["ts"].append(ts)
+        exp_dict["ts"].append(ts + (t_plunge - t_ref))  # time referenced to button press (ts referenced to plunge start)
         exp_dict["target_poses"].append(target_poses)
         exp_dict["ee_poses"].append(ee_poses)
         exp_dict["ee_forces"].append(ee_forces)
@@ -204,9 +210,17 @@ def main():
     results_dir = PROJECT_ROOT / "results"
     results_dir.mkdir(parents=True, exist_ok=True)
     # Save dict using pickle
-    with open(results_dir / "64_GRID_TRAIN.pkl", "wb") as f:
+    full_dir = results_dir / "64_GRID_TEST.pkl"
+    # Make sure file does not already exist / else save
+    if full_dir.exists():
+        # Ask user to confirm overwrite
+        response = input(f"File already exists: {full_dir}. Overwrite? (y/n) ")
+        if response.lower() != "y":
+            print("Aborting save.")
+            return
+    with open(full_dir, "wb") as f:
         pickle.dump(exp_dict, f)
-
+        print(f"Results saved to: {full_dir}")
 
 if __name__ == "__main__":
     main()
