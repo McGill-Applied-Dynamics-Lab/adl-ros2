@@ -172,5 +172,5 @@
     ],
     //--- Docker
     "containers.composeCommand": "docker compose",
-    "cmake.sourceDirectory": "/home/ros/ros2_ws/src/adg-ros2/src/robot_arm/robot_arm_testing",
+    "cmake.sourceDirectory": "/home/ros/ros2_ws/src/adl-ros2/src/arm_interfaces",
 }

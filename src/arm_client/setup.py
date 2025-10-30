@@ -24,13 +24,13 @@ setup(
             # 'delta_move = arm_client.scripts.04_delta_move:main',
         ],
     },
-    scripts=[
-        'scripts/00_home.py',
-        'scripts/01_switch_controller.py',
-        'scripts/02_move_to.py',
-        'scripts/03_figure_eight.py',
-        'scripts/04_delta_move.py',   # <--- your new script
-        'scripts/example.py',
-        'scripts/i3_teleop_setup.py',
-    ],
+    # scripts=[
+    #     'scripts/00_home.py',
+    #     'scripts/01_switch_controller.py',
+    #     'scripts/02_move_to.py',
+    #     'scripts/03_figure_eight.py',
+    #     'scripts/04_delta_move.py',   # <--- your new script
+    #     'scripts/example.py',
+    #     'scripts/i3_teleop_setup.py',
+    # ],
 )

@@ -45,7 +45,23 @@
     },
     "containerEnv": {
         "ROS_AUTOMATIC_DISCOVERY_RANGE": "LOCALHOST",
-        "ROS_DOMAIN_ID": "01"
+        "XDG_RUNTIME_DIR": "/tmp",
+        "ROS_DOMAIN_ID": "01",
+        "WAYLAND_DISPLAY": "vscode-wayland-da9f32aa-00db-4560-b70a-d04a19bb5ba8.sock"
+  },
+        "mounts": [
+            "source=${localEnv:XDG_RUNTIME_DIR}/vscode-wayland-da9f32aa-00db-4560-b70a-d04a19bb5ba8.sock,target=/tmp/vscode-wayland-da9f32aa-00db-4560-b70a-d04a19bb5ba8.sock,type=bind"
+            ],
+        "ELECTRON_OZONE_PLATFORM_HINT": "x11",
+        "GDK_BACKEND": "x11",
+        "QT_QPA_PLATFORM": "xcb"
+    },
+    "remoteEnv": {
+        "WAYLAND_DISPLAY": "",
+        "ELECTRON_OZONE_PLATFORM_HINT": "x11",
+        "GDK_BACKEND": "x11",
+        "QT_QPA_PLATFORM": "xcb",
+        "XDG_RUNTIME_DIR": "/tmp"
     },
     "mounts": [
         "source=${localWorkspaceFolder},target=/home/ros/ros2_ws/src/adl-ros2,type=bind,consistency=cached",
