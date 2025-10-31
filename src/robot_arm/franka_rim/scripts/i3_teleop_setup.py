@@ -27,13 +27,14 @@ robot.osc_pd_controller_parameters_client.load_param_config(
 # robot.joint_space_controller_parameters_client.load_param_config(
 #     file_path=CONFIG_DIR / "controllers" / "joint_space" / "default.yaml"
 # )
-# --- Move To ---
-target_rot = R.from_euler("xyz", [-180, 0, 0], degrees=True)  # base orientation ([roll, pitch, yaw], degrees)
-target_position = np.array([0.35, 0.0, 0.1])  # target position
 
-target_pose = Pose(position=target_position, orientation=target_rot)
+# # --- Move To ---
+# target_rot = R.from_euler("xyz", [-180, 0, 0], degrees=True)  # base orientation ([roll, pitch, yaw], degrees)
+# target_position = np.array([0.35, 0.0, 0.1])  # target position
 
-robot.move_to(pose=target_pose)
+# target_pose = Pose(position=target_position, orientation=target_rot)
+
+# robot.move_to(pose=target_pose)
 
 # --- Cleanup
 robot.shutdown()

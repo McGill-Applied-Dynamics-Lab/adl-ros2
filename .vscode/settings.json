@@ -172,5 +172,17 @@
     ],
     //--- Docker
     "containers.composeCommand": "docker compose",
-    "cmake.sourceDirectory": "/home/ros/ros2_ws/src/adg-ros2/src/robot_arm/robot_arm_testing",
+    "cmake.sourceDirectory": "/home/ros/ros2_ws/src/adl-ros2/src/robot_arm/robot_arm_testing",
+    // Path mapping to redirect build directory files to source directory
+    // "python.debugging.pathMappings": [
+    //     {
+    //         "localRoot": "${workspaceFolder}/src",
+    //         "remoteRoot": "/home/ros/ros2_ws/build"
+    //     }
+    // ],
+    // Alternative: Configure file exclusions to hide build directory duplicates
+    "files.exclude": {
+        "**/build/**/*.py": true,
+        "**/install/**/*.py": true
+    }
 }

@@ -10,6 +10,16 @@
             "request": "launch",
             "program": "${file}",
             "console": "integratedTerminal",
+            "pathMappings": [
+                {
+                    "localRoot": "${workspaceFolder}",
+                    "remoteRoot": "/home/ros/ros2_ws/build"
+                },
+                {
+                    "localRoot": "${workspaceFolder}",
+                    "remoteRoot": "/home/ros/ros2_ws/install"
+                }
+            ]
             // "console": "externalTerminal",
             // "sudo": true
         },
@@ -91,6 +101,16 @@
                 "interface_damping:=50.0",
             ],
             "console": "integratedTerminal",
+            "pathMappings": [
+                {
+                    "localRoot": "${workspaceFolder}",
+                    "remoteRoot": "/home/ros/ros2_ws/build"
+                },
+                {
+                    "localRoot": "${workspaceFolder}",
+                    "remoteRoot": "/home/ros/ros2_ws/install"
+                }
+            ]
         },
         // {
         //     "name": "Launch: i3_teleop.launch.py",
@@ -166,6 +186,7 @@
             "console": "integratedTerminal",
             "env": {
                 "DEBUG_NODE": "", // franka_rim_node, franka_model_node, delay_rim_node
+                "PYDEVD_RESOLVE_SYMLINKS": "1",
             }
         },
         {
