@@ -72,6 +72,7 @@ setup(
             "franka_model_node = franka_rim.franka_model_node:main",
             "franka_rim_node = franka_rim.franka_rim_node:main",
             "delay_rim_node = franka_rim.delay_rim_node:main",
+            "rim_stepper_node = franka_rim.rim_stepper_node:main",
             "simple_mass_system_node = franka_rim.simple_mass_system_node:main",
             "rim_vis_node = franka_rim.visualization_node:main",
             "i3_sim_node = franka_rim.i3_sim_node:main",

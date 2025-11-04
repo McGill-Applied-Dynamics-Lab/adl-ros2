@@ -54,6 +54,34 @@ delay_rim_node:
       timing: true
       delay_rim: true
 
+rim_stepper_node:
+  ros__parameters:
+    rim_axis: "z"
+    update_freq: 1000.0 # 1000.0
+    # topics
+    rim_topic: "/fr3_rim"
+    output_pose_topic: "/rim/pose"
+    output_twist_topic: "/rim/twist"
+    # logs
+    log:
+      enabled: true
+      period: 1.0
+      timing: true
+      delay_rim: true
+
+i3_teleop:
+  ros__parameters:
+    i3_pose_topic_name: /i3/pose
+    i3_twist_topic_name: /i3/twist
+    i3_wrench_topic_name: /i3/wrench
+    target_pose_topic_name: /fr3/target_pose
+    target_twist_topic_name: /fr3/target_twist
+    interface_force_topic_name: /fr3/interface_force
+    frequency: 100.0
+    force_scale: 0.05
+    position_scale: 1.0
+    pos_radius: 0.060
+    active_axis: "z"
 
 # --- Inverse3 Node ---
 # Real
