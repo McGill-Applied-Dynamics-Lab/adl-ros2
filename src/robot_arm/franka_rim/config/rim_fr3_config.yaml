@@ -54,21 +54,6 @@ delay_rim_node:
       timing: true
       delay_rim: true
 
-rim_stepper_node:
-  ros__parameters:
-    rim_axis: "z"
-    update_freq: 1000.0 # 1000.0
-    # topics
-    rim_topic: "/fr3_rim"
-    output_pose_topic: "/rim/pose"
-    output_twist_topic: "/rim/twist"
-    # logs
-    log:
-      enabled: true
-      period: 1.0
-      timing: true
-      delay_rim: true
-
 i3_teleop:
   ros__parameters:
     i3_pose_topic_name: /i3/pose
@@ -89,7 +74,7 @@ inverse3_node:
   ros__parameters:
     frequency: 1000.0
     scale: 1.0  # scale between i3 position and published position 
-    disable_forces: true
+    disable_forces: false
 
 # Sim
 i3_sim_node:

@@ -467,12 +467,18 @@ class DelayRIM:
         """Compute the interface force based on the current reduced model state"""
         rim.phi_position = rim.position - haptic_position
         rim.phi_velocity = rim.velocity - haptic_velocity
+
+        K = rim.stiffness
+        D = rim.damping
+
         hl = rim.hl
 
-        rim.interface_force = rim.stiffness * rim.phi_position + (hl * rim.stiffness + rim.damping) * rim.phi_velocity
+        # rim.interface_force = rim.stiffness * rim.phi_position + (hl * rim.stiffness + rim.damping) * rim.phi_velocity
         # rim.interface_force = -rim.damping * rim.phi_velocity
 
         # rim.interface_force = self._node._ctrl_force
+
+        rim.interface_force = K * rim.phi_position + D * rim.phi_velocity
 
     def _catchup_delay_rim(
         self, rim: ReducedModelState, rim_delay_seconds: float, haptic_states: List[HapticState]

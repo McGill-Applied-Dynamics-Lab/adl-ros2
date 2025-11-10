@@ -10,16 +10,16 @@
             "request": "launch",
             "program": "${file}",
             "console": "integratedTerminal",
-            "pathMappings": [
-                {
-                    "localRoot": "${workspaceFolder}",
-                    "remoteRoot": "/home/ros/ros2_ws/build"
-                },
-                {
-                    "localRoot": "${workspaceFolder}",
-                    "remoteRoot": "/home/ros/ros2_ws/install"
-                }
-            ]
+            // "pathMappings": [
+            //     {
+            //         "localRoot": "${workspaceFolder}",
+            //         "remoteRoot": "/home/ros/ros2_ws/build"
+            //     },
+            //     {
+            //         "localRoot": "${workspaceFolder}",
+            //         "remoteRoot": "/home/ros/ros2_ws/install"
+            //     }
+            // ]
             // "console": "externalTerminal",
             // "sudo": true
         },

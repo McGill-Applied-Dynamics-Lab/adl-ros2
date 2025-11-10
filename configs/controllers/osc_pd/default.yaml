@@ -1,20 +1,31 @@
 # controller: OSC PD Controller
 # Default parameters for the OSC PD controller
-gains.k_pos_x: 600.0
-gains.k_pos_y: 600.0
+gains.k_pos_x: 800.0
+gains.k_pos_y: 800.0
 gains.k_pos_z: 1000.0
 
 gains.d_pos_x: -1.0
 gains.d_pos_y: -1.0
 gains.d_pos_z: -1.0
 
-gains.k_rot_x: 50.0
-gains.k_rot_y: 50.0
-gains.k_rot_z: 50.0
+gains.k_rot_x: 0.0
+gains.k_rot_y: 75.0
+gains.k_rot_z: 0.0
   
 gains.d_rot_x: -1.0
 gains.d_rot_y: -1.0
 gains.d_rot_z: -1.0  
+
+# -- EMA Filters (0.0: Max filtering, 1.0: No filtering) --
+# filter.joint_targets: 1.0  # No filtering
+filter.target_pose: 0.8  # No filtering
+filter.target_twist: 1.0  # No filtering
+
+filter.joint_velocity: 0.3  # No filtering
+filter.output_torque: 0.7  # No filtering
+
+
+
 
 nullspace.damping: 0.0
 
