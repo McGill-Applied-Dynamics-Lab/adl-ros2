@@ -22,6 +22,19 @@
       "type": "shell",
       "command": "colcon test && colcon test-result"
     },
+    {
+      "label": "i3 teleop setup",
+      "type": "shell",
+      "command": [
+        "cd ${workspaceFolder} &&",
+        "python src/robot_arm/franka_rim/scripts/i3_teleop_setup.py",
+      ],
+      "problemMatcher": [],
+      "group": {
+        "kind": "test",
+        "isDefault": false
+      }
+    },
     // {
     //   "type": "npm",
     //   "script": "watch",

@@ -38,5 +38,5 @@ log.enabled: true
 log.timing: true
 log.robot_state: false  #  ee position, velocity, joint states, ...
 log.targets: false  # target pose
-log.virtual_coupling: true  # interface variables and forces
-log.controller_parameters: true  # Gains
+log.virtual_coupling: false  # interface variables and forces
+log.controller_parameters: false  # Gains

@@ -24,6 +24,39 @@ NODE_NAME = "franka_model_node"
 PIN_FRAME = pin.WORLD  # pin.WORLD or pin.LOCAL_WORLD_ALIGNED
 
 
+class LowPassFilter:
+    """Simple first-order low-pass filter: y[k] = alpha * x[k] + (1 - alpha) * y[k-1]"""
+
+    def __init__(self, alpha: float, initial_value=None):
+        """
+        Args:
+            alpha: Filter coefficient (0 < alpha <= 1). Higher = less filtering.
+                   alpha = 1 means no filtering.
+            initial_value: Initial filtered value (can be scalar or array)
+        """
+        self.alpha = np.clip(alpha, 0.0, 1.0)
+        self.value = initial_value
+        self.initialized = initial_value is not None
+
+    def update(self, measurement):
+        """Update filter with new measurement."""
+        if not self.initialized:
+            self.value = np.array(measurement)
+            self.initialized = True
+        else:
+            self.value = self.alpha * np.array(measurement) + (1 - self.alpha) * self.value
+        return self.value
+
+    def reset(self, value=None):
+        """Reset filter state."""
+        self.value = value
+        self.initialized = value is not None
+
+    def get(self):
+        """Get current filtered value."""
+        return self.value if self.initialized else None
+
+
 class FrankaModelNode(Node):
     def __init__(self):
         super().__init__(NODE_NAME)
@@ -44,6 +77,18 @@ class FrankaModelNode(Node):
 
         self.declare_parameter("rim_axis", "x")  # Axis for RIM ('x', 'y', 'z')
 
+        # Filter parameters (alpha = dt / (dt + tau_filter))
+        # For 1000Hz (dt=0.001s), alpha=0.1 gives tau ≈ 9ms
+        # alpha=1.0 means no filtering
+        self.declare_parameter("filter.enabled", True)
+        self.declare_parameter("filter.alpha_q", 0.3)  # Joint positions
+        self.declare_parameter("filter.alpha_q_dot", 0.2)  # Joint velocities (more filtering)
+        self.declare_parameter("filter.alpha_q_ddot", 0.1)  # Joint accelerations (most filtering)
+        self.declare_parameter("filter.alpha_tau", 0.2)  # Joint torques
+        self.declare_parameter("filter.alpha_f_ext", 0.15)  # External forces
+        self.declare_parameter("filter.alpha_x_ee", 0.3)  # End-effector position
+        self.declare_parameter("filter.alpha_v_ee", 0.2)  # End-effector velocity
+
         input_topic = self.get_parameter("input_topic").get_parameter_value().string_value
         output_topic = self.get_parameter("output_topic").get_parameter_value().string_value
 
@@ -62,6 +107,16 @@ class FrankaModelNode(Node):
         self._log_enabled = self.get_parameter("log.enabled").get_parameter_value().bool_value
         self._log_timing = self.get_parameter("log.timing").get_parameter_value().bool_value
         self._log_period = self.get_parameter("log.period").get_parameter_value().double_value
+
+        # Filter parameters
+        self._filter_enabled = self.get_parameter("filter.enabled").get_parameter_value().bool_value
+        self._alpha_q = self.get_parameter("filter.alpha_q").get_parameter_value().double_value
+        self._alpha_q_dot = self.get_parameter("filter.alpha_q_dot").get_parameter_value().double_value
+        self._alpha_q_ddot = self.get_parameter("filter.alpha_q_ddot").get_parameter_value().double_value
+        self._alpha_tau = self.get_parameter("filter.alpha_tau").get_parameter_value().double_value
+        self._alpha_f_ext = self.get_parameter("filter.alpha_f_ext").get_parameter_value().double_value
+        self._alpha_x_ee = self.get_parameter("filter.alpha_x_ee").get_parameter_value().double_value
+        self._alpha_v_ee = self.get_parameter("filter.alpha_v_ee").get_parameter_value().double_value
 
         # Add detailed timing diagnostics
         self._timer_create_time = time.time()
@@ -143,11 +198,11 @@ class FrankaModelNode(Node):
 
         # Interaction surface normal in base frame
         if self._rim_axis_str == "x":
-            self.p_i = np.array([-1, 0, 0])
+            self.p_i = np.array([1, 0, 0])
         elif self._rim_axis_str == "y":
-            self.p_i = np.array([0, -1, 0])
+            self.p_i = np.array([0, 1, 0])
         elif self._rim_axis_str == "z":
-            self.p_i = np.array([0, 0, -1])
+            self.p_i = np.array([0, 0, 1])
         else:
             raise ValueError(f"Invalid rim_axis: {self._rim_axis_str}, must be 'x', 'y', or 'z'")
 
@@ -158,6 +213,18 @@ class FrankaModelNode(Node):
             raise ValueError(
                 f"Invalid external_force_estimation_mode: {self._external_force_estimation_mode}, must be 'measured' or 'estimated'"
             )
+
+        # Initialize filters (will be properly initialized on first measurement)
+        self._filter_q = LowPassFilter(self._alpha_q)
+        self._filter_q_dot = LowPassFilter(self._alpha_q_dot)
+        self._filter_q_ddot = LowPassFilter(self._alpha_q_ddot)
+        self._filter_tau = LowPassFilter(self._alpha_tau)
+        self._filter_f_ext_robot = LowPassFilter(self._alpha_f_ext)
+        self._filter_x_ee = LowPassFilter(self._alpha_x_ee)
+        self._filter_v_ee = LowPassFilter(self._alpha_v_ee)
+
+        # Add parameter callback for runtime updates
+        self.add_on_set_parameters_callback(self._parameters_callback)
 
         # Timer for computing and publishing model matrices
         # Automatically use wall timer when sim_time is enabled to bypass /clock quantization
@@ -175,6 +242,19 @@ class FrankaModelNode(Node):
             self._model_update_timer = self.create_timer(self._update_period, self._update_model)
 
         # Log timing and threading information
+        filter_status = "ENABLED" if self._filter_enabled else "DISABLED"
+        filter_info = ""
+        if self._filter_enabled:
+            filter_info = (
+                f"  - alpha_q: {self._alpha_q}\n"
+                f"  - alpha_q_dot: {self._alpha_q_dot}\n"
+                f"  - alpha_q_ddot: {self._alpha_q_ddot}\n"
+                f"  - alpha_tau: {self._alpha_tau}\n"
+                f"  - alpha_f_ext: {self._alpha_f_ext}\n"
+                f"  - alpha_x_ee: {self._alpha_x_ee}\n"
+                f"  - alpha_v_ee: {self._alpha_v_ee}\n"
+            )
+
         self.get_logger().info(
             f"Parameters\n"
             f"- rim_axis: {self._rim_axis_str}, \n"
@@ -184,6 +264,8 @@ class FrankaModelNode(Node):
             f"- input_topic: {input_topic}, \n"
             f"- output_topic: {output_topic}, \n"
             f"- vel_thres: {self._vel_thres}, \n"
+            f"- filter: {filter_status}\n"
+            f"{filter_info}"
             f"- log.enabled: {self._log_enabled}, \n"
             f"- log.period: {self._log_period}, \n"
             f"- log.timing: {self._log_timing}, \n"
@@ -387,6 +469,59 @@ class FrankaModelNode(Node):
             if "get_params_client" in locals():
                 self.destroy_client(get_params_client)
 
+    def _parameters_callback(self, params):
+        """Callback for runtime parameter changes."""
+        from rclpy.parameter import Parameter
+
+        successful = True
+        for param in params:
+            param_name = param.name
+
+            # Handle filter enable/disable
+            if param_name == "filter.enabled":
+                self._filter_enabled = param.value
+                self.get_logger().info(f"Filter {'enabled' if param.value else 'disabled'}")
+
+            # Handle alpha parameters - update both the stored value and the filter object
+            elif param_name == "filter.alpha_q":
+                self._alpha_q = param.value
+                self._filter_q.alpha = np.clip(param.value, 0.0, 1.0)
+                self.get_logger().info(f"Updated alpha_q to {param.value}")
+
+            elif param_name == "filter.alpha_q_dot":
+                self._alpha_q_dot = param.value
+                self._filter_q_dot.alpha = np.clip(param.value, 0.0, 1.0)
+                self.get_logger().info(f"Updated alpha_q_dot to {param.value}")
+
+            elif param_name == "filter.alpha_q_ddot":
+                self._alpha_q_ddot = param.value
+                self._filter_q_ddot.alpha = np.clip(param.value, 0.0, 1.0)
+                self.get_logger().info(f"Updated alpha_q_ddot to {param.value}")
+
+            elif param_name == "filter.alpha_tau":
+                self._alpha_tau = param.value
+                self._filter_tau.alpha = np.clip(param.value, 0.0, 1.0)
+                self.get_logger().info(f"Updated alpha_tau to {param.value}")
+
+            elif param_name == "filter.alpha_f_ext":
+                self._alpha_f_ext = param.value
+                self._filter_f_ext_robot.alpha = np.clip(param.value, 0.0, 1.0)
+                self.get_logger().info(f"Updated alpha_f_ext to {param.value}")
+
+            elif param_name == "filter.alpha_x_ee":
+                self._alpha_x_ee = param.value
+                self._filter_x_ee.alpha = np.clip(param.value, 0.0, 1.0)
+                self.get_logger().info(f"Updated alpha_x_ee to {param.value}")
+
+            elif param_name == "filter.alpha_v_ee":
+                self._alpha_v_ee = param.value
+                self._filter_v_ee.alpha = np.clip(param.value, 0.0, 1.0)
+                self.get_logger().info(f"Updated alpha_v_ee to {param.value}")
+
+        from rcl_interfaces.msg import SetParametersResult
+
+        return SetParametersResult(successful=successful)
+
     def _robot_state_callback(self, msg: FrankaRobotState):
         self.get_logger().debug("Received FrankaRobotState message")
         # Only update state, do not compute matrices here
@@ -399,24 +534,44 @@ class FrankaModelNode(Node):
         if self._last_q is None:
             self.get_logger().info("Robot state received")
 
-        self._last_q = np.array(msg.measured_joint_state.position)[: self._n]
-        self._last_q_dot = np.array(msg.measured_joint_state.velocity)[: self._n]
-        self._last_q_ddot = np.array(msg.ddq_d)[: self._n]
-
-        # Set tau from measured_joint_state.effort
-        self.tau = np.array(msg.measured_joint_state.effort)
-        self.tau_d = np.array(msg.desired_joint_state.effort)
-        self.tau_ext = np.array(msg.tau_ext_hat_filtered.effort)
+        # Extract raw measurements
+        raw_q = np.array(msg.measured_joint_state.position)[: self._n]
+        raw_q_dot = np.array(msg.measured_joint_state.velocity)[: self._n]
+        raw_q_ddot = np.array(msg.ddq_d)[: self._n]
+        raw_tau = np.array(msg.measured_joint_state.effort)
 
         # Read robot's force estimates (base frame)
         wrench = msg.o_f_ext_hat_k.wrench
-        self._f_ext_robot = np.array(
+        raw_f_ext_robot = np.array(
             [wrench.force.x, wrench.force.y, wrench.force.z, wrench.torque.x, wrench.torque.y, wrench.torque.z]
         )
 
         # End-effector position and velocity
-        self.x_ee = np.array([msg.o_t_ee.pose.position.x, msg.o_t_ee.pose.position.y, msg.o_t_ee.pose.position.z])
-        self.v_ee = np.array([msg.o_dp_ee_d.twist.linear.x, msg.o_dp_ee_d.twist.linear.y, msg.o_dp_ee_d.twist.linear.z])
+        raw_x_ee = np.array([msg.o_t_ee.pose.position.x, msg.o_t_ee.pose.position.y, msg.o_t_ee.pose.position.z])
+        raw_v_ee = np.array([msg.o_dp_ee_d.twist.linear.x, msg.o_dp_ee_d.twist.linear.y, msg.o_dp_ee_d.twist.linear.z])
+
+        # Apply filtering if enabled
+        if self._filter_enabled:
+            self._last_q = self._filter_q.update(raw_q)
+            self._last_q_dot = self._filter_q_dot.update(raw_q_dot)
+            self._last_q_ddot = self._filter_q_ddot.update(raw_q_ddot)
+            self.tau = self._filter_tau.update(raw_tau)
+            self._f_ext_robot = self._filter_f_ext_robot.update(raw_f_ext_robot)
+            self.x_ee = self._filter_x_ee.update(raw_x_ee)
+            self.v_ee = self._filter_v_ee.update(raw_v_ee)
+        else:
+            self._last_q = raw_q
+            self._last_q_dot = raw_q_dot
+            self._last_q_ddot = raw_q_ddot
+            self.tau = raw_tau
+            self._f_ext_robot = raw_f_ext_robot
+            self.x_ee = raw_x_ee
+            self.v_ee = raw_v_ee
+
+        # These don't need filtering (command signals)
+        self.tau_d = np.array(msg.desired_joint_state.effort)
+        self.tau_ext = np.array(msg.tau_ext_hat_filtered.effort)
+
         # print(f"Vee: {self.v_ee[0]:>10.3f} | {self.v_ee[1]:>10.3f} | {self.v_ee[2]:>10.3f}")
         # print(f"Xee: {self.x_ee[0]:>10.3f} | {self.x_ee[1]:>10.3f} | {self.x_ee[2]:>10.3f}")
 
@@ -691,12 +846,13 @@ class FrankaModelNode(Node):
         msg.x_ee = self.x_ee.tolist()  # End-effector position
         msg.v_ee = self.v_ee.tolist()  # End-effector velocity
 
-        # --- Dyanmics
+        # --- Dynamics
         # Matrices
         msg.mass_matrix = self.M.flatten().tolist()
         msg.coriolis = self.c.tolist()
         msg.ai = self.Ai.flatten().tolist()
         msg.ai_dot_q_dot = self.Ai_dot_q_dot.flatten().tolist()
+        msg.jacobian = self.J_ee.flatten().tolist()
 
         msg.tau = self.tau.tolist()
         msg.tau_d = self.tau_d.tolist()

@@ -454,7 +454,7 @@ class DelayRIM:
         # Monitor timing
         if self._loop_count % 1000 == 0 and self._loop_count > 0:
             dt = actual_period * 1000
-            self._node.get_logger().info(f"[DelayRIM Algo] Period: {dt:.4f}ms")
+            # self._node.get_logger().info(f"[DelayRIM Algo] Period: {dt:.4f}ms")
 
         self._last_update_time = loop_time
         self._loop_count += 1

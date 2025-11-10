@@ -13,6 +13,9 @@ float64 interface_damping
 # Effective mass matrix (flattened row-major, m x m)
 float64[] effective_mass
 
+# Effective non-linear terms (m x 1)
+float64[] z_i
+
 # Effective force vector (m x 1)
 float64[] effective_force
 

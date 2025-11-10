@@ -4,6 +4,9 @@
 std_msgs/Header header
 
 # --- Kinematics
+# Dimensions (for reshaping)
+uint32 n  # Number of joints
+
 # System coordinates (joint positions)
 float64[] q
 
@@ -15,6 +18,16 @@ float64[] x_ee
 
 # Interface velocity
 float64[] v_ee
+
+# --- Jacobians
+# Jacobian (flattened row-major)
+float64[] jacobian
+
+# Interaction Jacobian (flattened row-major)
+float64[] ai
+
+# Ai_dot * q_dot (vector)
+float64[] ai_dot_q_dot
 
 # --- Dynamics
 # Mass matrix (flattened row-major)
@@ -32,12 +45,7 @@ float64[] tau_d
 # External joint torques
 float64[] tau_ext
 
-# Interaction Jacobian (flattened row-major)
-float64[] ai
-
-# Ai_dot * q_dot (vector)
-float64[] ai_dot_q_dot
-
+# --- Forces
 # External forces, at end-effector
 float64[] f_ext_ee 
 
@@ -47,5 +55,3 @@ float64[] f_d_ee
 # Applied forces
 float64[] f_a
 
-# Dimensions (for reshaping)
-uint32 n

@@ -53,6 +53,7 @@ class FrankaRIMNode(Node):
         self.q_dot = None
         self.x_ee = None
         self.v_ee = None
+        self.J_ee = None  # End-effector Jacobian
         self.Ai = None
         self.Ai_dot_q_dot = None
 
@@ -145,6 +146,7 @@ class FrankaRIMNode(Node):
         # --- Dynamics
         self.M = np.array(msg.mass_matrix).reshape((n, n))
         self.c = np.array(msg.coriolis)
+        self.J_ee = np.array(msg.jacobian).reshape((6, n))
         self.Ai = np.array(msg.ai).reshape((1, n))
         self.Ai_dot_q_dot = np.array(msg.ai_dot_q_dot)
 
@@ -209,15 +211,18 @@ class FrankaRIMNode(Node):
             M_eff = np.linalg.inv(self.Ai @ M_inv @ self.Ai.T)
             # M_eff = np.array([[10.0]])
 
+            # --- zi
+            z_i = M_eff @ [self.Ai @ M_inv @ (self.c) - self.Ai_dot_q_dot]
+
             # --- effective force
             # Compute effective force: f_eff = M_eff * (Ai * inv(M) * (tau - c) + Ai_dot * q_dot)
             # effective_force = M_eff @ [self.Ai @ M_inv @ (self.f_a - self.c) + self.Ai_dot_q_dot]
             # effective_force = np.array([[0.0]])
-            nle_rim_force = M_eff @ [self.Ai @ M_inv @ (-self.c) + self.Ai_dot_q_dot]
-            ext_force = -self.f_ext_ee[self._rim_axis_idx].reshape((1, 1))
-            # driving_force = self.f_d_ee[self._rim_axis_idx].reshape((1, 1))
 
-            effective_force = nle_rim_force + ext_force
+            # ext_force = -self.f_ext_ee[self._rim_axis_idx].reshape((1, 1))
+            # driving_force = self.f_d_ee[self._rim_axis_idx].reshape((1, 1))
+            # effective_force = M_eff @ [self.Ai @ M_inv] @ self.J_ee.T @ self.f_ext_ee  #
+            effective_force = -self.f_ext_ee[self._rim_axis_idx].reshape((1, 1))
 
             # if self.cartesian_force is not None:
             #     effective_force = -self.cartesian_force[0].reshape((1, 1))
@@ -231,6 +236,7 @@ class FrankaRIMNode(Node):
             # Fill message fields
             self._rim_msg.effective_mass = M_eff.flatten().tolist()
             self._rim_msg.effective_force = effective_force.flatten().tolist()
+            self._rim_msg.z_i = z_i.flatten().tolist()
             self._rim_msg.rim_position = rim_position.flatten().tolist()
             self._rim_msg.rim_velocity = rim_velocity.flatten().tolist()
 
