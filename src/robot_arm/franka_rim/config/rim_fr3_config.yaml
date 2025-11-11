@@ -35,8 +35,8 @@ franka_rim_node:
   ros__parameters:
     rim_axis: "z"
     update_freq: 10.0
-    interface_stiffness: 500.0
-    interface_damping: 40.0
+    interface_stiffness: 1000.0
+    interface_damping: 63.2456
     log:
       enabled: false
       period: 5.0
@@ -86,17 +86,18 @@ inverse3_node:
   ros__parameters:
     frequency: 1000.0
     scale: 1.0  # scale between i3 position and published position 
-    disable_forces: true
+    disable_forces: false
 
 # Sim
 i3_sim_node:
   ros__parameters:
     publish_frequency: 1000.0
-    sine_frequency: 0.2
+    sine_frequency: 0.1
     amplitude: 0.1
-    n_cycles: 3
-    use_start_srv: false
+    n_cycles: 2
+    use_start_srv: true
     start_time: 2.0
+    axis: "z"
 
 # --- Viz ---
 # Visualization Node Parameters

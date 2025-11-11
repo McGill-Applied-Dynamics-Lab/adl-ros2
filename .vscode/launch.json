@@ -204,7 +204,7 @@
             ],
             "console": "integratedTerminal",
             "env": {
-                "DEBUG_NODE": "", // franka_rim_node, franka_model_node, delay_rim_node
+                "DEBUG_NODE": "delay_rim_node", // franka_rim_node, franka_model_node, delay_rim_node
                 "PYDEVD_RESOLVE_SYMLINKS": "1",
             }
         },
