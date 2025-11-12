@@ -1,5 +1,5 @@
 # FrankaRIM.msg
-# Message for publishing Franka Reduced Impedance Model parameters
+# Message for publishing Franka Reduced Interface Model parameters
 
 std_msgs/Header header
 
@@ -13,8 +13,12 @@ float64 interface_damping
 # Effective mass matrix (flattened row-major, m x m)
 float64[] effective_mass
 
+# Effective non-linear terms (m x 1)
+float64[] z_i
+
 # Effective force vector (m x 1)
 float64[] effective_force
+
 
 # RIM state (interface position and velocity)
 float64[] rim_position

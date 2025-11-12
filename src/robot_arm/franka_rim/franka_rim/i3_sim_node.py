@@ -23,6 +23,7 @@ class I3SimNode(Node):
         self.declare_parameter("sine_frequency", 0.2)  # Hz (2 cycles)
         self.declare_parameter("amplitude", 0.2)  # meters
         self.declare_parameter("n_cycles", 2)  # cycles to complete
+        self.declare_parameter("axis", "x")  # Axis for sine wave motion: "x", "y", or "z"
         self.declare_parameter("center_x", 0.0)  # center position 0.30676
         self.declare_parameter("center_y", 0.0)
         self.declare_parameter("center_z", 0.0)  # 0.4844
@@ -34,12 +35,21 @@ class I3SimNode(Node):
         self.sine_freq = self.get_parameter("sine_frequency").get_parameter_value().double_value
         self.amplitude = self.get_parameter("amplitude").get_parameter_value().double_value
         self.n_cycles = self.get_parameter("n_cycles").get_parameter_value().integer_value
+        self.axis = self.get_parameter("axis").get_parameter_value().string_value.lower()
         self.center_x = self.get_parameter("center_x").get_parameter_value().double_value
         self.center_y = self.get_parameter("center_y").get_parameter_value().double_value
         self.center_z = self.get_parameter("center_z").get_parameter_value().double_value
         self.start_time = self.get_parameter("start_time").get_parameter_value().double_value
 
         self.use_start_srv = self.get_parameter("use_start_srv").get_parameter_value().bool_value
+
+        # Validate axis parameter
+        if self.axis not in ["x", "y", "z"]:
+            self.get_logger().error(f"Invalid axis parameter: '{self.axis}'. Must be 'x', 'y', or 'z'. Defaulting to 'x'.")
+            self.axis = "x"
+        
+        # Map axis to index
+        self.axis_index = {"x": 0, "y": 1, "z": 2}[self.axis]
 
         # State variables
         self.duration = self.n_cycles / self.sine_freq  # Total duration for n cycles
@@ -70,7 +80,7 @@ class I3SimNode(Node):
         self.get_logger().info(
             f"HapticSimulator started: freq={self.publish_freq}Hz, "
             f"sine_freq={self.sine_freq}Hz, amplitude={self.amplitude}m, "
-            f"duration={self.duration}s, center=({self.center_x}, {self.center_y}, {self.center_z}), "
+            f"duration={self.duration}s, axis={self.axis}, center=({self.center_x}, {self.center_y}, {self.center_z}), "
             f"wait_to_start={self.use_start_srv}"
         )
 
@@ -141,26 +151,28 @@ class I3SimNode(Node):
                 elapsed_time = self.duration
 
         if self.simulation_active:
-            # Generate sine wave motion in x-direction
+            # Generate sine wave motion in specified axis
             omega = 2.0 * math.pi * self.sine_freq
 
-            # Position: sine wave
-            position[0] = self.center_x + self.amplitude * math.sin(omega * elapsed_time)
-            position[1] = self.center_y  # Fixed
-            position[2] = self.center_z  # Fixed
+            # Set center positions
+            position[0] = self.center_x
+            position[1] = self.center_y
+            position[2] = self.center_z
 
-            # Velocity: derivative of sine wave
-            velocity[0] = self.amplitude * omega * math.cos(omega * elapsed_time)
-            velocity[1] = 0.0  # Fixed
-            velocity[2] = 0.0  # Fixed
+            # Add sine wave to specified axis
+            position[self.axis_index] += self.amplitude * math.sin(omega * elapsed_time)
+
+            # Set velocity for specified axis (derivative of sine wave)
+            velocity[self.axis_index] = self.amplitude * omega * math.cos(omega * elapsed_time)
         else:
             # Simulation complete
             if not self.use_start_srv:
                 # Hold final position
                 omega = 2.0 * math.pi * self.sine_freq
-                position[0] = self.center_x + self.amplitude * math.sin(omega * self.duration)
+                position[0] = self.center_x
                 position[1] = self.center_y
                 position[2] = self.center_z
+                position[self.axis_index] += self.amplitude * math.sin(omega * self.duration)
                 velocity = np.zeros(3)
 
         self._publish_i3_state(position, velocity)

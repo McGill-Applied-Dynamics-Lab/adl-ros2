@@ -10,6 +10,16 @@
             "request": "launch",
             "program": "${file}",
             "console": "integratedTerminal",
+            // "pathMappings": [
+            //     {
+            //         "localRoot": "${workspaceFolder}",
+            //         "remoteRoot": "/home/ros/ros2_ws/build"
+            //     },
+            //     {
+            //         "localRoot": "${workspaceFolder}",
+            //         "remoteRoot": "/home/ros/ros2_ws/install"
+            //     }
+            // ]
             // "console": "externalTerminal",
             // "sudo": true
         },
@@ -91,6 +101,16 @@
                 "interface_damping:=50.0",
             ],
             "console": "integratedTerminal",
+            "pathMappings": [
+                {
+                    "localRoot": "${workspaceFolder}",
+                    "remoteRoot": "/home/ros/ros2_ws/build"
+                },
+                {
+                    "localRoot": "${workspaceFolder}",
+                    "remoteRoot": "/home/ros/ros2_ws/install"
+                }
+            ]
         },
         // {
         //     "name": "Launch: i3_teleop.launch.py",
@@ -166,6 +186,26 @@
             "console": "integratedTerminal",
             "env": {
                 "DEBUG_NODE": "", // franka_rim_node, franka_model_node, delay_rim_node
+                "PYDEVD_RESOLVE_SYMLINKS": "1",
+            }
+        },
+        {
+            "name": "Launch: rim_stepper.launch.py",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "/opt/ros/humble/bin/ros2",
+            "args": [
+                "launch",
+                "franka_rim",
+                "rim_stepper.launch.py",
+                "config_file:=rim_fr3_config.yaml", // rim_fr3_config, rim_fr3_sim_config
+                "fake_i3:=false",
+                "save_data:=false",
+            ],
+            "console": "integratedTerminal",
+            "env": {
+                "DEBUG_NODE": "delay_rim_node", // franka_rim_node, franka_model_node, delay_rim_node
+                "PYDEVD_RESOLVE_SYMLINKS": "1",
             }
         },
         {

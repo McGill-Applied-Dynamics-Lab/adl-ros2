@@ -11,6 +11,18 @@ franka_model_node:
     output_topic: "/fr3_model"
     robot_urdf_filename: "fr3_franka_hand.urdf"
     vel_thres: 0.005
+    # Low-pass filter parameters (alpha = dt / (dt + tau_filter))
+    # alpha closer to 1.0 = less filtering (more responsive)
+    # alpha closer to 0.0 = more filtering (smoother but lagged)
+    filter:
+      enabled: true
+      alpha_q: 0.3        # Joint positions
+      alpha_q_dot: 0.2    # Joint velocities (more filtering)
+      alpha_q_ddot: 0.1   # Joint accelerations (most filtering)
+      alpha_tau: 0.2      # Joint torques
+      alpha_f_ext: 0.15   # External forces
+      alpha_x_ee: 0.3     # End-effector position
+      alpha_v_ee: 0.2     # End-effector velocity
 
 # Franka RIM Node Parameters  
 franka_rim_node:

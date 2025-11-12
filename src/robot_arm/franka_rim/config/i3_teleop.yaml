@@ -34,6 +34,22 @@ i3_teleop:
     pos_radius: 0.060
     active_axis: "z"
 
+# --- Network Delays ---
+rim_msg_delay:
+  ros__parameters:
+    input_topic: "/fr3_rim"
+    output_topic: "/fr3_rim_delayed" 
+    delay: 0
+    message_type: "arm_interfaces/msg/FrankaRIM"
+
+ee_cmd_delay:
+  ros__parameters:
+    input_topic: "/osc_pd_controller/goal_pre_delay"
+    output_topic: "/osc_pd_controller/goal"
+    delay: 0
+    message_type: "geometry_msgs/msg/PointStamped"
+
+
 # Visualization Node Parameters
 rim_vis_node:
   ros__parameters:

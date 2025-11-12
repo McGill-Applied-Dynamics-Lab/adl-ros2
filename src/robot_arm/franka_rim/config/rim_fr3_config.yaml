@@ -17,14 +17,26 @@ franka_model_node:
       enabled: false
       period: 5.0
       timing: true
+    # Low-pass filter parameters (alpha = dt / (dt + tau_filter))
+    # alpha closer to 1.0 = less filtering (more responsive)
+    # alpha closer to 0.0 = more filtering (smoother but lagged)
+    filter:
+      enabled: true
+      alpha_q: 0.3        # Joint positions
+      alpha_q_dot: 0.2    # Joint velocities (more filtering)
+      alpha_q_ddot: 0.1   # Joint accelerations (most filtering)
+      alpha_tau: 0.2      # Joint torques
+      alpha_f_ext: 0.1 # External forces
+      alpha_x_ee: 0.3     # End-effector position
+      alpha_v_ee: 0.2     # End-effector velocity
 
 # Franka RIM Node Parameters  
 franka_rim_node:
   ros__parameters:
     rim_axis: "z"
     update_freq: 10.0
-    interface_stiffness: 500.0
-    interface_damping: 40.0
+    interface_stiffness: 1000.0
+    interface_damping: 63.2456
     log:
       enabled: false
       period: 5.0
@@ -50,10 +62,23 @@ delay_rim_node:
     # logs
     log:
       enabled: true
-      period: 1.0
+      period: 5.0
       timing: true
       delay_rim: true
 
+i3_teleop:
+  ros__parameters:
+    i3_pose_topic_name: /i3/pose
+    i3_twist_topic_name: /i3/twist
+    i3_wrench_topic_name: /i3/wrench
+    target_pose_topic_name: /fr3/target_pose
+    target_twist_topic_name: /fr3/target_twist
+    interface_force_topic_name: /fr3/interface_force
+    frequency: 100.0
+    force_scale: 0.05
+    position_scale: 1.0
+    pos_radius: 0.060
+    active_axis: "z"
 
 # --- Inverse3 Node ---
 # Real
@@ -61,17 +86,18 @@ inverse3_node:
   ros__parameters:
     frequency: 1000.0
     scale: 1.0  # scale between i3 position and published position 
-    disable_forces: true
+    disable_forces: false
 
 # Sim
 i3_sim_node:
   ros__parameters:
     publish_frequency: 1000.0
-    sine_frequency: 0.2
+    sine_frequency: 0.1
     amplitude: 0.1
-    n_cycles: 3
-    use_start_srv: false
+    n_cycles: 2
+    use_start_srv: true
     start_time: 2.0
+    axis: "z"
 
 # --- Viz ---
 # Visualization Node Parameters

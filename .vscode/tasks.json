@@ -22,35 +22,46 @@
       "type": "shell",
       "command": "colcon test && colcon test-result"
     },
-    // {
-    //   "type": "npm",
-    //   "script": "watch",
-    //   "path": "python/robotic_arm_controller/.venv/lib/python3.10/site-packages/ipympl/labextension",
-    //   "group": "build",
-    //   "problemMatcher": [],
-    //   "label": "npm: watch - python/robotic_arm_controller/.venv/lib/python3.10/site-packages/ipympl/labextension",
-    //   "detail": "npm-run-all -p watch:*"
-    // },
+    {
+      "label": "fr3 - rim exp setup",
+      "type": "shell",
+      "command": [
+        "cd ${workspaceFolder} &&",
+        "python src/robot_arm/franka_rim/scripts/i3_teleop_setup.py"
+      ],
+      "problemMatcher": [],
+      "group": {
+        "kind": "test",
+        "isDefault": false
+      }
+    },
+    {
+      "label": "fr3 - home",
+      "type": "shell",
+      "command": [
+        "cd ${workspaceFolder} &&",
+        "python src/arm_client/scripts/00_home.py"
+      ],
+      "problemMatcher": [],
+      "group": {
+        "kind": "test",
+        "isDefault": false
+      }
+    },
     {
       "label": "Source ROS2 ws",
       "type": "shell",
-      "command": "source ${workspaceFolder}/install/setup.bash && sleep 1",
+      "command": "source ${workspaceFolder}/install/setup.bash && sleep 1"
     },
     {
       "label": "ROS2 Test - robot_arm_testing",
       "type": "shell",
       "command": [
-        // source
         "source ~/.zshrc && ",
-        // run colcon tests
         "colcon test",
         "--event-handlers console_direct+",
         "--packages-select robot_arm_testing",
-        // "--pytest-args \"--ros-args -p robot_ip:=${env:FR3_IP}\""],
-        // print results
-        // "&& colcon test-result --all --verbose",
-        // "&& xunit-viewer -r ${workspaceFolder}/build/robot_arm_testing/test_results -c",
-        "&& xunit-viewer -r ${workspaceFolder}/build/robot_arm_testing/test_results",
+        "&& xunit-viewer -r ${workspaceFolder}/build/robot_arm_testing/test_results"
       ],
       "group": {
         "kind": "test",
@@ -61,7 +72,7 @@
         "panel": "new"
       },
       "problemMatcher": []
-    },
+    }
   ],
   "inputs": [
     {
