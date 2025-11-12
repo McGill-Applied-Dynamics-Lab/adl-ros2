@@ -23,7 +23,7 @@ robot.osc_pd_controller_parameters_client.load_param_config(
     file_path=CONFIG_DIR / "controllers" / "osc_pd" / "default.yaml"
 )
 
-position = [0.4, 0.2, 0.3]  # x, y, z in meters
+position = [0.4, 0, 0.7]  # x, y, z in meters
 robot.move_to(position=position, speed=0.05)
 
 print("Done")
