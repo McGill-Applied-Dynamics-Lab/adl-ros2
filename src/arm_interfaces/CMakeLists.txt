@@ -8,6 +8,8 @@ endif()
 # find dependencies
 find_package(ament_cmake REQUIRED)
 find_package(geometry_msgs REQUIRED)
+find_package(std_msgs REQUIRED)
+find_package(builtin_interfaces REQUIRED)
 find_package(rosidl_default_generators REQUIRED)
 
 if(BUILD_TESTING)
@@ -28,6 +30,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/Delayed.msg"
   "msg/FrankaModel.msg"
   "msg/FrankaRIM.msg"
+  "msg/CartesianTrajectory.msg"
   # "action/Empty.action"
   # "action/GotoJoints.action"
   # "action/GotoPose.action"
@@ -45,6 +48,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   # "srv/SetGoalSource.srv"
   DEPENDENCIES 
   geometry_msgs
+  std_msgs
   builtin_interfaces
 )
 
