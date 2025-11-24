@@ -10,7 +10,7 @@ ARG WS_FOLDER=/home/ros/ros2_ws
 #! Setup User
 # Create a non-root user
 ARG USERNAME=ros
-ARG USER_UID=1000
+ARG USER_UID=1001
 ARG USER_GID=$USER_UID
 ARG DEBIAN_FRONTEND=noninteractive
 
@@ -147,8 +147,9 @@ ENV PATH=$PATH \
     XDG_RUNTIME_DIR=/run/user/"${USER_UID}"  \
     WS_FOLDER=${WS_FOLDER}
 
-
-# FROM base AS franka
+# Create runtime directory for the user
+USER root
+RUN mkdir -p /run/user/${USER_UID} && chown ${USER_UID}:${USER_GID} /run/user/${USER_UID}
 USER $USERNAME
 WORKDIR /home/ros/ros2_ws
 

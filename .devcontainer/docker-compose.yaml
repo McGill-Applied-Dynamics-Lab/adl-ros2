@@ -6,6 +6,8 @@ x-base: &base
     target: base
     args:
       ROS_DISTRO: humble
+      USER_UID: ${UID:-1001}
+      USER_GID: ${GID:-1001}
 
   # --- Settings
   network_mode: "host"
@@ -22,7 +24,7 @@ x-base: &base
     - /tmp/.X11-unix:/tmp/.X11-unix
     - $XAUTHORITY:$XAUTHORITY
     - ./limits.conf:/etc/security/limits.conf
-    - ~/.gitconfig:/etc/gitconfig:ro
+    # - ~/.gitconfig:/etc/gitconfig:ro
     - ~/.ssh:/home/ros/.ssh:ro
 
   environment:
