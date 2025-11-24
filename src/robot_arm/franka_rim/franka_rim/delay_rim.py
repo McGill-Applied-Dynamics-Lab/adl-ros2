@@ -468,9 +468,11 @@ class DelayRIM:
         self, rim: ReducedModelState, haptic_position: np.ndarray, haptic_velocity: np.ndarray
     ) -> None:
         """Compute the interface force based on the current reduced model state"""
+        # # For stepping v3
         # rim.phi_position = rim.position - haptic_position
         # rim.phi_velocity = rim.velocity - haptic_velocity
 
+        # For my stepping
         rim.phi_position = haptic_position - rim.position
         rim.phi_velocity = haptic_velocity - rim.velocity
 
@@ -578,83 +580,83 @@ class DelayRIM:
         # rim_position_p = reduced_model.rim_position + reduced_model.hl * reduced_model.rim_velocity
         # reduced_model.rim_position = rim_position_p
 
-        # #! V3
-        # # Update constraint deviation
-        # reduced_model.phi_position = reduced_model.position - haptic_pos
-        # reduced_model.phi_velocity = reduced_model.velocity - haptic_vel
-
-        # if hl is None:
-        #     hl = reduced_model.hl
-
-        # Di = reduced_model.damping
-        # Ki = reduced_model.stiffness
-
-        # # wi = reduced_model.phi_velocity
-
-        # regular_force_terms = (
-        #     reduced_model.effective_force - Ki * reduced_model.phi_position + (Di + hl * Ki) * haptic_vel
-        # )
-        # # regular_force_terms = -reduced_model.effective_force
-
-        # # regular_force_terms = self._node._ctrl_force[0].reshape(1, 1)  # TODO: DEBUG
-
-        # rim_velocity_p = (
-        #     reduced_model.mass_factor @ reduced_model.velocity
-        #     + hl * reduced_model.inverse_augmented_mass_matrix @ regular_force_terms
-        # )
-        # reduced_model.velocity = rim_velocity_p
-
-        # rim_position_p = reduced_model.position + reduced_model.hl * reduced_model.velocity
-        # reduced_model.position = rim_position_p
-
-        #! My stepping (test)
+        #! V3
         # Update constraint deviation
-        reduced_model.phi_position = haptic_pos - reduced_model.position
-        reduced_model.phi_velocity = haptic_vel - reduced_model.velocity
+        reduced_model.phi_position = reduced_model.position - haptic_pos
+        reduced_model.phi_velocity = reduced_model.velocity - haptic_vel
 
         if hl is None:
             hl = reduced_model.hl
 
-        # State variables
-        w_i = reduced_model.phi_velocity
-        w_i_plus = None  # to be computed
+        Di = reduced_model.damping
+        Ki = reduced_model.stiffness
 
-        phi_i = reduced_model.phi_position
-        phi_i_dot = reduced_model.phi_velocity
+        # wi = reduced_model.phi_velocity
 
-        phi_i_plus = None
-        phi_i_dot_plus = None
+        regular_force_terms = (
+            reduced_model.effective_force - Ki * reduced_model.phi_position + (Di + hl * Ki) * haptic_vel
+        )
+        # regular_force_terms = -reduced_model.effective_force
 
-        # Matrices
-        Id_m = np.eye(self._interface_dim)
+        # regular_force_terms = self._node._ctrl_force[0].reshape(1, 1)  # TODO: DEBUG
 
-        M_eff = reduced_model.effective_mass
-        z_i = reduced_model.z_i
-        lambda_eff = reduced_model.effective_force
+        rim_velocity_p = (
+            reduced_model.mass_factor @ reduced_model.velocity
+            + hl * reduced_model.inverse_augmented_mass_matrix @ regular_force_terms
+        )
+        reduced_model.velocity = rim_velocity_p
 
-        Kd = reduced_model.damping
-        Kp = reduced_model.stiffness
+        rim_position_p = reduced_model.position + reduced_model.hl * reduced_model.velocity
+        reduced_model.position = rim_position_p
 
-        # Augmented mass matrix
-        M_hat = M_eff + (-(hl**2) * Kp + hl * Kd) * Id_m
-        M_hat_inv = np.linalg.inv(M_hat)
+        # #! My stepping (test)
+        # # Update constraint deviation
+        # reduced_model.phi_position = haptic_pos - reduced_model.position
+        # reduced_model.phi_velocity = haptic_vel - reduced_model.velocity
 
-        p = M_eff @ w_i  # generalized momentum at beginning of step
+        # if hl is None:
+        #     hl = reduced_model.hl
 
-        # Computation
-        # d = phi_i / (Id_m * (1 - Kd / (hl * Kp))) / hl  #
-        # C = 1 / (Id_m * (Kd * hl - Kp * hl**2))  # Constraint regularization term
-        # C_inv = np.linalg.inv(C)
+        # # State variables
+        # w_i = reduced_model.phi_velocity
+        # w_i_plus = None  # to be computed
 
-        w_i_plus = M_hat_inv @ (Kp * hl * phi_i * Id_m + p + hl * lambda_eff - hl * z_i)
-        p_plus = reduced_model.position + hl * w_i_plus
+        # phi_i = reduced_model.phi_position
+        # phi_i_dot = reduced_model.phi_velocity
 
-        # Update
-        # reduced_model.phi_position = phi_i
-        # reduced_model.phi_velocity = phi_i_dot
+        # phi_i_plus = None
+        # phi_i_dot_plus = None
 
-        reduced_model.velocity = w_i_plus
-        reduced_model.position = p_plus
+        # # Matrices
+        # Id_m = np.eye(self._interface_dim)
+
+        # M_eff = reduced_model.effective_mass
+        # z_i = reduced_model.z_i
+        # lambda_eff = reduced_model.effective_force
+
+        # Kd = reduced_model.damping
+        # Kp = reduced_model.stiffness
+
+        # # Augmented mass matrix
+        # M_hat = M_eff + (-(hl**2) * Kp + hl * Kd) * Id_m
+        # M_hat_inv = np.linalg.inv(M_hat)
+
+        # p = M_eff @ w_i  # generalized momentum at beginning of step
+
+        # # Computation
+        # # d = phi_i / (Id_m * (1 - Kd / (hl * Kp))) / hl  #
+        # # C = 1 / (Id_m * (Kd * hl - Kp * hl**2))  # Constraint regularization term
+        # # C_inv = np.linalg.inv(C)
+
+        # w_i_plus = M_hat_inv @ (Kp * hl * phi_i * Id_m + p + hl * lambda_eff - hl * z_i)
+        # p_plus = reduced_model.position + hl * w_i_plus
+
+        # # Update
+        # # reduced_model.phi_position = phi_i
+        # # reduced_model.phi_velocity = phi_i_dot
+
+        # reduced_model.velocity = w_i_plus
+        # reduced_model.position = p_plus
 
     def _catchup_zoh(self, rim: ReducedModelState, haptic_states: List[HapticState]) -> np.ndarray:
         """

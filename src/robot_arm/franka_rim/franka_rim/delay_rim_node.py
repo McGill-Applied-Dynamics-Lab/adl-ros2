@@ -63,6 +63,10 @@ class DelayRIMNode(Node):
 
         self.declare_parameter("rim_axis", "x")  # Axis for RIM ('x', 'y', 'z')
 
+        # EMA filter parameters (alpha = 0 means no filtering, alpha = 1 means no memory)
+        self.declare_parameter("filter.haptic_pose", 0.3)  # EMA smoothing factor for position (0-1)
+        self.declare_parameter("filter.haptic_twist", 0.3)  # EMA smoothing factor for twist (0-1)
+
         self.declare_parameter("log.enabled", False)
         self.declare_parameter("log.period", 1.0)
         self.declare_parameter("log.timing", False)
@@ -76,6 +80,10 @@ class DelayRIMNode(Node):
         self._max_workers = self.get_parameter("max_workers").get_parameter_value().integer_value
         self._i3_position_scale = self.get_parameter("i3_position_scale").get_parameter_value().double_value
         self._rim_axis_str = self.get_parameter("rim_axis").get_parameter_value().string_value.lower()
+
+        # EMA filter parameters
+        self._filter_haptic_position_alpha = self.get_parameter("filter.haptic_pose").get_parameter_value().double_value
+        self._filter_haptic_twist_alpha = self.get_parameter("filter.haptic_twist").get_parameter_value().double_value
 
         # Topic names
         self._rim_topic_name = self.get_parameter("rim_topic").get_parameter_value().string_value
@@ -110,6 +118,10 @@ class DelayRIMNode(Node):
 
         self._i3_ws_position = np.zeros(3)  # Current I3 position in robot workspace (3,)
         self._i3_ws_velocity = np.zeros(3)  # Current I3 velocity in robot workspace (3,)
+
+        # EMA filter state variables
+        self._i3_ws_position_filtered = None  # Filtered I3 position (initialized on first message)
+        self._i3_ws_velocity_filtered = None  # Filtered I3 velocity (initialized on first message)
 
         self._i3_rim_position = np.zeros(self._interface_dim)  # Current I3 position in RIM frame (m,)
         self._i3_rim_velocity = np.zeros(self._interface_dim)  # Current I3 velocity in RIM frame (m,)
@@ -206,6 +218,8 @@ class DelayRIMNode(Node):
             f"- Active axis: '{self._rim_axis_str}', \n"
             f"- I3 position scale: {self._i3_position_scale}, \n"
             f"- I3 force scale: {self._force_scaling}, \n"
+            f"- EMA alpha position: {self._filter_haptic_position_alpha}, \n"
+            f"- EMA alpha twist: {self._filter_haptic_twist_alpha}, \n"
             f"- use sim time: {use_sim_time}, \n"
             f"--- Topics --- \n"
             f"- RIM Topic name: {self._rim_topic_name}, \n"
@@ -294,7 +308,20 @@ class DelayRIMNode(Node):
         )
 
         # Apply workspace offset, scaling and transform to robot frame
-        self._i3_ws_position = self._T_i3_rim @ i3_position + self._workspace_centre
+        i3_ws_position_raw = self._T_i3_rim @ i3_position + self._workspace_centre
+
+        # Apply EMA filter
+        if self._i3_ws_position_filtered is None:
+            # Initialize filter with first measurement
+            self._i3_ws_position_filtered = i3_ws_position_raw
+        else:
+            # Apply EMA: y[n] = alpha * x[n] + (1 - alpha) * y[n-1]
+            self._i3_ws_position_filtered = (
+                self._filter_haptic_position_alpha * i3_ws_position_raw
+                + (1 - self._filter_haptic_position_alpha) * self._i3_ws_position_filtered
+            )
+
+        self._i3_ws_position = self._i3_ws_position_filtered
         self._i3_rim_position = self._T_rim_robot @ self._i3_ws_position
 
     def _inverse3_twist_callback(self, msg: TwistStamped):
@@ -308,7 +335,21 @@ class DelayRIMNode(Node):
                 msg.twist.linear.z,
             ]
         )
-        self._i3_ws_velocity = self._T_i3_rim @ i3_velocity
+
+        i3_ws_velocity_raw = self._T_i3_rim @ i3_velocity
+
+        # Apply EMA filter
+        if self._i3_ws_velocity_filtered is None:
+            # Initialize filter with first measurement
+            self._i3_ws_velocity_filtered = i3_ws_velocity_raw
+        else:
+            # Apply EMA: y[n] = alpha * x[n] + (1 - alpha) * y[n-1]
+            self._i3_ws_velocity_filtered = (
+                self._filter_haptic_twist_alpha * i3_ws_velocity_raw
+                + (1 - self._filter_haptic_twist_alpha) * self._i3_ws_velocity_filtered
+            )
+
+        self._i3_ws_velocity = self._i3_ws_velocity_filtered
         self._i3_rim_velocity = self._T_rim_robot @ self._i3_ws_velocity
 
     def _interface_force_callback(self, msg: WrenchStamped):

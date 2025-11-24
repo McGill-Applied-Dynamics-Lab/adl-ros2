@@ -222,7 +222,8 @@ class FrankaRIMNode(Node):
             # ext_force = -self.f_ext_ee[self._rim_axis_idx].reshape((1, 1))
             # driving_force = self.f_d_ee[self._rim_axis_idx].reshape((1, 1))
             # effective_force = M_eff @ [self.Ai @ M_inv] @ self.J_ee.T @ self.f_ext_ee  #
-            effective_force = -self.f_ext_ee[self._rim_axis_idx].reshape((1, 1))
+            # effective_force = -self.f_ext_ee[self._rim_axis_idx].reshape((1, 1))
+            effective_force = np.array([[0.0]]).reshape((1, 1))
 
             # if self.cartesian_force is not None:
             #     effective_force = -self.cartesian_force[0].reshape((1, 1))
@@ -232,6 +233,12 @@ class FrankaRIMNode(Node):
             # RIM state
             rim_position = self.x_ee[self._rim_axis_idx]
             rim_velocity = self.v_ee[self._rim_axis_idx]
+
+            # --- Contacts
+            if rim_position <= 0.05:
+                M_eff += 1_000_000
+
+            # M_eff += 100
 
             # Fill message fields
             self._rim_msg.effective_mass = M_eff.flatten().tolist()

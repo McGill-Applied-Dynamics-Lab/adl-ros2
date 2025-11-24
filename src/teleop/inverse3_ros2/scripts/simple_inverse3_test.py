@@ -110,17 +110,21 @@ def test_force_feedback(uri: str, duration: float = 5.0):
     print("You should feel a gentle force pulling/pushing in the X direction")
     print()
 
+    duration = 10.0
+
     start_time = time.time()
-    force_amplitude = 1  # N
-    frequency = 0.5  # Hz
+    force_amplitude = 20  # N
+    frequency = 0.1  # Hz
+    axis = 2  # 0: X (forward/back), 1: Y (left/right), 2: Z (up/down)
 
     try:
         while (time.time() - start_time) < duration:
             current_time = time.time() - start_time
 
             # Apply sinusoidal force in X direction
-            force_y = force_amplitude * np.sin(2 * np.pi * frequency * current_time)
-            force = np.array([0.0, force_y, 0.0])
+            force_axis = force_amplitude * np.sin(2 * np.pi * frequency * current_time)
+            force = np.array([0.0, 0.0, 0.0])
+            force[axis] = force_axis
             inverse3.apply_force(force)
 
             # Get current state
@@ -200,9 +204,11 @@ def main():
 
     tests_to_run = []
     if args.test == "all":
-        tests_to_run = ["connection", "state", "force", "legacy"]
+        tests_to_run = ["connection", "state", "force"]  # , "legacy"]
     else:
         tests_to_run = [args.test]
+
+    tests_to_run = ["connection", "force"]
 
     results = {}
 
@@ -213,7 +219,7 @@ def main():
             elif test_name == "state":
                 results[test_name] = test_state_reading(args.uri, args.duration)
             elif test_name == "force":
-                results[test_name] = test_force_feedback(args.uri, args.duration)
+                results[test_name] = test_force_feedback(args.uri, 10)
             elif test_name == "legacy":
                 results[test_name] = test_legacy_interface(args.uri)
         except Exception as e:
