@@ -88,9 +88,9 @@ def main():
     #     file_path=CONFIG_DIR / "controllers" / "osc_pd" /"probe_controller.yaml"
     # )
 
-    robot.controller_switcher_client.switch_controller("joint_space_controller")
-    robot.joint_space_controller_parameters_client.load_param_config(
-        file_path=CONFIG_DIR / "controllers" / "joint_space" / "default.yaml"
+    robot.controller_switcher_client.switch_controller("osc_pd_controller")
+    robot.osc_pd_controller_parameters_client.load_param_config(
+        file_path=CONFIG_DIR / "controllers" / "osc_pd" / "probe_controller.yaml"
     )
 
     # Parameters
@@ -107,7 +107,7 @@ def main():
     trig_depth = 0.0250  # trigger depth (m)
     trig_plunge_time = 0.5  # trigger plunge duration (s)
 
-    base_ori = R.from_euler("xyz", [-180, 0, 0], degrees=True)  # base orientation ([roll, pitch, yaw], degrees)
+    base_ori = R.from_euler("xyz", [90, 0, 0], degrees=True)  # base orientation ([roll, pitch, yaw], degrees)
 
     # Probe locations: [x, y, z_surface], load from numpy files
     PROJECT_ROOT = Path(__file__).resolve().parent  # or Path.cwd()

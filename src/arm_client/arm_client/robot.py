@@ -588,7 +588,7 @@ class Robot:
         if self._tau_target is None:
             self._tau_target = self._tau_current.copy()
 
-    def move_to(self, position: List | NDArray | None = None, pose: Pose | None = None, speed: float = 0.05):
+    def move_to(self, position: List | NDArray | None = None, pose: Pose | None = None, speed: float = 0.05, time_to_move: float | None = None):
         """Move the end-effector to a given pose by interpolating linearly between the poses.
 
         Args:
@@ -603,7 +603,9 @@ class Robot:
         desired_pose = self._parse_pose_or_position(position, pose)
         start_pose = self._current_pose
         distance = np.linalg.norm(desired_pose.position - start_pose.position)
-        time_to_move = distance / speed
+        
+        if time_to_move is None:
+            time_to_move = distance / speed
 
         N = int(time_to_move * self.config.publish_frequency)
 
