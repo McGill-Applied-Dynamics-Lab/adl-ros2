@@ -13,7 +13,6 @@ robot.wait_until_ready()
 
 # %%
 print(robot.end_effector_pose)
-print(robot.joint_values)
 print(robot.end_effector_wrench)  # added to print initial wrench
 
 robot.controller_switcher_client.switch_controller("osc_pd_controller")
@@ -30,10 +29,12 @@ start_position = np.array([0.550, -0.0714, 0.35])  # button location
 # start_position = start_position + inc
 robot.move_to(position=start_position, speed=0.05)
 time.sleep(1.0)
+
 target_pose = robot.end_effector_pose.copy()
 target_pose.orientation = R.from_euler("xyz", [-180, 0, 0], degrees=True)  # roll, pitch, yaw
 robot.set_target(pose=target_pose)
 time.sleep(1.0)
+
 """
 for step in np.arange(0,50,5):
     target_pose.orientation = R.from_euler("xyz", [-180, 0, 0], degrees=True)  # roll, pitch, yaw
