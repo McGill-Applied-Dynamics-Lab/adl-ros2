@@ -112,6 +112,7 @@ def main():
     traj_freq = 200.0  # Hz
 
     base_ori = R.from_euler("xyz", [-270, 0, 0], degrees=True)  # base orientation ([roll, pitch, yaw], degrees)
+    base_pose = Pose(position=home_position, orientation=base_ori)
 
     # Probe locations: [x, y, z_surface], load from numpy files
     base_loc = PROJECT_ROOT / "results" / "grids"
@@ -130,66 +131,63 @@ def main():
 
     # Move to home position
     print("Going to home...")
-
-    target_pose = Pose(position=home_position, orientation=base_ori)
-
-    robot.move_to(pose=target_pose, time_to_move=retraction_sec)
+    robot.move_to(pose=base_pose, time_to_move=retraction_sec)
     time.sleep(delay_sec)
 
-    # # Iterate over probe locations
-    # for i, loc in enumerate(probe_locations):
-    #     (x, y, z_surface) = loc
-    #     exp_dict["probe_positions"].append([x, y, z_surface])
+    # Iterate over probe locations
+    for i, loc in enumerate(probe_locations):
+        (x, y, z_surface) = loc
+        exp_dict["probe_positions"].append([x, y, z_surface])
 
-    #     print(f"\n=== Probe {i + 1}/{len(probe_locations)} at [{x - landmarks['x']:.3f}, {y - landmarks['y']:.3f}, {z_surface - landmarks['z']:.3f}] ===")
+        print(f"\n=== Probe {i + 1}/{len(probe_locations)} at [{x - landmarks['x']:.3f}, {y - landmarks['y']:.3f}, {z_surface - landmarks['z']:.3f}] ===")
 
-    #     # Move to probe location
-    #     surface_xyz = np.array([x, y, z_surface], dtype=float)
-    #     robot.move_to(position=surface_xyz, pose=base_ori, time_to_move=retraction_sec)
-    #     time.sleep(delay_sec)
+        # Move to probe location
+        surface_xyz = np.array([x, y, z_surface], dtype=float)
+        robot.move_to(pose=base_pose, time_to_move=retraction_sec)
+        time.sleep(delay_sec)
 
-    #     # Plunge: quarter-sine to final depth (velocity = 0 at end)
-    #     ts, target_poses, ee_poses, ee_forces = plunge(
-    #         robot,
-    #         start_xyz=surface_xyz,
-    #         depth=depth,
-    #         plunge_time=plunge_time,
-    #         traj_freq=traj_freq,
-    #         fixed_ori=base_ori,
-    #     )
-    #     exp_dict["ts"].append(ts)  # time referenced to button press (ts referenced to plunge start)
-    #     exp_dict["target_poses"].append(target_poses)
-    #     exp_dict["ee_poses"].append(ee_poses)
-    #     exp_dict["ee_forces"].append(ee_forces)
+        # Plunge: quarter-sine to final depth (velocity = 0 at end)
+        ts, target_poses, ee_poses, ee_forces = plunge(
+            robot,
+            start_xyz=surface_xyz,
+            depth=depth,
+            plunge_time=plunge_time,
+            traj_freq=traj_freq,
+            fixed_ori=base_ori,
+        )
+        exp_dict["ts"].append(ts)  # time referenced to button press (ts referenced to plunge start)
+        exp_dict["target_poses"].append(target_poses)
+        exp_dict["ee_poses"].append(ee_poses)
+        exp_dict["ee_forces"].append(ee_forces)
 
-    #     # Move back home (retract in Z, then move in XY)
-    #     retract_xyz = surface_xyz.copy()
-    #     robot.move_to(position=retract_xyz, time_to_move=retraction_sec)
-    #     time.sleep(delay_sec)
+        # Move back home (retract in Z, then move in XY)
+        retract_xyz = surface_xyz.copy()
+        robot.move_to(position=retract_xyz, time_to_move=retraction_sec)
+        time.sleep(delay_sec)
 
-    # # Return home at the end
-    # print("\nReturning home...")
-    # robot.move_to(position=home_position, time_to_move=retraction_sec)
-    # time.sleep(delay_sec)
+    # Return home at the end
+    print("\nReturning home...")
+    robot.move_to(pose=base_pose, time_to_move=retraction_sec)
+    time.sleep(delay_sec)
 
     robot.shutdown()
-    # print("Done.")
+    print("Done.")
 
-    # # Save results
-    # results_dir = PROJECT_ROOT / "results"
-    # results_dir.mkdir(parents=True, exist_ok=True)
-    # # Save dict using pickle
-    # full_dir = results_dir / "TEMP.pkl"
-    # # Make sure file does not already exist / else save
-    # if full_dir.exists():
-    #     # Ask user to confirm overwrite
-    #     response = input(f"File already exists: {full_dir}. Overwrite? (y/n) ")
-    #     if response.lower() != "y":
-    #         print("Aborting save.")
-    #         return
-    # with open(full_dir, "wb") as f:
-    #     pickle.dump(exp_dict, f)
-    #     print(f"Results saved to: {full_dir}")
+    # Save results
+    results_dir = PROJECT_ROOT / "results"
+    results_dir.mkdir(parents=True, exist_ok=True)
+    # Save dict using pickle
+    full_dir = results_dir / "TEMP.pkl"
+    # Make sure file does not already exist / else save
+    if full_dir.exists():
+        # Ask user to confirm overwrite
+        response = input(f"File already exists: {full_dir}. Overwrite? (y/n) ")
+        if response.lower() != "y":
+            print("Aborting save.")
+            return
+    with open(full_dir, "wb") as f:
+        pickle.dump(exp_dict, f)
+        print(f"Results saved to: {full_dir}")
 
 if __name__ == "__main__":
     main()
