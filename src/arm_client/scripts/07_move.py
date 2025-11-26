@@ -22,6 +22,7 @@ Example:
 import argparse
 import csv
 import time
+from arm_client import CONFIG_DIR
 from typing import List, Tuple, Optional
 from collections import deque
 
@@ -38,13 +39,12 @@ CONTROLLER_NAME = "osc_pd_controller"
 
 DEFAULT_SPEED = 0.05
 POS_TOL = 1e-3
-SETTLE_CHECKS = 5
 CHECK_HZ = 100.0
 TIMEOUT_S = 5.0
 
 # Coordinate adjustments (meters)
-# REF_POINT = np.array([0.4865, -0.0207, -0.0225], dtype=float)  # (386.5mm, -20.7mm, -22.5mm)
-REF_POINT = np.array([0.4865, -0.0207, 0.4225], dtype=float)  # (386.5mm, -20.7mm, -22.5mm)
+REF_POINT = np.array([0.4865, -0.0207, 0.225], dtype=float)  # (386.5mm, -20.7mm, -22.5mm)
+# REF_POINT = np.array([0.4865, -0.0207, 0.4225], dtype=float)  # (386.5mm, -20.7mm, -22.5mm)
 
 
 # ---------------------- Helpers ----------------------
@@ -52,7 +52,6 @@ def wait_until_reached(
     robot: Robot,
     target_xyz: np.ndarray,
     pos_tol: float = POS_TOL,
-    settle_checks: int = SETTLE_CHECKS,
     check_hz: float = CHECK_HZ,
     timeout_s: float = TIMEOUT_S,
 ) -> bool:
@@ -60,20 +59,17 @@ def wait_until_reached(
     target_xyz = np.asarray(target_xyz, dtype=float)
     rate = robot.node.create_rate(check_hz)
 
-    consec = 0
     elapsed = 0.0
     print(f"--- Monitoring convergence to {target_xyz} ---")
     while rclpy.ok():
         cur = robot.end_effector_pose.position
         err = np.linalg.norm(cur - target_xyz)
         print(f"[track] distance to target: {err:.5f} m", end="\r")
+
+        # Immediately return once within tolerance
         if err <= pos_tol:
-            consec += 1
-            if consec >= settle_checks:
-                print(f"\n[reach] final distance = {err:.5f} m (tol {pos_tol:.5f})")
-                return True
-        else:
-            consec = 0
+            print(f"\n[reach] final distance = {err:.5f} m (tol {pos_tol:.5f})")
+            return True
 
         rate.sleep()
         elapsed += 1.0 / check_hz
@@ -82,6 +78,7 @@ def wait_until_reached(
             return False
     return False
 
+
 def _to_bool01(val) -> int:
     if val is None:
         return 0
@@ -89,6 +86,7 @@ def _to_bool01(val) -> int:
         return int(val != 0)
     s = str(val).strip().lower()
     return 1 if s in ("1", "true", "t", "yes", "closed", "close") else 0
+
 
 def read_actions_with_transform(
     csv_path: str,
@@ -127,6 +125,7 @@ def read_actions_with_transform(
     actions.sort(key=lambda r: r[0])
     return actions
 
+
 def _command_gripper(gripper: Gripper, closed: int, open_width: float, closed_width: float) -> bool:
     """
     Send a blocking width command using the available API.
@@ -153,6 +152,7 @@ def _command_gripper(gripper: Gripper, closed: int, open_width: float, closed_wi
     except Exception as e:
         print(f"[gripper] command error: {e}")
         return False
+
 
 # ---------------------- Main ----------------------
 def main():
@@ -208,6 +208,9 @@ def main():
         robot.wait_until_ready(timeout=2.0)
         gripper.wait_until_ready()
         robot.controller_switcher_client.switch_controller(args.controller)
+        robot.osc_pd_controller_parameters_client.load_param_config(
+            file_path=CONFIG_DIR / "controllers" / "osc_pd" / "default.yaml"
+        )
 
         # Fixed orientation: Euler XYZ = (-180°, 0°, 0°)
         fixed_rot = Rotation.from_euler('xyz', [-270.0, 0.0, 0.0], degrees=True)
@@ -240,7 +243,7 @@ def main():
                 if args.final_wait:
                     _ = wait_until_reached(
                         robot, cur_xyz, pos_tol=POS_TOL,
-                        settle_checks=SETTLE_CHECKS, check_hz=CHECK_HZ, timeout_s=TIMEOUT_S
+                        check_hz=CHECK_HZ, timeout_s=TIMEOUT_S
                     )
                 print("Sequence complete.")
                 break
@@ -286,6 +289,7 @@ def main():
 
     finally:
         robot.shutdown()
+
 
 if __name__ == "__main__":
     main()
