@@ -9,6 +9,7 @@ inverse3_node:
     frequency: 1000.0
     scale: 1.0  # scale between i3 position and published position 
     disable_forces: false
+    force_cap: 5.0  # N
 
 # I3 Sim Node Parameters
 i3_sim_node:
@@ -29,7 +30,7 @@ i3_teleop:
     target_twist_topic_name: /fr3/target_twist
     interface_force_topic_name: /fr3/interface_force
     frequency: 100.0
-    force_scale: 0.05
+    force_scale: 0.1
     position_scale: 1.0
     pos_radius: 0.060
     active_axis: "z"

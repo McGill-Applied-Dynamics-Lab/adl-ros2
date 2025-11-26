@@ -47,10 +47,11 @@ delay_rim_node:
   ros__parameters:
     rim_axis: "z"
     update_freq: 500.0 # 1000.0
-    delay_compensation_method: "zoh"
+    delay_compensation_method: "delay_rim"  # 'delay_rim', 'zoh', or 'zoh_phi'
     force_scaling: 0.1
     max_workers: 8
     i3_position_scale: 1.5
+    
     # topics
     rim_topic: "/fr3_rim_delayed"
     target_twist_topic_name: "/fr3/target_twist"
@@ -59,6 +60,12 @@ delay_rim_node:
     i3_pose_topic_name: "/i3/pose"
     i3_twist_topic_name: "/i3/twist"
     i3_wrench_topic_name: "/i3/wrench"
+    
+    # filters
+    filter:
+      haptic_pose: 0.3
+      haptic_twist: 0.3
+    
     # logs
     log:
       enabled: true
@@ -75,7 +82,7 @@ i3_teleop:
     target_twist_topic_name: /fr3/target_twist
     interface_force_topic_name: /fr3/interface_force
     frequency: 100.0
-    force_scale: 0.05
+    force_scale: 0.01
     position_scale: 1.0
     pos_radius: 0.060
     active_axis: "z"
@@ -86,7 +93,8 @@ inverse3_node:
   ros__parameters:
     frequency: 1000.0
     scale: 1.0  # scale between i3 position and published position 
-    disable_forces: false
+    disable_forces: true
+    force_cap: 1.0  # N
 
 # Sim
 i3_sim_node:
@@ -111,7 +119,7 @@ rim_msg_delay:
   ros__parameters:
     input_topic: "/fr3_rim"
     output_topic: "/fr3_rim_delayed" 
-    delay: 0
+    delay: 0 # ms
     message_type: "arm_interfaces/msg/FrankaRIM"
 
 ee_cmd_delay:

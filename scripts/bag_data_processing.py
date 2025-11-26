@@ -170,6 +170,113 @@ class BagDataProcessor:
 
         return pd.DataFrame(joint_data)
 
+    def extract_franka_rim(self, topic: str) -> pd.DataFrame:
+        """Extract data from FrankaRIM messages."""
+        if topic not in self.data:
+            return pd.DataFrame()
+
+        timestamps = self.data[topic]["timestamps"]
+        messages = self.data[topic]["messages"]
+
+        rim_data = []
+        for ts, msg in zip(timestamps, messages):
+            row = {
+                "timestamp": ts,
+                "m": msg.m,
+                "interface_stiffness": msg.interface_stiffness,
+                "interface_damping": msg.interface_damping,
+                "frame_id": msg.header.frame_id if hasattr(msg, "header") else "",
+            }
+
+            # Add flattened arrays with indices
+            for i, val in enumerate(msg.effective_mass):
+                row[f"effective_mass_{i}"] = val
+
+            for i, val in enumerate(msg.z_i):
+                row[f"z_i_{i}"] = val
+
+            for i, val in enumerate(msg.effective_force):
+                row[f"effective_force_{i}"] = val
+
+            for i, val in enumerate(msg.rim_position):
+                row[f"rim_position_{i}"] = val
+
+            for i, val in enumerate(msg.rim_velocity):
+                row[f"rim_velocity_{i}"] = val
+
+            rim_data.append(row)
+
+        return pd.DataFrame(rim_data)
+
+    def extract_franka_model(self, topic: str) -> pd.DataFrame:
+        """Extract data from FrankaModel messages."""
+        if topic not in self.data:
+            return pd.DataFrame()
+
+        timestamps = self.data[topic]["timestamps"]
+        messages = self.data[topic]["messages"]
+
+        model_data = []
+        for ts, msg in zip(timestamps, messages):
+            row = {
+                "timestamp": ts,
+                "n": msg.n,
+                "frame_id": msg.header.frame_id if hasattr(msg, "header") else "",
+            }
+
+            # Kinematics
+            for i, val in enumerate(msg.q):
+                row[f"q_{i}"] = val
+
+            for i, val in enumerate(msg.q_dot):
+                row[f"q_dot_{i}"] = val
+
+            for i, val in enumerate(msg.x_ee):
+                row[f"x_ee_{i}"] = val
+
+            for i, val in enumerate(msg.v_ee):
+                row[f"v_ee_{i}"] = val
+
+            # Jacobians
+            for i, val in enumerate(msg.jacobian):
+                row[f"jacobian_{i}"] = val
+
+            for i, val in enumerate(msg.ai):
+                row[f"ai_{i}"] = val
+
+            for i, val in enumerate(msg.ai_dot_q_dot):
+                row[f"ai_dot_q_dot_{i}"] = val
+
+            # Dynamics
+            for i, val in enumerate(msg.mass_matrix):
+                row[f"mass_matrix_{i}"] = val
+
+            for i, val in enumerate(msg.coriolis):
+                row[f"coriolis_{i}"] = val
+
+            for i, val in enumerate(msg.tau):
+                row[f"tau_{i}"] = val
+
+            for i, val in enumerate(msg.tau_d):
+                row[f"tau_d_{i}"] = val
+
+            for i, val in enumerate(msg.tau_ext):
+                row[f"tau_ext_{i}"] = val
+
+            # Forces
+            for i, val in enumerate(msg.f_ext_ee):
+                row[f"f_ext_ee_{i}"] = val
+
+            for i, val in enumerate(msg.f_d_ee):
+                row[f"f_d_ee_{i}"] = val
+
+            for i, val in enumerate(msg.f_a):
+                row[f"f_a_{i}"] = val
+
+            model_data.append(row)
+
+        return pd.DataFrame(model_data)
+
     def process_topics(self, topics_config: Dict[str, str]) -> Dict[str, pd.DataFrame]:
         """Process all topics and return dictionary of DataFrames."""
         dataframes = {}
@@ -191,6 +298,10 @@ class BagDataProcessor:
                 df = self.extract_twist_stamped(ros_topic)
             elif "JointState" in msg_type:
                 df = self.extract_joint_state(ros_topic)
+            elif "FrankaRIM" in msg_type:
+                df = self.extract_franka_rim(ros_topic)
+            elif "FrankaModel" in msg_type:
+                df = self.extract_franka_model(ros_topic)
             else:
                 print(f"Warning: Unsupported message type {msg_type} for topic {ros_topic}")
                 continue
