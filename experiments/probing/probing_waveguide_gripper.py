@@ -1,13 +1,15 @@
+import re
 import time
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.spatial.transform import Rotation as R
 from sympy import rf
 from arm_client import robot
-from arm_client.robot import Robot
+from arm_client.robot import Robot, Pose
 from arm_client import CONFIG_DIR
 from pathlib import Path
 import pickle
+from waveguide_gripper_grid_generator import fetch_landmarks
 
 
 # Helper functions
@@ -17,7 +19,7 @@ def plunge(
     depth: float,
     plunge_time: float = 1.0,
     traj_freq: float = 100.0,
-    fixed_ori: R | None = None,
+    fixed_ori: R = None,
 ):
     """
     Quarter-sine plunge from start_xyz to final depth.
@@ -88,101 +90,63 @@ def main():
     #     file_path=CONFIG_DIR / "controllers" / "osc_pd" /"probe_controller.yaml"
     # )
 
-    # robot.controller_switcher_client.switch_controller("joint_space_controller")
-    # robot.joint_space_controller_parameters_client.load_param_config(
-    #     file_path=CONFIG_DIR / "controllers" / "joint_space" / "default.yaml"
-    # )
-
-    robot.controller_switcher_client.switch_controller("fr3_pose_controller")
-    robot.fr3_pose_controller_parameters_client.load_param_config(
-        file_path=CONFIG_DIR / "controllers" / "fr3_pose" / "default.yaml"
+    robot.controller_switcher_client.switch_controller("osc_pd_controller")
+    robot.osc_pd_controller_parameters_client.load_param_config(
+        file_path=CONFIG_DIR / "controllers" / "osc_pd" / "probe_controller.yaml"
     )
 
     # Parameters
-    z_surface = 0.15  # (m)
-    home_position = np.array([0.60, -0.060, z_surface])  # button location
-    approach_speed = 0.050  # (m/s)
-    settle_sec = 0.25  # wait time (s)
+    # Load landmark file
+    PROJECT_ROOT = Path(__file__).resolve().parent  # or Path.cwd()
+    landmark_file = PROJECT_ROOT / 'results' / 'grids' / "waveguide_gripper_landmarks.txt"
+    landmarks = fetch_landmarks(landmark_file, ['x', 'y', 'z'])
 
-    depth = 0.0575  # plunge depth (m)
+    z_offset = 0.0250 # (m) offset from landmark z to surface
+    z_surface = landmarks['z'] + z_offset  # (m)
+    home_position = np.array([landmarks['x'], landmarks['y'], z_surface])  # home location (m)
+    delay_sec = 0.500  # wait time (s)
+    retraction_sec = 5.0 # time to execute retractions (s)
+
+    depth = z_offset + 0.0050  # plunge depth (m)
     plunge_time = 1.0  # plunge duration (s)
-    plunge_rest = 1.0  # rest time at depth (s)
     traj_freq = 200.0  # Hz
 
-    trig_depth = 0.0250  # trigger depth (m)
-    trig_plunge_time = 0.5  # trigger plunge duration (s)
-
-    base_ori = R.from_euler("xyz", [90, 0, 0], degrees=True)  # base orientation ([roll, pitch, yaw], degrees)
+    base_ori = R.from_euler("xyz", [-270, 0, 0], degrees=True)  # base orientation ([roll, pitch, yaw], degrees)
+    base_pose = Pose(position=home_position, orientation=base_ori)
 
     # Probe locations: [x, y, z_surface], load from numpy files
-    PROJECT_ROOT = Path(__file__).resolve().parent  # or Path.cwd()
-    base_loc = PROJECT_ROOT / "grids"
-    rf_grid = np.load(f"{base_loc}/test_grid_rf.npy")  # (N, 2) array in world/robot frame
-    sf_grid = np.load(f"{base_loc}/test_grid_sf.npy")  # (N, 2) array in sensor frame
-
-    # Offset all (x,y) values
-    rf_probe_locations = np.hstack([rf_grid, z_surface * np.ones((len(rf_grid), 1))])
-    sf_probe_locations = np.hstack([sf_grid, z_surface * np.ones((len(sf_grid), 1))])
+    base_loc = PROJECT_ROOT / "results" / "grids"
+    grid = np.load(f"{base_loc}/train_wvg.npy") # (N, 2) array in world/robot frame
+    probe_locations = np.hstack([grid, z_surface * np.ones((len(grid), 1))]) # append z_surface to make (N, 3) arrays
 
     # Initialize results
     exp_dict = {
         "ts": [],
-        "sf_positions": [],
-        "rf_positions": [],
+        "probe_locations": [],
         "target_poses": [],
         "ee_poses": [],
         "ee_forces": [],
+        "landmarks": [landmarks["x"], landmarks["y"], landmarks["z"]],
     }
 
-    # Move to start position
+    # Move to home position
     print("Going to home...")
-    print("  Waiting for robot to reach target...")
-    time.sleep(3.0)  # Give time for trajectory to complete
-
-    # robot.move_to(position=home_position, speed=approach_speed)
-    robot.set_target(position=home_position)
-    time.sleep(settle_sec)
+    robot.move_to(pose=base_pose, time_to_move=retraction_sec)
+    time.sleep(delay_sec)
 
     # Iterate over probe locations
-    for i, loc in enumerate(zip(rf_probe_locations, sf_probe_locations)):
-        (x, y, z_surface), (x_sf, y_sf, z_surface_sf) = loc
-        exp_dict["rf_positions"].append([x, y, z_surface])
-        exp_dict["sf_positions"].append([x_sf, y_sf, z_surface_sf])
-        print(f"\n=== Probe {i + 1}/{len(sf_probe_locations)} at [{x_sf:.3f}, {y_sf:.3f}, {z_surface_sf:.3f}] ===")
+    for i, loc in enumerate(probe_locations):
+        (x, y, z_surface) = loc
+        exp_dict["probe_positions"].append([x, y, z_surface])
 
-        # Maintain orientation at surface
-        start_pose = robot.end_effector_pose.copy()
-        start_pose.orientation = base_ori
-        robot.set_target(pose=start_pose)
-        time.sleep(settle_sec)
+        print(f"\n=== Probe {i + 1}/{len(probe_locations)} at [{x - landmarks['x']:.3f}, {y - landmarks['y']:.3f}, {z_surface - landmarks['z']:.3f}] ===")
 
-        # Press trigger
-        plunge(
-            robot,
-            start_xyz=home_position,
-            depth=trig_depth,
-            plunge_time=trig_plunge_time,
-            traj_freq=traj_freq,
-            fixed_ori=base_ori,
-        )  # do not record data here
-        t_ref = time.perf_counter()  # reference time for this probe location
-
-        # Approach XY at home Z (safe height), then go to surface Z
-        approach_xy = np.array([x, y, home_position[2]], dtype=float)
-        robot.move_to(position=approach_xy, speed=approach_speed)
-
+        # Move to probe location
         surface_xyz = np.array([x, y, z_surface], dtype=float)
-        robot.move_to(position=surface_xyz, speed=approach_speed)
-        time.sleep(settle_sec)
-
-        # Maintain orientation at surface
-        start_pose = robot.end_effector_pose.copy()
-        start_pose.orientation = base_ori
-        robot.set_target(pose=start_pose)
-        time.sleep(settle_sec)
+        robot.move_to(pose=base_pose, time_to_move=retraction_sec)
+        time.sleep(delay_sec)
 
         # Plunge: quarter-sine to final depth (velocity = 0 at end)
-        t_plunge = time.perf_counter()
         ts, target_poses, ee_poses, ee_forces = plunge(
             robot,
             start_xyz=surface_xyz,
@@ -191,28 +155,20 @@ def main():
             traj_freq=traj_freq,
             fixed_ori=base_ori,
         )
-        exp_dict["ts"].append(
-            ts + (t_plunge - t_ref)
-        )  # time referenced to button press (ts referenced to plunge start)
+        exp_dict["ts"].append(ts)  # time referenced to button press (ts referenced to plunge start)
         exp_dict["target_poses"].append(target_poses)
         exp_dict["ee_poses"].append(ee_poses)
         exp_dict["ee_forces"].append(ee_forces)
 
-        # Brief settle at depth
-        time.sleep(plunge_rest)
-
         # Move back home (retract in Z, then move in XY)
         retract_xyz = surface_xyz.copy()
-        robot.move_to(position=retract_xyz, speed=approach_speed)
-        time.sleep(0.1)
-
-        robot.move_to(position=home_position, speed=approach_speed)
-        time.sleep(0.1)
+        robot.move_to(position=retract_xyz, time_to_move=retraction_sec)
+        time.sleep(delay_sec)
 
     # Return home at the end
     print("\nReturning home...")
-    robot.move_to(position=home_position, speed=approach_speed)
-    time.sleep(settle_sec)
+    robot.move_to(pose=base_pose, time_to_move=retraction_sec)
+    time.sleep(delay_sec)
 
     robot.shutdown()
     print("Done.")
@@ -221,7 +177,7 @@ def main():
     results_dir = PROJECT_ROOT / "results"
     results_dir.mkdir(parents=True, exist_ok=True)
     # Save dict using pickle
-    full_dir = results_dir / "64_GRID_TEST.pkl"
+    full_dir = results_dir / "TEMP.pkl"
     # Make sure file does not already exist / else save
     if full_dir.exists():
         # Ask user to confirm overwrite
@@ -232,7 +188,6 @@ def main():
     with open(full_dir, "wb") as f:
         pickle.dump(exp_dict, f)
         print(f"Results saved to: {full_dir}")
-
 
 if __name__ == "__main__":
     main()

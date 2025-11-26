@@ -4,7 +4,7 @@ import pickle
 from pathlib import Path
 
 # Load the data from the pickle file
-data_file = Path(__file__).resolve().parent / "results" / "64_GRID_TRAIN.pkl"
+data_file = Path(__file__).resolve().parent / "results" / "64_GRID_TEST.pkl"
 with open(data_file, "rb") as f:
     exp_dict = pickle.load(f)
 print("Data loaded from:", data_file)
