@@ -609,7 +609,13 @@ class Robot:
         if self._tau_target is None:
             self._tau_target = self._tau_current.copy()
 
-    def move_to(self, position: List | NDArray | None = None, pose: Pose | None = None, speed: float = 0.05, time_to_move: float | None = None):
+    def move_to(
+        self,
+        position: List | NDArray | None = None,
+        pose: Pose | None = None,
+        speed: float = 0.05,
+        time_to_move: float | None = None,
+    ):
         """Move the end-effector to a given pose by interpolating linearly between the poses.
 
         Args:
@@ -624,15 +630,17 @@ class Robot:
         desired_pose = self._parse_pose_or_position(position, pose)
         start_pose = self._current_pose
         distance = np.linalg.norm(desired_pose.position - start_pose.position)
-        
+
         if time_to_move is None:
-            time_to_move = distance / speed
+            time_to_move = float(distance / speed)
 
         N = int(time_to_move * self.config.publish_frequency)
 
         rate = self.node.create_rate(self.config.publish_frequency)
 
-        slerp = Slerp([0, 1], Rotation.concatenate([start_pose.orientation, desired_pose.orientation]))
+        slerp = Slerp(
+            [0, 1], Rotation.from_quat([start_pose.orientation.as_quat(), desired_pose.orientation.as_quat()])
+        )
 
         for t in np.linspace(0.0, 1.0, N):
             pos = (1 - t) * start_pose.position + t * desired_pose.position
@@ -714,7 +722,7 @@ class Robot:
         # Publish trajectory
         self._target_trajectory_publisher.publish(msg)
 
-        self.node.get_logger().info(
+        self.node.get_logger().debug(
             f"Sent trajectory with {len(waypoints)} waypoints, total duration: {time_from_start[-1]:.3f}s"
         )
 
@@ -750,7 +758,7 @@ class Robot:
             self._trajectory_mode_active = False
             delattr(self, "_trajectory_start_time")
             delattr(self, "_trajectory_timeout")
-            self.node.get_logger().info("Trajectory execution completed")
+            self.node.get_logger().debug("Trajectory execution completed")
             return False
 
         # Sleep briefly to control loop rate

@@ -94,6 +94,8 @@ for i in range(n_points):
     position[2] += z_offset  # Sinusoidal motion in Z
 
     pose = Pose(position, center_orientation)
+
+    # The twist is not yet used, you can just set it to zero for now
     twist = Twist(np.array([0.0, 0.0, z_dot]), np.array([0.0, 0.0, 0.0]))
     waypoints.append((pose, twist))
     time_from_start.append(t)
