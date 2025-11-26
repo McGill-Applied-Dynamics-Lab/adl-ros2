@@ -12,7 +12,7 @@ robot.wait_until_ready()
 
 # %%
 print(robot.end_effector_pose)
-print(robot.joint_values)
+print(robot.q)
 
 # # %%
 # print("Going to home position...")

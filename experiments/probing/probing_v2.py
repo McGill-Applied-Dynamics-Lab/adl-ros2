@@ -2,7 +2,6 @@ import time
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.spatial.transform import Rotation as R
-from arm_client import robot
 from arm_client.robot import Robot
 from arm_client import CONFIG_DIR
 from pathlib import Path
@@ -16,7 +15,7 @@ def plunge(
     depth: float,
     plunge_time: float = 1.0,
     traj_freq: float = 100.0,
-    fixed_ori: R = None,
+    fixed_ori: R | None = None,
 ):
     """
     Quarter-sine plunge from start_xyz to final depth.
@@ -87,9 +86,14 @@ def main():
     #     file_path=CONFIG_DIR / "controllers" / "osc_pd" /"probe_controller.yaml"
     # )
 
-    robot.controller_switcher_client.switch_controller("joint_space_controller")
-    robot.joint_space_controller_parameters_client.load_param_config(
-        file_path=CONFIG_DIR / "controllers" / "joint_space" / "default.yaml"
+    # robot.controller_switcher_client.switch_controller("joint_space_controller")
+    # robot.joint_space_controller_parameters_client.load_param_config(
+    #     file_path=CONFIG_DIR / "controllers" / "joint_space" / "default.yaml"
+    # )
+
+    robot.controller_switcher_client.switch_controller("fr3_pose_controller")
+    robot.fr3_pose_controller_parameters_client.load_param_config(
+        file_path=CONFIG_DIR / "controllers" / "fr3_pose" / "default.yaml"
     )
 
     # Parameters
@@ -127,9 +131,13 @@ def main():
         "ee_forces": [],
     }
 
-    # Move to home position
+    # Move to start position
     print("Going to home...")
-    robot.move_to(position=home_position, speed=approach_speed)
+    print("  Waiting for robot to reach target...")
+    time.sleep(3.0)  # Give time for trajectory to complete
+
+    # robot.move_to(position=home_position, speed=approach_speed)
+    robot.set_target(position=home_position)
     time.sleep(settle_sec)
 
     # Iterate over probe locations

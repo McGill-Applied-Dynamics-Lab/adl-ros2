@@ -1,7 +1,9 @@
 """
-Script to follow a sinusoidal trajectory in the Z-axis using a robotic arm. For trajectory controllers, the full trajectory to follow.
+Script to follow a sinusoidal trajectory in the Z-axis using a robotic arm. For regulation controllers, sends the
+target pose at a fixed frequency.
 """
 
+# %%
 import matplotlib.pyplot as plt
 import numpy as np
 import sys

@@ -148,11 +148,13 @@ class Robot:
             self.node, target_node="joint_space_controller"
         )
 
+        self.fr3_pose_controller_parameters_client = ParametersClient(self.node, target_node="fr3_pose_controller")
+
         # Joint space states
         self._q_current = None
         self._q_target = None
-        self._dq_current = None
-        self._dq_target = None
+        self._dq_current: None | np.ndarray = None
+        self._dq_target: None | np.ndarray = None
         self._tau_current = None
         self._tau_target = None
 
@@ -579,7 +581,11 @@ class Robot:
         """
         if self._q_current is None:
             self._q_current = np.zeros(self.nq)
+
+        if self._dq_current is None:
             self._dq_current = np.zeros(self.nq)
+
+        if self._tau_current is None:
             self._tau_current = np.zeros(self.nq)
 
         # self.node.get_logger().info(f"Current joint state: {msg.name} {msg.position}", throttle_duration_sec=1.0)
@@ -637,7 +643,7 @@ class Robot:
 
     def execute_trajectory(
         self,
-        waypoints: List[Pose],
+        waypoints: List[tuple[Pose, Twist]],
         time_from_start: List[float],
         max_linear_velocity: float = -1.0,
         max_angular_velocity: float = -1.0,
@@ -686,13 +692,13 @@ class Robot:
             twist = path[1]
 
             point = self._pose_to_pose_msg(pose)
-            msg.points.append(point)
+            msg.points.append(point)  # msg.points = [*msg.points, point]
 
             # Convert float time to Duration
             duration = Duration()
             duration.sec = int(time_sec)
             duration.nanosec = int((time_sec % 1.0) * 1e9)
-            msg.time_from_start.append(duration)
+            msg.time_from_start.append(duration)  # msg.time_from_start = [*msg.time_from_start, duration]
 
         # Set velocity limits
         msg.max_linear_velocity = max_linear_velocity
@@ -711,27 +717,44 @@ class Robot:
         )
 
     def wait_for_trajectory_completion(self, expected_duration: float, timeout_margin: float = 2.0):
-        """Wait for trajectory execution to complete.
+        """Wait for trajectory execution to complete while allowing state reading.
+
+        This method can be used in a while loop to read robot state during trajectory execution:
+
+        Example:
+            >>> while robot.wait_for_trajectory_completion(duration):
+            >>>     ee_poses.append(robot.end_effector_pose.copy())
+            >>>     ts.append(time.time())
 
         Args:
             expected_duration: Expected trajectory duration in seconds
             timeout_margin: Additional time to wait beyond expected duration (seconds)
 
+        Returns:
+            bool: True if trajectory is still executing, False when complete
+
         Note:
             This is a simple time-based wait. For more precise tracking, consider
             converting to a ROS2 action interface in the future.
         """
-        timeout = expected_duration + timeout_margin
-        rate = self.node.create_rate(10)  # 10 Hz check rate
-        elapsed = 0.0
+        if not hasattr(self, "_trajectory_start_time"):
+            self._trajectory_start_time = self.node.get_clock().now().nanoseconds / 1e9
+            self._trajectory_timeout = expected_duration + timeout_margin
 
-        while elapsed < timeout:
-            rate.sleep()
-            elapsed += 0.1
+        elapsed = self.node.get_clock().now().nanoseconds / 1e9 - self._trajectory_start_time
 
-        # Re-enable pose publishing
-        self._trajectory_mode_active = False
-        self.node.get_logger().info("Trajectory execution completed")
+        if elapsed >= self._trajectory_timeout:
+            # Re-enable pose publishing and clean up
+            self._trajectory_mode_active = False
+            delattr(self, "_trajectory_start_time")
+            delattr(self, "_trajectory_timeout")
+            self.node.get_logger().info("Trajectory execution completed")
+            return False
+
+        # Sleep briefly to control loop rate
+        rate = self.node.create_rate(100)  # 100 Hz check rate for smooth data collection
+        rate.sleep()
+        return True
 
     def home(self, home_config: list[float] | None = None, blocking: bool = True, time_to_home: float | None = None):
         """Home the robot."""
