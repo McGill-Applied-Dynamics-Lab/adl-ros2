@@ -1,6 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from pathlib import Path
+import pickle
 
 def generate_grid(x_extent, y_extent, nx, ny, xdir=1, ydir=1):
     """ Generate training and testing grid points within a rectangular area. """
@@ -26,25 +27,6 @@ def generate_grid(x_extent, y_extent, nx, ny, xdir=1, ydir=1):
 
     return train, test
 
-def find_rotation(landmark_file: str):
-    """ Find rotation matrix from landmark coordinates. """
-    with open(landmark_file) as f:
-        values = {}
-        for line in f:
-            if ':' in line:
-                key, val = line.strip().split(':')
-                values[key.strip()] = float(val.strip())
-
-    # Create list of lists in desired order
-    pbl = np.array([values['xbl'], values['ybl']])
-    pbr = np.array([values['xbr'], values['ybr']])
-    pdiff = pbr - pbl # vector from bottom left to bottom right
-    rot_angle = np.angle(pdiff[0] + 1j*pdiff[1]) # rotation angle in XY plane
-    rot_matrix = np.array([[np.cos(rot_angle), -np.sin(rot_angle)],
-                           [np.sin(rot_angle),  np.cos(rot_angle)]]) # 2-D rotation matrix
-
-    return [pbl, pbr], rot_matrix
-
 def fetch_landmarks(landmark_file: str, to_fetch: list):
     """ Fetch landmark coordinates from file. """
     with open(landmark_file) as f:
@@ -59,6 +41,7 @@ def fetch_landmarks(landmark_file: str, to_fetch: list):
 
 # ---- Example usage ----
 if __name__ == "__main__":
+    """ Generate waveguide gripper probing grid (test/train) and save to file. """
     PROJECT_ROOT = Path(__file__).resolve().parent
     LANDMARK_FILE = PROJECT_ROOT / 'results' / 'grids' / "waveguide_gripper_landmarks.txt"
     PROBE_DIAMETER = 0.0 # (m)
@@ -70,11 +53,22 @@ if __name__ == "__main__":
     Y_EXTENT = GRIPPER_LENGTH # (m)
 
     # Even spacing along x and y directions
-    ppm = 1 / 0.0100 # points per meter
-    nx = int(X_EXTENT * ppm) + 1
-    ny = int(Y_EXTENT * ppm) + 1
+    dl = 5 / 1000 # points per meter
+    nx = int(X_EXTENT / dl)
+    ny = int(Y_EXTENT / dl)
+
+    grid = {}
+    # Save parameters
+    grid['dl'] = dl
+    grid['nx'] = nx
+    grid['ny'] = ny
 
     train, test = generate_grid(x_extent=X_EXTENT, y_extent=Y_EXTENT, nx=nx, ny=ny, xdir=1, ydir=-1) # generate rectangular grid
+    grid['train_gripper_frame'] = train.T
+    grid['test_gripper_frame'] = test.T
+    print(f"Length of train set: {len(train)}")
+    print(f"Length of test set: {len(test)}")
+
     # Apply shifts
     train[0, :] += X_SHIFT
     train[1, :] += Y_SHIFT
@@ -86,19 +80,20 @@ if __name__ == "__main__":
     train[1, :] += landmarks['y']
     test[0, :] += landmarks['x']
     test[1, :] += landmarks['y']
-    # Transpose to (N, 2) shape
-    train = train.T
-    test = test.T
 
-    # Save grids
-    np.save(PROJECT_ROOT / 'results' / 'grids' / r"train_wvg.npy", train)
-    np.save(PROJECT_ROOT / 'results' / 'grids' / r"test_wvg.npy", test)
-    print(f"Length of train set: {len(train)}")
-    print(f"Length of test set: {len(test)}")
+    grid['train_world_frame'] = train.T
+    grid['test_world_frame'] = test.T
+
+    # Save grid using pickle
+    grid_file = PROJECT_ROOT / "results" / "grids" / f"GRIPPER_GRID.pkl"
+    with open(grid_file, "wb") as f:
+        pickle.dump(grid, f)
+    print("Grid saved to:", grid_file)
+
     # Plot grids
-    plt.scatter(train[:, 0], train[:, 1], label='Train')
-    plt.scatter(test[:, 0], test[:, 1], label='Test')
-    plt.scatter(landmarks['x'], landmarks['y'], marker='x', color='k', s=100)
+    plt.scatter(train[0, :], train[1, :], label='Train')
+    plt.scatter(test[0, :], test[1, :], label='Test')
+    plt.scatter(landmarks['x'], landmarks['y'], marker='x', color='k', s=50)
     plt.axis('equal')
     plt.xlabel('X (m)')
     plt.ylabel('Y (m)')

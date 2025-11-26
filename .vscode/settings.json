@@ -168,5 +168,6 @@
     // "python.testing.pytestPath": "/usr/bin/pytest-3"
     //Docker
     "containers.composeCommand": "docker compose",
-    "cmake.sourceDirectory": "/home/ros/ros2_ws/src/adg-ros2/src/robot_arm/robot_arm_testing"
+    "cmake.sourceDirectory": "/home/ros/ros2_ws/src/adg-ros2/src/robot_arm/robot_arm_testing",
+    "cmake.ignoreCMakeListsMissing": true
 }
