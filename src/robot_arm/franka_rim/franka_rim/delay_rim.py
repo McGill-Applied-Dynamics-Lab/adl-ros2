@@ -1,3 +1,7 @@
+"""
+DelayRIM Algorithm Implementation.
+"""
+
 import time
 import threading
 import math
@@ -11,7 +15,6 @@ from enum import Enum
 import rclpy
 from rclpy.node import Node
 from arm_interfaces.msg import FrankaRIM
-from teleop_interfaces.msg import Inverse3State
 
 from copy import copy
 
@@ -47,6 +50,7 @@ class DelayedRIMPacket:
 class ReducedModelState:
     """State of the reduced impedance model"""
 
+    n_interface_dim: int = 1  # Dimension of the interface ('m')
     stiffness: float = 3000.0
     damping: float = 2.0
     hl: float = 0.001  # Integration timestep
@@ -64,6 +68,7 @@ class ReducedModelState:
 
     # DelayRIM integration variables
     effective_mass: np.ndarray = field(default_factory=lambda: np.eye(3))
+    z_i: np.ndarray = field(default_factory=lambda: np.zeros((3, 1)))
     effective_force: np.ndarray = field(default_factory=lambda: np.zeros((3, 1)))
     mass_factor: np.ndarray = field(default_factory=lambda: np.eye(3))
     inverse_augmented_mass_matrix: np.ndarray = field(default_factory=lambda: np.eye(3))
@@ -119,33 +124,24 @@ class DelayRIM:
         # Persistent state for continuous 1kHz stepping
         self.rim_state: Optional[ReducedModelState] = None  # Latest computed RIM state
 
-    def add_haptic_state(self, i3_position: np.array, i3_velocity: np.array) -> None:
+    def add_haptic_state(self, i3_position: np.ndarray, i3_velocity: np.ndarray) -> None:
         """
-        Add new haptic state to history.
+        Add new haptic state to history. The position and velocity need to be in the rim frame.
 
-        Only add the state in along the interfaces.
+            - i3_position (np.ndarray (m,)): Position from I3 device, in the RIM frame
+            - i3_velocity (np.ndarray (m,)): Velocity from I3 device, in the RIM frame
         """
         timestamp = self._node.get_clock().now().nanoseconds / 1e9
 
-        # Extract position and velocity (coordinate transform as needed)
-        position = np.array(
-            [
-                i3_position[0],
-                # i3_position[1],
-                # i3_position[2]
-            ]
-        ).reshape((self._interface_dim,))
+        if i3_position.shape[0] != self._interface_dim or i3_velocity.shape[0] != self._interface_dim:
+            raise ValueError(
+                f"Haptic state dimension mismatch: expected {self._interface_dim}, "
+                f"got position {i3_position.shape[0]}, velocity {i3_velocity.shape[0]}"
+            )
 
-        # position[0] += 0.4253  # For robot arm
-        # position = position * 5  # For simple mass
+        position = i3_position.reshape((self._interface_dim,))
 
-        velocity = np.array(
-            [
-                i3_velocity[0],
-                # i3_velocity[1],
-                # i3_velocity[2]
-            ]
-        ).reshape((self._interface_dim,))
+        velocity = i3_velocity.reshape((self._interface_dim,))
 
         haptic_state = HapticState(timestamp, position, velocity)
 
@@ -181,6 +177,7 @@ class DelayRIM:
         effective_mass_flat = rim_msg.effective_mass
         reduced_model.effective_mass = np.array(effective_mass_flat).reshape((self._interface_dim, self._interface_dim))
         reduced_model.effective_force = np.array(rim_msg.effective_force).reshape((self._interface_dim, 1))
+        reduced_model.z_i = np.array(rim_msg.z_i).reshape((self._interface_dim, 1))
 
         # Update integration matrices
         hl = reduced_model.hl
@@ -390,7 +387,11 @@ class DelayRIM:
     # Force Computations
     ###
     def get_interface_force(self) -> Optional[np.ndarray]:
-        """Get the most recent interface force computed using the selected delay compensation method."""
+        """Get the most recent interface force computed using the selected delay compensation method.
+
+        Returns:
+            np.ndarray (m, 1): Latest interface force
+        """
         ready_results = []
         completed_ids = []
         loop_time = time.perf_counter()
@@ -456,7 +457,7 @@ class DelayRIM:
         # Monitor timing
         if self._loop_count % 1000 == 0 and self._loop_count > 0:
             dt = actual_period * 1000
-            self._node.get_logger().info(f"[DelayRIM Algo] Period: {dt:.4f}ms")
+            # self._node.get_logger().info(f"[DelayRIM Algo] Period: {dt:.4f}ms")
 
         self._last_update_time = loop_time
         self._loop_count += 1
@@ -467,14 +468,25 @@ class DelayRIM:
         self, rim: ReducedModelState, haptic_position: np.ndarray, haptic_velocity: np.ndarray
     ) -> None:
         """Compute the interface force based on the current reduced model state"""
-        rim.phi_position = rim.position - haptic_position
-        rim.phi_velocity = rim.velocity - haptic_velocity
+        # # For stepping v3
+        # rim.phi_position = rim.position - haptic_position
+        # rim.phi_velocity = rim.velocity - haptic_velocity
+
+        # For my stepping
+        rim.phi_position = haptic_position - rim.position
+        rim.phi_velocity = haptic_velocity - rim.velocity
+
+        K = rim.stiffness
+        D = rim.damping
+
         hl = rim.hl
 
-        rim.interface_force = rim.stiffness * rim.phi_position + (hl * rim.stiffness + rim.damping) * rim.phi_velocity
+        # rim.interface_force = rim.stiffness * rim.phi_position + (hl * rim.stiffness + rim.damping) * rim.phi_velocity
         # rim.interface_force = -rim.damping * rim.phi_velocity
 
         # rim.interface_force = self._node._ctrl_force
+
+        rim.interface_force = K * rim.phi_position + D * rim.phi_velocity
 
     def _catchup_delay_rim(
         self, rim: ReducedModelState, rim_delay_seconds: float, haptic_states: List[HapticState]
@@ -541,10 +553,6 @@ class DelayRIM:
         *original code from local_processes.py oneStep*
         """
 
-        # Update constraint deviation
-        reduced_model.phi_position = reduced_model.position - haptic_pos
-        reduced_model.phi_velocity = reduced_model.velocity - haptic_vel
-
         # #! Code from Joe
         # # Force terms from oneStep method
         # regular_force_terms = (
@@ -573,6 +581,10 @@ class DelayRIM:
         # reduced_model.rim_position = rim_position_p
 
         #! V3
+        # Update constraint deviation
+        reduced_model.phi_position = reduced_model.position - haptic_pos
+        reduced_model.phi_velocity = reduced_model.velocity - haptic_vel
+
         if hl is None:
             hl = reduced_model.hl
 
@@ -596,6 +608,55 @@ class DelayRIM:
 
         rim_position_p = reduced_model.position + reduced_model.hl * reduced_model.velocity
         reduced_model.position = rim_position_p
+
+        # #! My stepping (test)
+        # # Update constraint deviation
+        # reduced_model.phi_position = haptic_pos - reduced_model.position
+        # reduced_model.phi_velocity = haptic_vel - reduced_model.velocity
+
+        # if hl is None:
+        #     hl = reduced_model.hl
+
+        # # State variables
+        # w_i = reduced_model.phi_velocity
+        # w_i_plus = None  # to be computed
+
+        # phi_i = reduced_model.phi_position
+        # phi_i_dot = reduced_model.phi_velocity
+
+        # phi_i_plus = None
+        # phi_i_dot_plus = None
+
+        # # Matrices
+        # Id_m = np.eye(self._interface_dim)
+
+        # M_eff = reduced_model.effective_mass
+        # z_i = reduced_model.z_i
+        # lambda_eff = reduced_model.effective_force
+
+        # Kd = reduced_model.damping
+        # Kp = reduced_model.stiffness
+
+        # # Augmented mass matrix
+        # M_hat = M_eff + (-(hl**2) * Kp + hl * Kd) * Id_m
+        # M_hat_inv = np.linalg.inv(M_hat)
+
+        # p = M_eff @ w_i  # generalized momentum at beginning of step
+
+        # # Computation
+        # # d = phi_i / (Id_m * (1 - Kd / (hl * Kp))) / hl  #
+        # # C = 1 / (Id_m * (Kd * hl - Kp * hl**2))  # Constraint regularization term
+        # # C_inv = np.linalg.inv(C)
+
+        # w_i_plus = M_hat_inv @ (Kp * hl * phi_i * Id_m + p + hl * lambda_eff - hl * z_i)
+        # p_plus = reduced_model.position + hl * w_i_plus
+
+        # # Update
+        # # reduced_model.phi_position = phi_i
+        # # reduced_model.phi_velocity = phi_i_dot
+
+        # reduced_model.velocity = w_i_plus
+        # reduced_model.position = p_plus
 
     def _catchup_zoh(self, rim: ReducedModelState, haptic_states: List[HapticState]) -> np.ndarray:
         """

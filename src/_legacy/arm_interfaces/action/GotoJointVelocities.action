@@ -1,0 +1,10 @@
+# Request
+float64[] joint_velocities  # [rad/s]
+builtin_interfaces/Duration duration  # [sec]  
+---
+# Result
+bool success
+string error
+---
+# Feedback
+float64[] joint_velocities  # [rad/s]

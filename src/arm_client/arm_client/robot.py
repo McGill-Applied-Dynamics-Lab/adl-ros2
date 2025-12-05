@@ -7,6 +7,7 @@ from typing import List
 import numpy as np
 import rclpy
 import rclpy.executors
+from builtin_interfaces.msg import Duration
 from geometry_msgs.msg import PoseStamped, WrenchStamped, TwistStamped
 from numpy.typing import NDArray
 from rclpy.callback_groups import ReentrantCallbackGroup
@@ -20,6 +21,9 @@ from arm_client.control.joint_trajectory_controller_client import JointTrajector
 from arm_client.control.parameters_client import ParametersClient
 from arm_client.robot_config import FR3Config, RobotConfig
 from arm_client.utils.callback_monitor import CallbackMonitor
+from arm_interfaces.msg import CartesianTrajectory
+
+import time
 
 
 @dataclass
@@ -144,11 +148,13 @@ class Robot:
             self.node, target_node="joint_space_controller"
         )
 
+        self.fr3_pose_controller_parameters_client = ParametersClient(self.node, target_node="fr3_pose_controller")
+
         # Joint space states
         self._q_current = None
         self._q_target = None
-        self._dq_current = None
-        self._dq_target = None
+        self._dq_current: None | np.ndarray = None
+        self._dq_target: None | np.ndarray = None
         self._tau_current = None
         self._tau_target = None
 
@@ -162,6 +168,9 @@ class Robot:
         self._target_twist = None
         self._current_wrench = None  # added current wrench
 
+        # Flag to disable target_pose publishing during trajectory execution
+        self._trajectory_mode_active = False
+
         self._callback_monitor = CallbackMonitor(
             node=self.node,
             stale_threshold=max(self.config.max_pose_delay, self.config.max_joint_delay),
@@ -169,6 +178,9 @@ class Robot:
 
         self._target_pose_publisher = self.node.create_publisher(
             PoseStamped, self.config.target_pose_topic, qos_profile_system_default
+        )
+        self._target_trajectory_publisher = self.node.create_publisher(
+            CartesianTrajectory, self.config.target_trajectory_topic, qos_profile_system_default
         )
         self._target_wrench_publisher = self.node.create_publisher(
             WrenchStamped, "target_wrench", qos_profile_system_default
@@ -421,6 +433,8 @@ class Robot:
         """
         target_pose = self._parse_pose_or_position(position, pose)
         self._target_pose = target_pose.copy()
+        # Re-enable continuous pose publishing (single-pose mode)
+        self._trajectory_mode_active = False
 
     def set_target_joint(self, q: NDArray):
         """Set the target joint configuration.
@@ -439,8 +453,11 @@ class Robot:
 
         This callback is triggered periodically to publish the target pose
         to the ROS topic for the robot controller.
+
+        Note: Does not publish when trajectory mode is active to avoid
+        interfering with trajectory execution.
         """
-        if self._target_pose is None or not rclpy.ok():
+        if self._target_pose is None or not rclpy.ok() or self._trajectory_mode_active:
             return
         self._target_pose_publisher.publish(self._pose_to_pose_msg(self._target_pose))
 
@@ -564,7 +581,11 @@ class Robot:
         """
         if self._q_current is None:
             self._q_current = np.zeros(self.nq)
+
+        if self._dq_current is None:
             self._dq_current = np.zeros(self.nq)
+
+        if self._tau_current is None:
             self._tau_current = np.zeros(self.nq)
 
         # self.node.get_logger().info(f"Current joint state: {msg.name} {msg.position}", throttle_duration_sec=1.0)
@@ -588,7 +609,13 @@ class Robot:
         if self._tau_target is None:
             self._tau_target = self._tau_current.copy()
 
-    def move_to(self, position: List | NDArray | None = None, pose: Pose | None = None, speed: float = 0.05, time_to_move: float | None = None):
+    def move_to(
+        self,
+        position: List | NDArray | None = None,
+        pose: Pose | None = None,
+        speed: float = 0.05,
+        time_to_move: float | None = None,
+    ):
         """Move the end-effector to a given pose by interpolating linearly between the poses.
 
         Args:
@@ -603,15 +630,17 @@ class Robot:
         desired_pose = self._parse_pose_or_position(position, pose)
         start_pose = self._current_pose
         distance = np.linalg.norm(desired_pose.position - start_pose.position)
-        
+
         if time_to_move is None:
-            time_to_move = distance / speed
+            time_to_move = float(distance / speed)
 
         N = int(time_to_move * self.config.publish_frequency)
 
         rate = self.node.create_rate(self.config.publish_frequency)
 
-        slerp = Slerp([0, 1], Rotation.concatenate([start_pose.orientation, desired_pose.orientation]))
+        slerp = Slerp(
+            [0, 1], Rotation.from_quat([start_pose.orientation.as_quat(), desired_pose.orientation.as_quat()])
+        )
 
         for t in np.linspace(0.0, 1.0, N):
             pos = (1 - t) * start_pose.position + t * desired_pose.position
@@ -621,6 +650,121 @@ class Robot:
             rate.sleep()
 
         self._target_pose = desired_pose
+
+    def execute_trajectory(
+        self,
+        waypoints: List[tuple[Pose, Twist]],
+        time_from_start: List[float],
+        max_linear_velocity: float = -1.0,
+        max_angular_velocity: float = -1.0,
+    ):
+        """Execute a Cartesian trajectory through multiple waypoints.
+
+        This method sends a complete trajectory to the controller, which will
+        execute it using quintic (5th order) polynomial interpolation for smooth
+        motion with continuous velocity and acceleration.
+
+        Args:
+            waypoints: List of Pose objects defining the trajectory waypoints
+            time_from_start: Cumulative time (in seconds) to reach each waypoint from trajectory start.
+                           Must be same length as waypoints and monotonically increasing.
+            max_linear_velocity: Optional override for max linear velocity (m/s).
+                               Set to -1.0 to use controller default.
+            max_angular_velocity: Optional override for max angular velocity (rad/s).
+                                Set to -1.0 to use controller default.
+
+        Example:
+            >>> # Create a sinusoidal trajectory
+            >>> start_pose = robot.end_effector_pose
+            >>> waypoints = []
+            >>> times = []
+            >>> for i, t in enumerate(np.linspace(0, 2.0, 50)):
+            >>>     z = 0.5 + 0.05 * np.sin(2*np.pi*t)
+            >>>     pose = Pose(np.array([0.4, 0.0, z]), start_pose.orientation)
+            >>>     waypoints.append(pose)
+            >>>     times.append(t)
+            >>> robot.execute_trajectory(waypoints, times)
+        """
+        if len(waypoints) != len(time_from_start):
+            raise ValueError("waypoints and time_from_start must have the same length")
+
+        if len(waypoints) == 0:
+            raise ValueError("waypoints list cannot be empty")
+
+        # Create CartesianTrajectory message
+        msg = CartesianTrajectory()
+        msg.header.stamp = self.node.get_clock().now().to_msg()
+        msg.header.frame_id = self.config.base_frame
+
+        # Add waypoints
+        for path, time_sec in zip(waypoints, time_from_start):
+            pose = path[0]
+            twist = path[1]
+
+            point = self._pose_to_pose_msg(pose)
+            msg.points.append(point)  # msg.points = [*msg.points, point]
+
+            # Convert float time to Duration
+            duration = Duration()
+            duration.sec = int(time_sec)
+            duration.nanosec = int((time_sec % 1.0) * 1e9)
+            msg.time_from_start.append(duration)  # msg.time_from_start = [*msg.time_from_start, duration]
+
+        # Set velocity limits
+        msg.max_linear_velocity = max_linear_velocity
+        msg.max_angular_velocity = max_angular_velocity
+
+        # Enable trajectory mode to stop continuous pose publishing
+        self._trajectory_mode_active = True
+
+        time.sleep(0.5)  # Small delay to ensure mode switch before publishing
+
+        # Publish trajectory
+        self._target_trajectory_publisher.publish(msg)
+
+        self.node.get_logger().debug(
+            f"Sent trajectory with {len(waypoints)} waypoints, total duration: {time_from_start[-1]:.3f}s"
+        )
+
+    def wait_for_trajectory_completion(self, expected_duration: float, timeout_margin: float = 2.0):
+        """Wait for trajectory execution to complete while allowing state reading.
+
+        This method can be used in a while loop to read robot state during trajectory execution:
+
+        Example:
+            >>> while robot.wait_for_trajectory_completion(duration):
+            >>>     ee_poses.append(robot.end_effector_pose.copy())
+            >>>     ts.append(time.time())
+
+        Args:
+            expected_duration: Expected trajectory duration in seconds
+            timeout_margin: Additional time to wait beyond expected duration (seconds)
+
+        Returns:
+            bool: True if trajectory is still executing, False when complete
+
+        Note:
+            This is a simple time-based wait. For more precise tracking, consider
+            converting to a ROS2 action interface in the future.
+        """
+        if not hasattr(self, "_trajectory_start_time"):
+            self._trajectory_start_time = self.node.get_clock().now().nanoseconds / 1e9
+            self._trajectory_timeout = expected_duration + timeout_margin
+
+        elapsed = self.node.get_clock().now().nanoseconds / 1e9 - self._trajectory_start_time
+
+        if elapsed >= self._trajectory_timeout:
+            # Re-enable pose publishing and clean up
+            self._trajectory_mode_active = False
+            delattr(self, "_trajectory_start_time")
+            delattr(self, "_trajectory_timeout")
+            self.node.get_logger().debug("Trajectory execution completed")
+            return False
+
+        # Sleep briefly to control loop rate
+        rate = self.node.create_rate(100)  # 100 Hz check rate for smooth data collection
+        rate.sleep()
+        return True
 
     def home(self, home_config: list[float] | None = None, blocking: bool = True, time_to_home: float | None = None):
         """Home the robot."""

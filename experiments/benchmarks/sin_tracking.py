@@ -1,3 +1,8 @@
+"""
+Script to follow a sinusoidal trajectory in the Z-axis using a robotic arm. For regulation controllers, sends the
+target pose at a fixed frequency.
+"""
+
 # %%
 import matplotlib.pyplot as plt
 import numpy as np
@@ -7,6 +12,31 @@ from datetime import datetime
 from pathlib import Path
 from dataclasses import dataclass, asdict
 from typing import Dict, List, Any, Optional
+from scipy.spatial.transform import Rotation as R
+
+# ========================================
+# EXPERIMENT PARAMETERS - MODIFY HERE
+# ========================================
+
+# Trajectory Parameters
+START_POSITION = [0.4, 0.0, 0.4]  # [x, y, z] in meters
+START_ROT = R.from_euler("xyz", [-180, 0, 0], degrees=True)  # base orientation ([roll, pitch, yaw], degrees)
+
+FREQUENCY = 50.0  # Execution frequency in Hz
+SIN_FREQ = 0.2  # Sinusoidal frequency in Hz
+AMPLITUDE = 0.1  # Trajectory amplitude in meters
+DURATION = 10.0  # Experiment duration in seconds
+
+# Robot Configuration
+ROBOT_NAMESPACE = "fr3"  # Robot namespace
+CONTROLLER = "osc_pd_controller"  # "osc_pd_controller" or "cartesian_impedance_controller"
+CONTROLLER_CONFIG = None  # Path to custom config file (None for default)
+CONNECTION_TIMEOUT = 2.0  # Robot connection timeout in seconds
+HOME_ROBOT = False  # Whether to home robot before experiment
+SAVE_RESULTS = False
+
+# Experiment Settings
+EXPERIMENT_NAME = None  # Custom name (None for auto-generated)
 
 
 # Check for required dependencies
@@ -53,8 +83,31 @@ check_dependencies()
 import pandas as pd
 import yaml
 
-from arm_client.robot import Robot
+from arm_client.robot import Robot, Pose
 from arm_client import CONFIG_DIR
+
+
+def print_experiment_config(trajectory_params):
+    """Print experiment configuration for verification."""
+    print("=" * 60)
+    print("🤖 ROBOT CONTROLLER VALIDATION EXPERIMENT")
+    print("=" * 60)
+    print(f"Experiment Name: {EXPERIMENT_NAME or 'Auto-generated'}")
+    print(f"Controller: {CONTROLLER}")
+    print(f"Robot Namespace: {ROBOT_NAMESPACE}")
+    print("\n📍 TRAJECTORY PARAMETERS:")
+    print(f"  Start Position: {START_POSITION} m")
+    print(f"  Execution Frequency: {FREQUENCY:.1f} Hz")
+    print(f"  Sinusoidal Frequency: {SIN_FREQ:.3f} Hz")
+    print(f"  Amplitude: {AMPLITUDE:.3f} m")
+    print(f"  Duration: {DURATION:.1f} s")
+    print(f"  Expected Data Points: ~{int(FREQUENCY * DURATION)}")
+    print("\n⚙️  EXECUTION OPTIONS:")
+    print(f"  Home Robot: {HOME_ROBOT}")
+    print(f"  Timeout: {CONNECTION_TIMEOUT:.1f} s")
+    if CONTROLLER_CONFIG:
+        print(f"  Config File: {CONTROLLER_CONFIG}")
+    print("=" * 60)
 
 
 @dataclass
@@ -141,6 +194,8 @@ class ExperimentManager:
             ctrl_params = robot.osc_pd_controller_parameters_client.list_parameters()
             params_values = robot.osc_pd_controller_parameters_client.get_parameters(ctrl_params)
             controller_parameters = dict(zip(ctrl_params, params_values))
+            controller_parameters.pop("robot_description", None)  # Remove large entry
+
         except Exception as e:
             print(f"Warning: Could not retrieve controller parameters: {e}")
             controller_parameters = {}
@@ -337,23 +392,15 @@ class ExperimentManager:
 
 
 # Initialize experiment manager
-experiment = ExperimentManager()
+experiment = ExperimentManager(experiment_name=EXPERIMENT_NAME)
 experiment.setup_experiment_directory()
 
-robot = Robot(namespace="fr3")
-robot.wait_until_ready()
-
-# %%
-print(robot.end_effector_pose)
-print(robot.q)
-
-# %%
-# Parameters for the trajectory
-start_position = np.array([0.4, 0.0, 0.4])
-traj_freq = 50.0
-sin_freq_x = 0.2  # rot / s
-amplitude = 0.1  # [m]
-max_time = 5
+# Create trajectory parameters from defined constants
+start_position = np.array(START_POSITION)
+traj_freq = FREQUENCY
+sin_freq_x = SIN_FREQ
+amplitude = AMPLITUDE
+max_time = DURATION
 
 # Store trajectory parameters for metadata
 trajectory_params = {
@@ -365,28 +412,85 @@ trajectory_params = {
     "trajectory_type": "sinusoidal_z_axis",
 }
 
-# %%
-robot.controller_switcher_client.switch_controller("osc_pd_controller")
-robot.osc_pd_controller_parameters_client.load_param_config(
-    file_path=CONFIG_DIR / "controllers" / "osc_pd" / "default.yaml"
-)
+# Print configuration
+print_experiment_config(trajectory_params)
 
-# Collect experiment metadata
-metadata = experiment.collect_controller_metadata(robot, trajectory_params)
+print(f"\n🔌 Connecting to robot...")
+robot = Robot(namespace=ROBOT_NAMESPACE)
+robot.wait_until_ready(timeout=CONNECTION_TIMEOUT)
+
+# %%
+print(robot.end_effector_pose)
+print(robot.q)
+
+# %%
+# Home robot if requested
+if HOME_ROBOT:
+    print("Homing robot...")
+    robot.home()
+else:
+    print("Skipping robot homing...")
+
+# %%
+# Controller setup
+controller_config_map = {
+    "osc_pd_controller": "osc_pd/default.yaml",
+    "cartesian_impedance_controller": "crips/default_cartesian_impedance.yaml",
+}
+
+config_file = CONTROLLER_CONFIG or controller_config_map.get(CONTROLLER, "osc_pd/default.yaml")
+config_path = CONFIG_DIR / "controllers" / config_file
+
+print(f"Switching to controller: {CONTROLLER}")
+robot.controller_switcher_client.switch_controller(CONTROLLER)
+
+if CONTROLLER == "osc_pd_controller":
+    robot.osc_pd_controller_parameters_client.load_param_config(file_path=config_path)
+    metadata = experiment.collect_controller_metadata(robot, trajectory_params)
+
+elif CONTROLLER == "cartesian_impedance_controller":
+    robot.cartesian_controller_parameters_client.load_param_config(file_path=config_path)
+    # For cartesian controller, we need to adapt the metadata collection
+    try:
+        ctrl_params = robot.cartesian_controller_parameters_client.list_parameters()
+        params_values = robot.cartesian_controller_parameters_client.get_parameters(ctrl_params)
+        controller_parameters = dict(zip(ctrl_params, params_values))
+    except Exception as e:
+        print(f"Warning: Could not retrieve controller parameters: {e}")
+        controller_parameters = {}
+
+    metadata = ExperimentMetadata(
+        experiment_name=experiment.experiment_name,
+        timestamp=datetime.now().isoformat(),
+        trajectory_type="sinusoidal_z",
+        controller_name=CONTROLLER,
+        controller_parameters=controller_parameters,
+        trajectory_parameters=trajectory_params,
+        duration=0.0,
+        frequency=0.0,
+        total_points=0,
+    )
+
 experiment.metadata = metadata
 
-print(f"Starting experiment: {experiment.experiment_name}")
-print(f"Controller: {metadata.controller_name}")
-print(f"Trajectory: {metadata.trajectory_type}")
+print(f"✅ Experiment setup complete!")
+print(f"   Name: {experiment.experiment_name}")
+print(f"   Controller: {metadata.controller_name}")
+print(f"   Trajectory: {metadata.trajectory_type}")
 
 # %%
 # The move_to function will publish a pose to /target_pose while interpolation linearly
-print("Moving to start position...")
-robot.move_to(position=start_position, speed=0.15)
+print(f"📍 Moving to start position: [{start_position[0]:.3f}, {start_position[1]:.3f}, {start_position[2]:.3f}]...")
+start_pose = Pose(position=start_position, orientation=START_ROT)
+robot.move_to(pose=start_pose, speed=0.15)
 
 # %%
 # Enhanced trajectory execution with comprehensive data collection
-print("Starting trajectory execution...")
+print(f"🚀 Starting trajectory execution...")
+print(f"   Duration: {max_time:.1f}s")
+print(f"   Frequency: {traj_freq:.1f} Hz")
+print(f"   Amplitude: {amplitude:.3f}m")
+print(f"   Sin Frequency: {sin_freq_x:.3f} Hz")
 time.sleep(1.0)  # Wait a moment to ensure everything is settled
 
 target_pose = robot.end_effector_pose.copy()
@@ -419,11 +523,11 @@ while t < max_time:
     # Collect comprehensive data point
     experiment.collect_data_point(robot, target_pose, t)
 
-    # Print progress every 0.5 seconds
-    if count % int(traj_freq / 2) == 0:
-        elapsed_time = time.perf_counter() - start_time
-        expected_time = count * dt
-        print(f"Time: {elapsed_time:.2f}s, Points: {count}, Target Z: {z:.3f}m")
+    # # Print progress every 0.5 seconds
+    # if count % int(traj_freq / 2) == 0:
+    #     elapsed_time = time.perf_counter() - start_time
+    #     expected_time = count * dt
+    #     print(f"Time: {elapsed_time:.2f}s, Points: {count}, Target Z: {z:.3f}m")
 
     count += 1
 
@@ -447,16 +551,18 @@ print(f"Data points collected: {len(experiment.data.timestamps)}")
 
 # %%
 # Save all experiment data and generate results
-print("\nSaving experiment results...")
-experiment.save_results()
+if SAVE_RESULTS:
+    print("\nSaving experiment results...")
+    experiment.save_results()
+    print(f"Results saved to: {experiment.results_dir}")
 
 print("\nExperiment completed successfully!")
-print(f"Results saved to: {experiment.results_dir}")
 
 # Display quick summary
 if experiment.data.timestamps:
     metrics = experiment.calculate_metrics()
     print(f"\n=== Quick Summary ===")
+    print(f"Mean Z error: {metrics['tracking_errors']['mean_error_z_mm']:.2f} mm")
     print(f"Mean 3D tracking error: {metrics['tracking_errors']['mean_error_3d_mm']:.2f} mm")
     print(f"Max 3D tracking error: {metrics['tracking_errors']['max_error_3d_mm']:.2f} mm")
     print(f"RMS 3D tracking error: {metrics['tracking_errors']['rms_error_3d_mm']:.2f} mm")

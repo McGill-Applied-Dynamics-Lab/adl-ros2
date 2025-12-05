@@ -1,0 +1,10 @@
+# Request
+float64[] joints_goal  # [rad]
+builtin_interfaces/Duration duration  # [sec]  
+---
+# Result
+bool success
+string error
+---
+# Feedback
+Joints joints_position  # [rad]

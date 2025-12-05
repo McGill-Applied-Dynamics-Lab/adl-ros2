@@ -3,56 +3,123 @@
   ros__parameters:
     use_sim_time: false
 
+# --- Model Nodes ---
 # Franka Model Node Parameters
 franka_model_node:
   ros__parameters:
+    rim_axis: "z"
     update_freq: 100.0
     input_topic: "/fr3/franka_robot_state_broadcaster/robot_state"
     output_topic: "/fr3_model"
     robot_urdf_filename: "fr3_franka_hand.urdf"
     vel_thres: 0.005
+    log:
+      enabled: false
+      period: 5.0
+      timing: true
+    # Low-pass filter parameters (alpha = dt / (dt + tau_filter))
+    # alpha closer to 1.0 = less filtering (more responsive)
+    # alpha closer to 0.0 = more filtering (smoother but lagged)
+    filter:
+      enabled: true
+      alpha_q: 0.3        # Joint positions
+      alpha_q_dot: 0.2    # Joint velocities (more filtering)
+      alpha_q_ddot: 0.1   # Joint accelerations (most filtering)
+      alpha_tau: 0.2      # Joint torques
+      alpha_f_ext: 0.1 # External forces
+      alpha_x_ee: 0.3     # End-effector position
+      alpha_v_ee: 0.2     # End-effector velocity
 
 # Franka RIM Node Parameters  
 franka_rim_node:
   ros__parameters:
+    rim_axis: "z"
     update_freq: 10.0
-    interface_stiffness: 500.0
-    interface_damping: 40.0
+    interface_stiffness: 1000.0
+    interface_damping: 63.2456
+    log:
+      enabled: false
+      period: 5.0
+      timing: true
 
-# DelayRIM Node Parameters
+# --- DelayRIM ---
 delay_rim_node:
   ros__parameters:
-    rim_topic: "/fr3_rim_delayed"
-    haptic_pose_topic_name: "/fr3/target_pose"
-    haptic_twist_topic_name: "/fr3/target_twist"
+    rim_axis: "z"
     update_freq: 500.0 # 1000.0
-    delay_compensation_method: "zoh"
+    delay_compensation_method: "delay_rim"  # 'delay_rim', 'zoh', or 'zoh_phi'
     force_scaling: 0.1
     max_workers: 8
     i3_position_scale: 1.5
+    
+    # topics
+    rim_topic: "/fr3_rim_delayed"
+    target_twist_topic_name: "/fr3/target_twist"
+    target_pose_topic_name: "/fr3/target_pose"
+    interface_force_topic_name: "/fr3/interface_force"
+    i3_pose_topic_name: "/i3/pose"
+    i3_twist_topic_name: "/i3/twist"
+    i3_wrench_topic_name: "/i3/wrench"
+    
+    # filters
+    filter:
+      haptic_pose: 0.3
+      haptic_twist: 0.3
+    
+    # logs
+    log:
+      enabled: true
+      period: 5.0
+      timing: true
+      delay_rim: true
 
-# I3 Sim Node Parameters
+i3_teleop:
+  ros__parameters:
+    i3_pose_topic_name: /i3/pose
+    i3_twist_topic_name: /i3/twist
+    i3_wrench_topic_name: /i3/wrench
+    target_pose_topic_name: /fr3/target_pose
+    target_twist_topic_name: /fr3/target_twist
+    interface_force_topic_name: /fr3/interface_force
+    frequency: 100.0
+    force_scale: 0.01
+    position_scale: 1.0
+    pos_radius: 0.060
+    active_axis: "z"
+
+# --- Inverse3 Node ---
+# Real
+inverse3_node:
+  ros__parameters:
+    frequency: 1000.0
+    scale: 1.0  # scale between i3 position and published position 
+    disable_forces: true
+    force_cap: 1.0  # N
+
+# Sim
 i3_sim_node:
   ros__parameters:
     publish_frequency: 1000.0
-    sine_frequency: 0.2
+    sine_frequency: 0.1
     amplitude: 0.1
-    n_cycles: 3
-    use_start_srv: false
+    n_cycles: 2
+    use_start_srv: true
     start_time: 2.0
+    axis: "z"
 
+# --- Viz ---
 # Visualization Node Parameters
 rim_vis_node:
   ros__parameters:
     i3_sphere_size: 0.03
     rim_sphere_size: 0.03
 
-# Network Simulation Parameters
+# --- Network Delays ---
 rim_msg_delay:
   ros__parameters:
     input_topic: "/fr3_rim"
     output_topic: "/fr3_rim_delayed" 
-    delay: 0
+    delay: 0 # ms
     message_type: "arm_interfaces/msg/FrankaRIM"
 
 ee_cmd_delay:

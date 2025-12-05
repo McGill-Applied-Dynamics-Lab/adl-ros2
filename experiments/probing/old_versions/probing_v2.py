@@ -17,7 +17,7 @@ def plunge(
     depth: float,
     plunge_time: float = 1.0,
     traj_freq: float = 100.0,
-    fixed_ori: R = None,
+    fixed_ori: R | None = None,
 ):
     """
     Quarter-sine plunge from start_xyz to final depth.
@@ -88,9 +88,14 @@ def main():
     #     file_path=CONFIG_DIR / "controllers" / "osc_pd" /"probe_controller.yaml"
     # )
 
-    robot.controller_switcher_client.switch_controller("osc_pd_controller")
-    robot.osc_pd_controller_parameters_client.load_param_config(
-        file_path=CONFIG_DIR / "controllers" / "osc_pd" / "probe_controller.yaml"
+    # robot.controller_switcher_client.switch_controller("joint_space_controller")
+    # robot.joint_space_controller_parameters_client.load_param_config(
+    #     file_path=CONFIG_DIR / "controllers" / "joint_space" / "default.yaml"
+    # )
+
+    robot.controller_switcher_client.switch_controller("fr3_pose_controller")
+    robot.fr3_pose_controller_parameters_client.load_param_config(
+        file_path=CONFIG_DIR / "controllers" / "fr3_pose" / "default.yaml"
     )
 
     # Parameters
@@ -112,8 +117,8 @@ def main():
     # Probe locations: [x, y, z_surface], load from numpy files
     PROJECT_ROOT = Path(__file__).resolve().parent  # or Path.cwd()
     base_loc = PROJECT_ROOT / "grids"
-    rf_grid = np.load(f"{base_loc}/test_grid_rf.npy") # (N, 2) array in world/robot frame
-    sf_grid = np.load(f"{base_loc}/test_grid_sf.npy") # (N, 2) array in sensor frame
+    rf_grid = np.load(f"{base_loc}/test_grid_rf.npy")  # (N, 2) array in world/robot frame
+    sf_grid = np.load(f"{base_loc}/test_grid_sf.npy")  # (N, 2) array in sensor frame
 
     # Offset all (x,y) values
     rf_probe_locations = np.hstack([rf_grid, z_surface * np.ones((len(rf_grid), 1))])
@@ -129,9 +134,13 @@ def main():
         "ee_forces": [],
     }
 
-    # Move to home position
+    # Move to start position
     print("Going to home...")
-    robot.move_to(position=home_position, speed=approach_speed)
+    print("  Waiting for robot to reach target...")
+    time.sleep(3.0)  # Give time for trajectory to complete
+
+    # robot.move_to(position=home_position, speed=approach_speed)
+    robot.set_target(position=home_position)
     time.sleep(settle_sec)
 
     # Iterate over probe locations
@@ -156,7 +165,7 @@ def main():
             traj_freq=traj_freq,
             fixed_ori=base_ori,
         )  # do not record data here
-        t_ref = time.perf_counter() # reference time for this probe location
+        t_ref = time.perf_counter()  # reference time for this probe location
 
         # Approach XY at home Z (safe height), then go to surface Z
         approach_xy = np.array([x, y, home_position[2]], dtype=float)
@@ -182,7 +191,9 @@ def main():
             traj_freq=traj_freq,
             fixed_ori=base_ori,
         )
-        exp_dict["ts"].append(ts + (t_plunge - t_ref))  # time referenced to button press (ts referenced to plunge start)
+        exp_dict["ts"].append(
+            ts + (t_plunge - t_ref)
+        )  # time referenced to button press (ts referenced to plunge start)
         exp_dict["target_poses"].append(target_poses)
         exp_dict["ee_poses"].append(ee_poses)
         exp_dict["ee_forces"].append(ee_forces)
@@ -221,6 +232,7 @@ def main():
     with open(full_dir, "wb") as f:
         pickle.dump(exp_dict, f)
         print(f"Results saved to: {full_dir}")
+
 
 if __name__ == "__main__":
     main()

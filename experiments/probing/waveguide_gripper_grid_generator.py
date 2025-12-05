@@ -4,7 +4,7 @@ from pathlib import Path
 import pickle
 
 def generate_grid(x_extent, y_extent, nx, ny, xdir=1, ydir=1):
-    """ Generate training and testing grid points within a rectangular area. """
+    """Generate training and testing grid points within a rectangular area."""
     if nx < 1 or ny < 1:
         raise ValueError("nx and ny must be >= 1")
 
@@ -37,20 +37,24 @@ def fetch_landmarks(landmark_file: str, to_fetch: list):
                 if key.strip() in to_fetch:
                     values[key.strip()] = float(val.strip())
 
+    else:
+        raise FileNotFoundError(f"Landmark file not found: {landmark_file}")
+
     return values
+
 
 # ---- Example usage ----
 if __name__ == "__main__":
     """ Generate waveguide gripper probing grid (test/train) and save to file. """
     PROJECT_ROOT = Path(__file__).resolve().parent
-    LANDMARK_FILE = PROJECT_ROOT / 'results' / 'grids' / "waveguide_gripper_landmarks.txt"
-    PROBE_DIAMETER = 0.0 # (m)
-    GRIPPER_WIDTH = 0.0320 # (m)
-    GRIPPER_LENGTH = 0.1250 # (m)
-    X_SHIFT =  0.0070 # from CAD (m)
-    Y_SHIFT =  -0.0050 # from CAD (m)
-    X_EXTENT = GRIPPER_WIDTH # (m)
-    Y_EXTENT = GRIPPER_LENGTH # (m)
+    LANDMARK_FILE = PROJECT_ROOT / "results" / "grids" / "waveguide_gripper_landmarks.txt"
+    PROBE_DIAMETER = 0.0  # (m)
+    GRIPPER_WIDTH = 0.0320  # (m)
+    GRIPPER_LENGTH = 0.1250  # (m)
+    X_SHIFT = 0.0070  # from CAD (m)
+    Y_SHIFT = -0.0050  # from CAD (m)
+    X_EXTENT = GRIPPER_WIDTH  # (m)
+    Y_EXTENT = GRIPPER_LENGTH  # (m)
 
     # Even spacing along x and y directions
     dl = 5 / 1000 # points per meter

@@ -12,7 +12,11 @@ robot = Robot(namespace="fr3")
 robot.wait_until_ready(timeout=2.0)
 
 # --- To Switch Controllers ---
-controller_name = "gravity_compensation"  # osc_pd_controller, gravity_compensation, ....
+# controller_name = "gravity_compensation"  # osc_pd_controller, gravity_compensation, ....
+# robot.controller_switcher_client.switch_controller(controller_name)
+
+
+controller_name = "fr3_pose_controller"  # osc_pd_controller, gravity_compensation, ....
 robot.controller_switcher_client.switch_controller(controller_name)
 
 print("Done")
