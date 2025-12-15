@@ -10,6 +10,7 @@ from waveguide_gripper_grid_generator import fetch_landmarks
 
 SETTLE_SEC = 0.250  # wait time after moves (s)
 
+
 # Helper functions
 def plunge(
     device: Robot,
@@ -67,7 +68,7 @@ def plunge(
         waypoints.append((target_pose, twist))
         time_from_start.append(t)
 
-    # --- Execute trajectory
+    # --- Execute trajectory ---
     # Initialize save arrays
     ee_forces = []
     ee_poses = []
@@ -75,13 +76,13 @@ def plunge(
     ts = []
 
     # print("[plunge] Sending trajectory to controller...")
-    robot.execute_trajectory(waypoints, time_from_start)
+    device.execute_trajectory(waypoints, time_from_start)
 
     # print("[plunge] Trajectory sent! Waiting for execution to complete...")
     start_time = time.time()
-    while robot.wait_for_trajectory_completion(plunge_time, timeout_margin=0.5):
-        ee_force = robot.end_effector_wrench["force"]
-        ee_pose = robot.end_effector_pose
+    while device.wait_for_trajectory_completion(plunge_time, timeout_margin=0.5):
+        ee_force = device.end_effector_wrench["force"]
+        ee_pose = device.end_effector_pose
         time_stamp = time.time() - start_time
 
         ee_poses.append(ee_pose)
@@ -103,41 +104,49 @@ def main():
     franka.wait_until_ready()
 
     # Choose controller that accepts trajectories in Cartesian space
-    robot.controller_switcher_client.switch_controller("fr3_pose_controller")
-    robot.fr3_pose_controller_parameters_client.load_param_config(
+    franka.controller_switcher_client.switch_controller("fr3_pose_controller")
+    franka.fr3_pose_controller_parameters_client.load_param_config(
         file_path=CONFIG_DIR / "controllers" / "fr3_pose" / "default.yaml"
     )
 
     # Load landmark file
     PROJECT_ROOT = Path(__file__).resolve().parent  # or Path.cwd()
-    landmark_file = PROJECT_ROOT / "results" / "grids" / "waveguide_gripper_landmarks.txt"
+    landmark_file = (
+        PROJECT_ROOT / "results" / "grids" / "waveguide_gripper_landmarks.txt"
+    )
     try:
         landmarks = fetch_landmarks(landmark_file, ["x", "y", "z"])
-
-    except FileNotFoundError as e:
-        landmarks = {"x": 0.4, "y": 0.0, "z": 0.4}
-        print(f"Warning: {e}. Using default landmarks.")
+    except FileNotFoundError:
+        raise FileNotFoundError(
+            f"Landmark file not found: {landmark_file}. Please run the landmark detection script first."
+        )
 
     # Define probing parameters
-    z_offset = 0.0250 # (m) offset from landmark z to surface
-    z_surface = landmarks['z'] + z_offset  # (m)
-    home_position = np.array([landmarks['x'], landmarks['y'], z_surface])  # home location (m)
-    retraction_sec = 5.0 # time to execute retractions (s)
-    set_name = 'train'
+    z_offset = 0.0250  # (m) offset from landmark z to surface
+    z_surface = landmarks["z"] + z_offset  # (m)
+    home_position = np.array(
+        [landmarks["x"], landmarks["y"], z_surface]
+    )  # home location (m)
+    retraction_sec = 5.0  # time to execute retractions (s)
+    set_name = "train"
 
     depth = z_offset + 0.0050  # plunge depth (m)
     plunge_time = 1.0  # plunge duration (s)
     traj_freq = 200.0  # (Hz)
 
-    base_ori = R.from_euler("xyz", [-270, 0, 0], degrees=True)  # base orientation ([roll, pitch, yaw], degrees)
+    base_ori = R.from_euler(
+        "xyz", [-270, 0, 0], degrees=True
+    )  # base orientation ([roll, pitch, yaw], degrees)
     base_pose = Pose(position=home_position, orientation=base_ori)
 
     # Probe locations: [x, y, z_surface], load from numpy files
-    grid_loc = PROJECT_ROOT / "results" / "grids" / 'GRIPPER_GRID.pkl'
+    grid_loc = PROJECT_ROOT / "results" / "grids" / "GRIPPER_GRID.pkl"
     with open(grid_loc, "rb") as f:
         grid_dict = pickle.load(f)
     grid = grid_dict[f"{set_name}_world_frame"]
-    probe_locations = np.hstack([grid, z_surface * np.ones((len(grid), 1))]) # append z_surface to make (N, 3) arrays
+    probe_locations = np.hstack(
+        [grid, z_surface * np.ones((len(grid), 1))]
+    )  # append z_surface to make (N, 3) arrays
 
     ts_list = []
     target_poses_list = []
@@ -165,8 +174,8 @@ def main():
         # TODO: update set_target to move_to method which computes a trajectory.
         # For now, use set_target, but a big delay to make sure robot reaches target.
         # or add a robot.wait_until_at_target() method ...
-        robot.set_target(pose=Pose(position=surface_xyz, orientation=base_ori))
-        time.sleep(delay_sec)
+        franka.set_target(pose=Pose(position=surface_xyz, orientation=base_ori))
+        time.sleep(SETTLE_SEC)
 
         input("\tPress Enter to start probing...")
 
@@ -176,8 +185,8 @@ def main():
             device=franka,
             start_xyz=surface_xyz,
             depth=depth,
-            plunge_time=3.0,
-            traj_freq=20,
+            plunge_time=plunge_time,
+            traj_freq=traj_freq,
             fixed_ori=base_ori,
         )
         ts_list.append(ts)  # time stamps
@@ -205,22 +214,31 @@ def main():
 
     # Convert to numpy safe
     ts_list = np.asarray(ts_list)
-    target_positions_list = np.asarray([[pose.position for pose in trial] for trial in target_poses_list])
-    target_orientations_list = np.asarray([[pose.orientation.as_quat() for pose in trial] for trial in target_poses_list])
-    ee_positions_list = np.array([[pose.position for pose in trial] for trial in ee_poses_list])
-    ee_orientations_list = np.array([[pose.orientation.as_quat() for pose in trial] for trial in ee_poses_list])
+    target_positions_list = np.asarray(
+        [[pose.position for pose in trial] for trial in target_poses_list]
+    )
+    target_orientations_list = np.asarray(
+        [[pose.orientation.as_quat() for pose in trial] for trial in target_poses_list]
+    )
+    ee_positions_list = np.array(
+        [[pose.position for pose in trial] for trial in ee_poses_list]
+    )
+    ee_orientations_list = np.array(
+        [[pose.orientation.as_quat() for pose in trial] for trial in ee_poses_list]
+    )
     ee_forces_list = np.asarray(ee_forces_list)
 
     # Create experiment dict
     exp_dict = {}
     exp_dict["ts"] = ts_list
-    exp_dict['target_positions'] = target_positions_list
-    exp_dict['target_orientations'] = target_orientations_list
-    exp_dict['ee_positions'] = ee_positions_list
-    exp_dict['ee_orientations'] = ee_orientations_list
-    exp_dict['ee_forces'] = ee_forces_list
-    exp_dict['probe_locations'] = grid[f"{set_name}_gripper_frame"]  # (N, 2) array of (x, y) probe locations in world frame
-
+    exp_dict["target_positions"] = target_positions_list
+    exp_dict["target_orientations"] = target_orientations_list
+    exp_dict["ee_positions"] = ee_positions_list
+    exp_dict["ee_orientations"] = ee_orientations_list
+    exp_dict["ee_forces"] = ee_forces_list
+    exp_dict["probe_locations"] = grid[
+        f"{set_name}_gripper_frame"
+    ]  # (N, 2) array of (x, y) probe locations in world frame
 
     # Save results
     results_dir = PROJECT_ROOT / "results"
