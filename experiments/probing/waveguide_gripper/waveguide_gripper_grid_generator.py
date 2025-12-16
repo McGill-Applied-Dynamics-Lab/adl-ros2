@@ -46,7 +46,7 @@ if __name__ == "__main__":
     """Generate waveguide gripper probing grid (test/train) and save to file."""
     PROJECT_ROOT = Path(__file__).resolve().parent
     LANDMARK_FILE = (
-        PROJECT_ROOT / "results" / "grids" / "waveguide_gripper_landmarks.txt"
+        PROJECT_ROOT / "results" / "grids" / "landmarks.txt"
     )
     PROBE_DIAMETER = 0.0  # (m)
     GRIPPER_WIDTH = 0.0320  # (m)
@@ -57,49 +57,51 @@ if __name__ == "__main__":
     Y_EXTENT = GRIPPER_LENGTH  # (m)
 
     # Even spacing along x and y directions
-    dl = 5 / 1000  # points per meter
+    dl = 15 / 1000  # points per meter
     nx = int(X_EXTENT / dl)
     ny = int(Y_EXTENT / dl)
 
-    grid = {}
-    # Save parameters
-    grid["dl"] = dl
-    grid["nx"] = nx
-    grid["ny"] = ny
+    grids = {}
 
-    train, test = generate_grid(
+    train_, test_ = generate_grid(
         x_extent=X_EXTENT, y_extent=Y_EXTENT, nx=nx, ny=ny, xdir=1, ydir=-1
     )  # generate rectangular grid
-    grid["train_gripper_frame"] = train.T
-    grid["test_gripper_frame"] = test.T
-    print(f"Length of train set: {len(train)}")
-    print(f"Length of test set: {len(test)}")
+
+    # Store gripper frame (before landmark offset)
+    grids["GRIPPER_FRAME"] = {"train": train_.T, "test": test_.T}
+
+    print(f"Length of train set: {len(train_.T)}")
+    print(f"Length of test set: {len(test_.T)}")
 
     # Apply shifts
-    train[0, :] += X_SHIFT
-    train[1, :] += Y_SHIFT
-    test[0, :] += X_SHIFT
-    test[1, :] += Y_SHIFT
+    train_[0, :] += X_SHIFT
+    train_[1, :] += Y_SHIFT
+    test_[0, :] += X_SHIFT
+    test_[1, :] += Y_SHIFT
+
     # Apply landmark offset
     landmarks = fetch_landmarks(LANDMARK_FILE, ["x", "y", "z"])
-    train[0, :] += landmarks["x"]
-    train[1, :] += landmarks["y"]
-    test[0, :] += landmarks["x"]
-    test[1, :] += landmarks["y"]
+    train_[0, :] += landmarks["x"]
+    train_[1, :] += landmarks["y"]
+    test_[0, :] += landmarks["x"]
+    test_[1, :] += landmarks["y"]
 
-    grid["train_world_frame"] = train.T
-    grid["test_world_frame"] = test.T
+    # Store world frame (after landmark offset) - transpose to (N, 2) shape
+    train = train_.T
+    test = test_.T
+    grids["WORLD_FRAME"] = {"train": train, "test": test}
 
     # Save grid using pickle
-    grid_file = PROJECT_ROOT / "results" / "grids" / f"GRIPPER_GRID.pkl"
+    grid_file = PROJECT_ROOT / "results" / "grids" / f"grids.pkl"
     with open(grid_file, "wb") as f:
-        pickle.dump(grid, f)
+        pickle.dump(grids, f)
     print("Grid saved to:", grid_file)
 
     # Plot grids
-    plt.scatter(train[0, :], train[1, :], label="Train")
-    plt.scatter(test[0, :], test[1, :], label="Test")
-    plt.scatter(landmarks["x"], landmarks["y"], marker="x", color="k", s=50)
+    plt.title(f"Train points: {len(train)}, Test points: {len(test)}")
+    plt.scatter(train[:, 0], train[:, 1], color="b", label="Train (World Frame)")
+    plt.scatter(test[:, 0], test[:, 1], color="g", label="Test (World Frame)")
+    plt.scatter(landmarks["x"], landmarks["y"], marker="x", color="r", s=100, label="Landmark")
     plt.axis("equal")
     plt.xlabel("X (m)")
     plt.ylabel("Y (m)")

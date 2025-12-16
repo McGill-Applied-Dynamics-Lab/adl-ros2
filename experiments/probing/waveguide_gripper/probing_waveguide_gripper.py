@@ -1,62 +1,63 @@
 import time
 import numpy as np
 from scipy.spatial.transform import Rotation as R
-from sympy import rf
 from arm_client.robot import Robot, Pose, Twist
 from arm_client import CONFIG_DIR
 from pathlib import Path
 import pickle
 from waveguide_gripper_grid_generator import fetch_landmarks
 
-SETTLE_SEC = 0.250  # wait time after moves (s)
+SETTLE_SEC = 2.00  # wait time after moves (s)
+TRAJ_FREQ = 10.0  # Hz
 
 
 # Helper functions
-def plunge(
-    device: Robot,
+def probe(
+    robot: Robot,
     start_xyz: np.ndarray,
     depth: float,
-    plunge_time: float = 1.0,
-    traj_freq: float = 100.0,
+    probe_time: float,
+    traj_freq: float = 5.0,
     fixed_ori: R | None = None,
+    probe_func: str = 'cos'
 ):
     """
-    Quarter-sine plunge from start_xyz to final depth.
-    - s in [0,1] -> z(s) = z0 + (zf - z0) * sin(pi/2 * s)
-    - Ends at phase 90 deg. (velocity = 0).
+    Complete plunge and retract motion.
 
     Args:
-        device: Robot client (already ready & in Cartesian control).
+        robot: Robot client (already ready & in Cartesian control).
         start_xyz: np.array([x, y, z_surface]) start point of plunge.
-        depth: positive = move down along -Z (final z = z_surface - depth).
-        plunge_time: seconds to complete the plunge.
+        depth: probe depth (positive indicates downwards).
+        probe_time: seconds to complete the probe cycle (plunge + retract).
         traj_freq: Frequency of trajectory points per second.
     """
-    # Fix starting orientation and make a working target pose
-    cur = device.end_effector_pose.copy()  # Pose(position, orientation)
+    # Define starting orientation
+    cur = robot.end_effector_pose.copy()  # Pose(position, orientation)
     if fixed_ori is None:
-        fixed_ori = cur.orientation  # keep orientation constant during plunge
+        fixed_ori = cur.orientation  # maintain current orientation
     target_pose = cur.copy()
     target_pose.position = start_xyz.astype(float)
 
-    # Ensure we start exactly at the commanded start pose
-    device.set_target(pose=target_pose)
+    # Move to input start location
+    robot.set_target(pose=target_pose)
     time.sleep(SETTLE_SEC)
 
-    # --- Compute plunge trajectory ---
-    z0 = float(start_xyz[2])
-    zf = z0 - float(depth)  # positive depth goes down
-    N = max(1, int(plunge_time * traj_freq))
+    # --- Compute probe trajectory ---
+    z_init = float(start_xyz[2])
+    N = max(1, int(probe_time * traj_freq))
     dt = 1.0 / traj_freq
     t0 = time.perf_counter()
 
-    waypoints = []  # List of (Pose, Twist) tuples of the trajectory
-    time_from_start = []  # Matching time of the trajectory points
+    waypoints = []  # list of (Pose, Twist) tuples of the trajectory
+    time_from_start = []  # matching time of the trajectory points
 
     # Include the endpoint (k = 0..N)
     for k in range(N + 1):
         s = k / N  # 0..1
-        z = z0 + (zf - z0) * np.sin(0.5 * np.pi * s)
+        if probe_func == 'cos':
+            z = z_init + depth / 2 * (np.cos(2 * np.pi * s) - 1)
+        elif probe_func == 'linear':
+            z = z_init + depth * (np.abs(2*s - 1) - 1)
         t = k * dt
 
         target_position = np.array([start_xyz[0], start_xyz[1], z], dtype=float)
@@ -72,189 +73,175 @@ def plunge(
     # Initialize save arrays
     ee_forces = []
     ee_poses = []
-    target_poses = []
     ts = []
 
-    # print("[plunge] Sending trajectory to controller...")
-    device.execute_trajectory(waypoints, time_from_start)
+    robot.execute_trajectory(waypoints, time_from_start)
 
-    # print("[plunge] Trajectory sent! Waiting for execution to complete...")
-    start_time = time.time()
-    while device.wait_for_trajectory_completion(plunge_time, timeout_margin=0.5):
-        ee_force = device.end_effector_wrench["force"]
-        ee_pose = device.end_effector_pose
-        time_stamp = time.time() - start_time
+    t0 = time.perf_counter()
+    t_min = 0.0
+    z_min = z_init
+    while robot.wait_for_trajectory_completion(probe_time, timeout_margin=0.5):
+        ee_force = robot.end_effector_wrench["force"]
+        ee_pose = robot.end_effector_pose
+        time_stamp = time.perf_counter() - t0  # time since trajectory start
 
-        ee_poses.append(ee_pose)
-        ts.append(time_stamp)
-        ee_forces.append(ee_force)
+        # Time-stamp when z-displacement is max
+        if ee_pose.position[2] < z_min:
+            z_min = ee_pose.position[2]
+            t_min = time.perf_counter()  # absolute time
 
         # Record data
-        ee_poses.append(device.end_effector_pose.copy())
-        ee_forces.append(device.end_effector_wrench["force"].copy())
-        target_poses.append(target_pose.copy())
-        ts.append(time.perf_counter() - t0)
+        ee_poses.append(ee_pose.copy())
+        ee_forces.append(ee_force.copy())
+        ts.append(time_stamp)
 
-    return ts, target_poses, ee_poses, ee_forces
+        # Must have sleep
+        time.sleep(0.01)
+
+    return ts, ee_poses, ee_forces, t_min
+
+
+# Probing parameters
+Z_OFFSET = 0.0250  # (m) offset from landmark z to surface
+PROBE_DEPTH = 0.0200  # m (additional depth beyond z_offset)
+PROBE_TIME = 2.0  # plunge and retract (s)
+BASE_ORI = R.from_euler("xyz", [-270, 0, 0], degrees=True)
 
 
 def main():
-    # Franka setup
-    franka = Robot(namespace="fr3")
-    franka.wait_until_ready()
+    # Setup
+    robot = Robot(namespace="fr3")
+    robot.wait_until_ready()
 
-    # Choose controller that accepts trajectories in Cartesian space
-    franka.controller_switcher_client.switch_controller("fr3_pose_controller")
-    franka.fr3_pose_controller_parameters_client.load_param_config(
+    robot.controller_switcher_client.switch_controller("fr3_pose_controller")
+    robot.fr3_pose_controller_parameters_client.load_param_config(
         file_path=CONFIG_DIR / "controllers" / "fr3_pose" / "default.yaml"
     )
 
     # Load landmark file
-    PROJECT_ROOT = Path(__file__).resolve().parent  # or Path.cwd()
+    PROJECT_ROOT = Path(__file__).resolve().parent
     landmark_file = (
-        PROJECT_ROOT / "results" / "grids" / "waveguide_gripper_landmarks.txt"
+        PROJECT_ROOT / "results" / "grids" / "landmarks.txt"
     )
-    try:
-        landmarks = fetch_landmarks(landmark_file, ["x", "y", "z"])
-    except FileNotFoundError:
+
+    # Check if landmark file exists
+    if not landmark_file.exists():
         raise FileNotFoundError(
             f"Landmark file not found: {landmark_file}. Please run the landmark detection script first."
         )
 
-    # Define probing parameters
-    z_offset = 0.0250  # (m) offset from landmark z to surface
-    z_surface = landmarks["z"] + z_offset  # (m)
-    home_position = np.array(
-        [landmarks["x"], landmarks["y"], z_surface]
-    )  # home location (m)
-    retraction_sec = 5.0  # time to execute retractions (s)
-    set_name = "train"
+    landmarks = fetch_landmarks(landmark_file, ["x", "y", "z"])
 
-    depth = z_offset + 0.0050  # plunge depth (m)
-    plunge_time = 1.0  # plunge duration (s)
-    traj_freq = 200.0  # (Hz)
+    # Parameters - use landmarks for home position
+    z_surface = landmarks["z"] + Z_OFFSET  # (m) surface is offset from landmark
+    home_position = np.array([landmarks["x"], landmarks["y"], z_surface])
+    home_pose = Pose(home_position, BASE_ORI)
 
-    base_ori = R.from_euler(
-        "xyz", [-270, 0, 0], degrees=True
-    )  # base orientation ([roll, pitch, yaw], degrees)
-    base_pose = Pose(position=home_position, orientation=base_ori)
+    # Load probe locations from grid file
+    grid_file = PROJECT_ROOT / "results" / "grids" / "grids.pkl"
 
-    # Probe locations: [x, y, z_surface], load from numpy files
-    grid_loc = PROJECT_ROOT / "results" / "grids" / "GRIPPER_GRID.pkl"
-    with open(grid_loc, "rb") as f:
-        grid_dict = pickle.load(f)
-    grid = grid_dict[f"{set_name}_world_frame"]
-    probe_locations = np.hstack(
-        [grid, z_surface * np.ones((len(grid), 1))]
-    )  # append z_surface to make (N, 3) arrays
+    # Check if grid file exists
+    if not grid_file.exists():
+        raise FileNotFoundError(
+            f"Grid file not found: {grid_file}. Please run grid_generator.py first."
+        )
 
-    ts_list = []
-    target_poses_list = []
-    ee_poses_list = []
-    ee_forces_list = []
+    with open(grid_file, "rb") as f:
+        grids = pickle.load(f)
 
-    # Move to home position
-    print("Going to home...")
-    franka.move_to(pose=base_pose, time_to_move=retraction_sec)
-    time.sleep(SETTLE_SEC)
+    # Let user select train or test set
+    set_name = input("Select grid set (train/test) [default: test]: ").strip().lower()
+    if set_name not in ["train", "test"]:
+        set_name = "test"
+        print(f"Invalid selection. Using default: {set_name}")
+
+    # Get world frame grid (N, 2) array for robot motion
+    grid_xy_world = grids["WORLD_FRAME"][set_name]  # (N, 2) array in world/robot frame
+
+    # Get gripper frame grid (N, 2) array for data saving
+    grid_xy_gripper = grids["GRIPPER_FRAME"][set_name]  # (N, 2) array in gripper frame
+
+    # Initialize results
+    exp_dict = {
+        "ts": [],
+        "grid_positions": [],  # Store the (x, y) positions from the grid in GRIPPER_FRAME
+        "ee_poses": [],
+        "ee_forces": [],
+        "set_name": set_name,  # Record which set was used
+        "landmarks": landmarks,  # Store landmarks for reference
+        "z_offset": Z_OFFSET,  # Store z_offset for reference
+    }
 
     # Iterate over probe locations
     input("Press Enter to start probing...")
-    for i, loc in enumerate(probe_locations):
-        (x, y, z_surface) = loc
+    for i, loc in enumerate(grid_xy_world):
+        x, y = loc
+        # Save gripper frame coordinates
+        x_gripper, y_gripper = grid_xy_gripper[i]
+        exp_dict["grid_positions"].append([x_gripper, y_gripper])
+        print(f"\n Probe {i + 1}/{len(grid_xy_world)}")
 
-        print(
-            f"\n=== Probe {i + 1}/{len(probe_locations)} at [{x - landmarks['x']:.3f}, {y - landmarks['y']:.3f}, {z_surface - landmarks['z']:.3f}] ==="
+        # --- Move to probe location ---
+        print("\tMoving to probe location...")
+        approach_xy = np.array([x, y, z_surface], dtype=float)
+        robot.set_target(position=approach_xy)
+        time.sleep(SETTLE_SEC)
+
+        # --- Probe cycle ---
+        print("\tStarting probe...")
+        ts, ee_poses, ee_forces, _ = probe(
+            robot,
+            start_xyz=approach_xy,
+            depth=Z_OFFSET + PROBE_DEPTH,  # Total depth from surface
+            probe_time=PROBE_TIME,
+            traj_freq=TRAJ_FREQ,
+            fixed_ori=BASE_ORI,
+            probe_func='linear'
         )
 
-        # Move to probe location
-        print(f"\tMoving to probe location...")
-        surface_xyz = np.array([x, y, z_surface], dtype=float)
+        # Convert Pose objects to numpy arrays for saving
+        ee_positions = [pose.position for pose in ee_poses]
+        ee_orientations = [pose.orientation.as_quat() for pose in ee_poses]
 
-        # TODO: update set_target to move_to method which computes a trajectory.
-        # For now, use set_target, but a big delay to make sure robot reaches target.
-        # or add a robot.wait_until_at_target() method ...
-        franka.set_target(pose=Pose(position=surface_xyz, orientation=base_ori))
-        time.sleep(SETTLE_SEC)
-
-        input("\tPress Enter to start probing...")
-
-        print(f"\tStarting plunge...")
-        # Plunge: quarter-sine to final depth (velocity = 0 at end)
-        ts, target_poses, ee_poses, ee_forces = plunge(
-            device=franka,
-            start_xyz=surface_xyz,
-            depth=depth,
-            plunge_time=plunge_time,
-            traj_freq=traj_freq,
-            fixed_ori=base_ori,
-        )
-        ts_list.append(ts)  # time stamps
-        target_poses_list.append(target_poses)
-        ee_poses_list.append(ee_poses)
-        ee_forces_list.append(ee_forces)
-        print(f"\tPlunge complete.")
-        time.sleep(SETTLE_SEC)
-
-        # Move back home (retract in Z, then move in XY)
-        print(f"\tRetracting...")
-        retract_xyz = surface_xyz.copy()
-        # robot.move_to(position=retract_xyz, time_to_move=retraction_sec)
-        franka.set_target(position=retract_xyz)
-        time.sleep(SETTLE_SEC)
+        # --- Store results ---
+        exp_dict["ts"].append(ts)
+        # Store numpy arrays instead of Pose objects
+        exp_dict["ee_poses"].append({
+            "positions": ee_positions,
+            "orientations": ee_orientations
+        })
+        exp_dict["ee_forces"].append(ee_forces)  # already numpy arrays
+        print("\tProbe complete.")
 
     # Return home at the end
     print("\nReturning home...")
-    # robot.move_to(pose=base_pose, time_to_move=retraction_sec)
-    franka.set_target(pose=base_pose)
+    robot.set_target(pose=home_pose)
     time.sleep(SETTLE_SEC)
 
-    franka.shutdown()
+    robot.shutdown()
     print("Done.")
-
-    # Convert to numpy safe
-    ts_list = np.asarray(ts_list)
-    target_positions_list = np.asarray(
-        [[pose.position for pose in trial] for trial in target_poses_list]
-    )
-    target_orientations_list = np.asarray(
-        [[pose.orientation.as_quat() for pose in trial] for trial in target_poses_list]
-    )
-    ee_positions_list = np.array(
-        [[pose.position for pose in trial] for trial in ee_poses_list]
-    )
-    ee_orientations_list = np.array(
-        [[pose.orientation.as_quat() for pose in trial] for trial in ee_poses_list]
-    )
-    ee_forces_list = np.asarray(ee_forces_list)
-
-    # Create experiment dict
-    exp_dict = {}
-    exp_dict["ts"] = ts_list
-    exp_dict["target_positions"] = target_positions_list
-    exp_dict["target_orientations"] = target_orientations_list
-    exp_dict["ee_positions"] = ee_positions_list
-    exp_dict["ee_orientations"] = ee_orientations_list
-    exp_dict["ee_forces"] = ee_forces_list
-    exp_dict["probe_locations"] = grid[
-        f"{set_name}_gripper_frame"
-    ]  # (N, 2) array of (x, y) probe locations in world frame
 
     # Save results
     results_dir = PROJECT_ROOT / "results"
     results_dir.mkdir(parents=True, exist_ok=True)
-    # Save dict using pickle
-    full_dir = results_dir / "TEMP.pkl"
-    # Make sure file does not already exist / else save
-    if full_dir.exists():
-        # Ask user to confirm overwrite
-        response = input(f"File already exists: {full_dir}. Overwrite? (y/n) ")
-        if response.lower() != "y":
-            print("Aborting save.")
-            return
-    with open(full_dir, "wb") as f:
+
+    # Generate filename based on set name and number of points
+    # Add number suffix if file exists (starting from 00)
+    base_filename = f"{len(grid_xy_world)}_grid_{set_name.upper()}"
+    counter = 0
+    filename = f"{base_filename}_{counter:02d}.pkl"
+    full_path = results_dir / filename
+
+    # Find the next available number
+    while full_path.exists():
+        counter += 1
+        filename = f"{base_filename}_{counter:02d}.pkl"
+        full_path = results_dir / filename
+
+    # Save the data
+    with open(full_path, "wb") as f:
         pickle.dump(exp_dict, f)
-        print(f"Results saved to: {full_dir}")
+        print(f"Results saved to: {full_path}")
 
 
 if __name__ == "__main__":
