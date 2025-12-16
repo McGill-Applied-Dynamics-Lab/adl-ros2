@@ -6,6 +6,8 @@ x-base: &base
     target: base
     args:
       ROS_DISTRO: humble
+      USER_UID: 1001
+      USER_GID: 1001
 
   # --- Settings
   network_mode: "host"

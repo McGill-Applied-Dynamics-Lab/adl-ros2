@@ -39,7 +39,7 @@
                 "xaver.clang-format",
                 "josetr.cmake-language-support-vscode",
                 "twxs.cmake",
-                "cheshirekow.cmake-format",
+                "cheshirekow.cmake-format"
             ]
         }
     },
@@ -53,7 +53,7 @@
         "source=/dev/dri,target=/dev/dri,type=bind,consistency=cached"
     ],
     "runArgs": [
-        "--device=/dev/input/js0", // Pass the joystick device
+        "--device=/dev/input/js0" // Pass the joystick device
         // "--runtime=nvidia",
         // "--gpus",
         // "all"

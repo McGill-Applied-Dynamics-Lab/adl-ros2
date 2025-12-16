@@ -68,7 +68,7 @@ if __name__ == "__main__":
     grids = {}  # dictionary to hold grids
 
     train_, test_ = generate_grid(
-        x_extent=X_EXTENT, y_extent=Y_EXTENT, nx=8, ny=8
+        x_extent=X_EXTENT, y_extent=Y_EXTENT, nx=4, ny=4
     )  # generate rectangular grid
     grids["SENSOR_FRAME"] = {"train": train_.T, "test": test_.T}
     # Apply shifts

@@ -1,16 +1,12 @@
-from re import S
 import time
 import numpy as np
-import matplotlib.pyplot as plt
 from scipy.spatial.transform import Rotation as R
-from sympy import rf
-from arm_client import robot
 from arm_client.robot import Robot, Pose, Twist
 from arm_client import CONFIG_DIR
 from pathlib import Path
 import pickle
 
-SETTLE_SEC = 0.250  # wait time after moves (s)
+SETTLE_SEC = 0.500  # wait time after moves (s)
 
 
 # Helper functions
@@ -101,31 +97,19 @@ def main():
     robot = Robot(namespace="fr3")
     robot.wait_until_ready()
 
-    # Choose controller that accepts /target_pose
-    # robot.controller_switcher_client.switch_controller("osc_pd_controller")
-    # robot.haptic_controller_parameters_client.load_param_config(
-    #     file_path=CONFIG_DIR / "controllers" / "osc_pd" /"probe_controller.yaml"
-    # )
-
-    # robot.controller_switcher_client.switch_controller("joint_space_controller")
-    # robot.joint_space_controller_parameters_client.load_param_config(
-    #     file_path=CONFIG_DIR / "controllers" / "joint_space" / "default.yaml"
-    # )
-
     robot.controller_switcher_client.switch_controller("fr3_pose_controller")
     robot.fr3_pose_controller_parameters_client.load_param_config(
-        file_path=CONFIG_DIR / "controllers" / "fr3_pose" / "default.yaml"
+        file_path=CONFIG_DIR / "controllers" / "fr3_pose" / "probing.yaml"
     )
 
     # Parameters
     z_surface = 0.15  # (m)
     home_position = np.array([0.60, -0.060, z_surface])  # button location
-    approach_speed = 0.050  # (m/s)
 
     depth = 0.0575  # plunge depth (m)
     plunge_time = 1.0  # plunge duration (s)
     plunge_rest = 1.0  # rest time at depth (s)
-    traj_freq = 200.0  # Hz
+    traj_freq = 50.0  # Hz
 
     trig_depth = 0.0250  # trigger depth (m)
     trig_plunge_time = 0.5  # trigger plunge duration (s)
@@ -174,7 +158,6 @@ def main():
 
     # Move to start position
     print("Going to home...")
-    # robot.move_to(position=home_position, speed=approach_speed)
     robot.set_target(position=home_position)
     print("  Waiting for robot to reach target...")
     time.sleep(3.0)  # Give time for trajectory to complete
@@ -198,6 +181,7 @@ def main():
         time.sleep(SETTLE_SEC)
 
         # Press trigger
+        input('PRESS')
         print("\tPressing trigger...")
         plunge(
             robot,
@@ -209,15 +193,13 @@ def main():
         )  # do not record data here
         t_ref = time.perf_counter()  # reference time for this probe location
 
-        input("\tPress Enter to approach probe location...")
-
         # Approach XY at home Z (safe height), then go to surface Z
         print("\tMoving to probe location...")
         approach_xy = np.array([x, y, home_position[2]], dtype=float)
-        robot.move_to(position=approach_xy, speed=approach_speed)
+        robot.set_target(position=approach_xy)
 
         surface_xyz = np.array([x, y, z], dtype=float)
-        robot.move_to(position=surface_xyz, speed=approach_speed)
+        robot.set_target(position=surface_xyz)
         time.sleep(SETTLE_SEC)
 
         # Maintain orientation at surface
@@ -226,9 +208,8 @@ def main():
         robot.set_target(pose=start_pose)
         time.sleep(SETTLE_SEC)
 
-        input("\tPress Enter to start plunge...")
-
         # Plunge: quarter-sine to final depth (velocity = 0 at end)
+        input('PRESS')
         print("\tStarting plunge...")
         t_plunge = time.perf_counter()
         ts, target_poses, ee_poses, ee_forces = plunge(
@@ -239,12 +220,28 @@ def main():
             traj_freq=traj_freq,
             fixed_ori=base_ori,
         )
-        exp_dict["ts"].append(
-            ts + (t_plunge - t_ref)
-        )  # time referenced to button press (ts referenced to plunge start)
-        exp_dict["target_poses"].append(target_poses)
-        exp_dict["ee_poses"].append(ee_poses)
-        exp_dict["ee_forces"].append(ee_forces)
+
+        # Convert Pose objects to numpy arrays for saving
+        target_positions = [pose.position for pose in target_poses]
+        target_orientations = [pose.orientation.as_quat() for pose in target_poses]
+        ee_positions = [pose.position for pose in ee_poses]
+        ee_orientations = [pose.orientation.as_quat() for pose in ee_poses]
+
+        # Store time referenced to button press (ts referenced to plunge start)
+        # Add time offset to each timestamp in the list
+        time_offset = t_plunge - t_ref
+        ts_adjusted = [t + time_offset for t in ts]
+        exp_dict["ts"].append(ts_adjusted)
+        # Store numpy arrays instead of Pose objects
+        exp_dict["target_poses"].append({
+            "positions": target_positions,
+            "orientations": target_orientations
+        })
+        exp_dict["ee_poses"].append({
+            "positions": ee_positions,
+            "orientations": ee_orientations
+        })
+        exp_dict["ee_forces"].append(ee_forces)  # already numpy arrays
         print("\tPlunge complete.")
 
         # Brief settle at depth
@@ -253,15 +250,15 @@ def main():
         # Move back home (retract in Z, then move in XY)
         print("\tRetracting...")
         retract_xyz = surface_xyz.copy()
-        robot.move_to(position=retract_xyz, speed=approach_speed)
+        robot.set_target(position=retract_xyz)
         time.sleep(SETTLE_SEC)
 
-        robot.move_to(position=home_position, speed=approach_speed)
+        robot.set_target(position=home_position)
         time.sleep(SETTLE_SEC)
 
     # Return home at the end
     print("\nReturning home...")
-    robot.move_to(position=home_position, speed=approach_speed)
+    robot.set_target(position=home_position)
     time.sleep(SETTLE_SEC)
 
     robot.shutdown()
@@ -272,19 +269,22 @@ def main():
     results_dir.mkdir(parents=True, exist_ok=True)
 
     # Generate filename based on set name and number of points
-    filename = f"{len(probe_locations)}_grid_{set_name.upper()}.pkl"
-    full_dir = results_dir / filename
-
-    # Make sure file does not already exist / else save
-    if full_dir.exists():
-        # Ask user to confirm overwrite
-        response = input(f"File already exists: {full_dir}. Overwrite? (y/n) ")
-        if response.lower() != "y":
-            print("Aborting save.")
-            return
-    with open(full_dir, "wb") as f:
+    # Add number suffix if file exists (starting from 00)
+    base_filename = f"{len(probe_locations)}_grid_{set_name.upper()}"
+    counter = 0
+    filename = f"{base_filename}_{counter:02d}.pkl"
+    full_path = results_dir / filename
+    
+    # Find the next available number
+    while full_path.exists():
+        counter += 1
+        filename = f"{base_filename}_{counter:02d}.pkl"
+        full_path = results_dir / filename
+    
+    # Save the data
+    with open(full_path, "wb") as f:
         pickle.dump(exp_dict, f)
-        print(f"Results saved to: {full_dir}")
+        print(f"Results saved to: {full_path}")
 
 
 if __name__ == "__main__":

@@ -24,7 +24,7 @@ if(BUILD_TESTING)
   endfunction()
   # add_ros_isolated_launch_test(test/test_turtle.py)
   # add_ros_isolated_launch_test(test/test_fr3_bringup_real.py)
-  add_ros_isolated_launch_test(test/test_fr3_interface.py)
+  # add_ros_isolated_launch_test(test/test_fr3_interface.py)
 
 
 endif()

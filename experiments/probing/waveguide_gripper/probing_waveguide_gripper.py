@@ -194,20 +194,20 @@ def main():
         ee_poses_list.append(ee_poses)
         ee_forces_list.append(ee_forces)
         print(f"\tPlunge complete.")
-        time.sleep(delay_sec)
+        time.sleep(SETTLE_SEC)
 
         # Move back home (retract in Z, then move in XY)
         print(f"\tRetracting...")
         retract_xyz = surface_xyz.copy()
         # robot.move_to(position=retract_xyz, time_to_move=retraction_sec)
-        robot.set_target(position=retract_xyz)
-        time.sleep(delay_sec)
+        franka.set_target(position=retract_xyz)
+        time.sleep(SETTLE_SEC)
 
     # Return home at the end
     print("\nReturning home...")
     # robot.move_to(pose=base_pose, time_to_move=retraction_sec)
-    robot.set_target(pose=base_pose)
-    time.sleep(delay_sec)
+    franka.set_target(pose=base_pose)
+    time.sleep(SETTLE_SEC)
 
     franka.shutdown()
     print("Done.")
