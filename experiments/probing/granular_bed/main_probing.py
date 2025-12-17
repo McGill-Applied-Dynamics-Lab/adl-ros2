@@ -6,7 +6,7 @@ from arm_client import CONFIG_DIR
 from pathlib import Path
 import pickle
 
-SETTLE_SEC = 2.00  # wait time after moves (s)
+SETTLE_SEC = 1.00  # wait time after moves (s)
 TRAJ_FREQ = 10.0 # Hz
 
 # Helper functions
@@ -96,10 +96,10 @@ def probe(
 
 
 Z_INIT = 0.15 # m
-BUTTON_X = 0.60 # m
-BUTTON_Y = -0.060 # m
-PROBE_DEPTH = 0.0575 # m
-PROBE_TIME = 2.0 # plunge and retract (s)
+BUTTON_X = 0.68 # m
+BUTTON_Y = -0.13 # m
+PROBE_DEPTH = 0.0650 # m
+PROBE_TIME = 2.0 # plunge and retract time (s)
 TRIG_DEPTH = 0.0250 # m
 BASE_ORI = R.from_euler("xyz", [-180, 0, 0], degrees=True)
 
@@ -110,7 +110,7 @@ def main():
 
     robot.controller_switcher_client.switch_controller("fr3_pose_controller")
     robot.fr3_pose_controller_parameters_client.load_param_config(
-        file_path=CONFIG_DIR / "controllers" / "fr3_pose" / "probing.yaml"
+        file_path=CONFIG_DIR / "controllers" / "fr3_pose" / "default.yaml"
     )
 
     # Parameters
