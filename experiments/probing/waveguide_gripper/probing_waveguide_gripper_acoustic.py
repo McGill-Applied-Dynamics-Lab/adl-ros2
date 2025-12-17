@@ -8,7 +8,7 @@ import pickle
 import rclpy
 from rclpy.node import Node
 from scipy.signal import butter, filtfilt
-from acoustic_sensing.msg import AcousticPacket
+from msg import AcousticPacket
 
 from scipy.spatial.transform import Rotation as R
 from arm_client.robot import Robot, Pose, Twist
