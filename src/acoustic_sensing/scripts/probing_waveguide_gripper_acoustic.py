@@ -289,7 +289,8 @@ def main():
 
     # Parameters - use landmarks for home position
     z_surface = landmarks["z"] + Z_OFFSET  # (m) surface is offset from landmark
-    home_position = np.array([landmarks["x"], landmarks["y"], z_surface])
+    z_home = landmarks["z"] + 0.10 # (m) home position is well above the probe
+    home_position = np.array([landmarks["x"], landmarks["y"], z_home])
     home_pose = Pose(home_position, BASE_ORI)
 
     # Load probe locations from grid file
@@ -330,7 +331,9 @@ def main():
     # ---------------- ADDED: store acoustic segments per probe ----------------
     exp_dict["acoustic"] = []
     # ------------------------------------------------------------------------
-
+    robot.set_target(pose=home_pose)
+    time.sleep(SETTLE_SEC)
+    
     try:
         # Iterate over probe locations
         input("Press Enter to start probing...")
