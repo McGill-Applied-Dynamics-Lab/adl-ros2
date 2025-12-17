@@ -160,7 +160,7 @@ def main():
         exp_dict["grid_positions"].append([x_sensor, y_sensor])
         print(f"\n Probe {i + 1}/{len(grid_xy_world)}")
 
-        # --- Travel home --- 
+        # --- Travel home ---
         robot.set_target(pose=home_pose)
         time.sleep(SETTLE_SEC)
 

@@ -17,7 +17,7 @@ from scipy.signal import butter, filtfilt
 from acoustic_sensing.msg import AcousticPacket
 # --------------------------------------------------------------------
 
-SETTLE_SEC = 2.00  # wait time after moves (s)
+SETTLE_SEC = 1.00  # wait time after moves (s)
 TRAJ_FREQ = 10.0  # Hz
 
 
