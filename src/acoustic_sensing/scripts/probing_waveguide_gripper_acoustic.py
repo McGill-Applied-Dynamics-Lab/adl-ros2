@@ -333,7 +333,8 @@ def main():
     # ------------------------------------------------------------------------
     robot.set_target(pose=home_pose)
     time.sleep(SETTLE_SEC)
-    
+
+    # Start acoustic recording
     try:
         # Iterate over probe locations
         input("Press Enter to start probing...")

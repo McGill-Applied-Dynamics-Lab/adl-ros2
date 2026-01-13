@@ -6,7 +6,7 @@ from arm_client import CONFIG_DIR
 from pathlib import Path
 import pickle
 
-SETTLE_SEC = 1.00  # wait time after moves (s)
+SETTLE_SEC = 2.00  # wait time after moves (s)
 TRAJ_FREQ = 10.0 # Hz
 
 # Helper functions
