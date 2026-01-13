@@ -11,7 +11,7 @@ import matplotlib.pyplot as plt
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent
-RESULTS_DIR = PROJECT_ROOT / "results" / "7_grid_TEST_05.pkl"
+RESULTS_DIR = PROJECT_ROOT / "results" / "7_grid_TEST_02.pkl"
 
 with open(RESULTS_DIR, "rb") as f:
     results = pickle.load(f)
