@@ -6,7 +6,7 @@ from arm_client import CONFIG_DIR
 from pathlib import Path
 import pickle
 
-SETTLE_SEC = 1.00  # wait time after moves (s)
+SETTLE_SEC = 2.00  # wait time after moves (s)
 TRAJ_FREQ = 10.0 # Hz
 
 # Helper functions
@@ -160,7 +160,7 @@ def main():
         exp_dict["grid_positions"].append([x_sensor, y_sensor])
         print(f"\n Probe {i + 1}/{len(grid_xy_world)}")
 
-        # --- Travel home --- 
+        # --- Travel home ---
         robot.set_target(pose=home_pose)
         time.sleep(SETTLE_SEC)
 

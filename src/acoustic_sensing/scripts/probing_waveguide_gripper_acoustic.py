@@ -24,6 +24,9 @@ from rclpy.qos import qos_profile_sensor_data
 
 # --------------------------------------------------------------------
 
+SETTLE_SEC = 1.00  # wait time after moves (s)
+TRAJ_FREQ = 10.0  # Hz
+
 
 # -------------------- ADDED: Acoustic processing params --------------------
 SAMPLES_PER_CYCLE = 4000
@@ -375,9 +378,14 @@ def main():
             "z_offset": Z_OFFSET,  # Store z_offset for reference
         }
 
-        # Store acoustic segments per probe
-        exp_dict["acoustic"] = []
+    # ---------------- ADDED: store acoustic segments per probe ----------------
+    exp_dict["acoustic"] = []
+    # ------------------------------------------------------------------------
+    robot.set_target(pose=home_pose)
+    time.sleep(SETTLE_SEC)
 
+    # Start acoustic recording
+    try:
         # Iterate over probe locations
         input("Press Enter to start probing...")
         for i, loc in enumerate(grid_xy_world):

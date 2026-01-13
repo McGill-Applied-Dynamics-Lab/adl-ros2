@@ -61,21 +61,32 @@ if __name__ == "__main__":
     if not LANDMARK_FILE.exists():
         raise FileNotFoundError(f"Landmark file not found: {LANDMARK_FILE}")
     PROBE_DIAMETER = 0.016  # (m)
-    X_SHIFT = 0.010 + PROBE_DIAMETER / 2  # (m)
-    Y_SHIFT = 0.010 + PROBE_DIAMETER / 2  # (m)
-    X_EXTENT = 0.10 - PROBE_DIAMETER  # (m)
-    Y_EXTENT = 0.10 - PROBE_DIAMETER  # (m)
+    ADD_OFFSET = 0.005 # (m)
+    X_SHIFT = 0.010 + PROBE_DIAMETER / 2 + ADD_OFFSET  # (m)
+    Y_SHIFT = 0.010 + PROBE_DIAMETER / 2 + ADD_OFFSET  # (m)
+    X_EXTENT = 0.10 - PROBE_DIAMETER - 2*ADD_OFFSET # (m)
+    Y_EXTENT = 0.10 - PROBE_DIAMETER - 2*ADD_OFFSET # (m)
     grids = {}  # dictionary to hold grids
 
     train_, test_ = generate_grid(
-        x_extent=X_EXTENT, y_extent=Y_EXTENT, nx=4, ny=4
+        x_extent=X_EXTENT, y_extent=Y_EXTENT, nx=10, ny=10
     )  # generate rectangular grid
-    grids["SENSOR_FRAME"] = {"train": train_.T, "test": test_.T}
+    temp_train = train_.copy()
+    temp_train[0, :] += PROBE_DIAMETER/2 + ADD_OFFSET
+    temp_train[1, :] += PROBE_DIAMETER/2 + ADD_OFFSET
+    temp_test = test_.copy()
+    temp_test[0, :] += PROBE_DIAMETER/2 + ADD_OFFSET
+    temp_test[1, :] += PROBE_DIAMETER/2 + ADD_OFFSET
+    temp_train = temp_train.T
+    temp_test = temp_test.T
+    grids["SENSOR_FRAME"] = {"train": temp_train, "test": temp_test}
+
     # Apply shifts
     train_[0, :] += X_SHIFT
     train_[1, :] += Y_SHIFT
     test_[0, :] += X_SHIFT
     test_[1, :] += Y_SHIFT
+
     landmarks, rot_matrix = find_rotation(landmark_file=LANDMARK_FILE)
     train = rot_matrix @ train_
     test = rot_matrix @ test_
@@ -89,13 +100,35 @@ if __name__ == "__main__":
     test = test.T
     grids["WORLD_FRAME"] = {"train": train, "test": test}
 
-    # Plot and save
+    # Repeat and randomize points
+    RANDOM = True
+    COPIES = 1
+    temp_train_rep = np.tile(temp_train, (COPIES, 1))
+    temp_test_rep = np.tile(temp_test, (COPIES, 1))
+    train_rep = np.tile(train, (COPIES, 1))
+    test_rep = np.tile(test, (COPIES, 1))
+    perm_train = np.random.permutation(train_rep.shape[0])
+    perm_test = np.random.permutation(test_rep.shape[0])
+    if RANDOM:
+        temp_train_rep = temp_train_rep[perm_train]
+        temp_test_rep = temp_test_rep[perm_test]
+        train_rep = train_rep[perm_train]
+        test_rep = test_rep[perm_test]
+
+        # Update grids with repeated and randomized points
+        grids["SENSOR_FRAME"]["train"] = temp_train_rep
+        grids["SENSOR_FRAME"]["test"] = temp_test_rep
+        grids["WORLD_FRAME"]["train"] = train_rep
+        grids["WORLD_FRAME"]["test"] = test_rep
+
+    # Save
     with open(PROJECT_ROOT / "results" / "grids" / "grids.pkl", "wb") as f:
         pickle.dump(grids, f)
 
-    plt.title(f"Train points: {len(train)}, Test points: {len(test)}")
-    plt.scatter(train[:, 0], train[:, 1], color="b", label="Train (World Frame)")
-    plt.scatter(test[:, 0], test[:, 1], color="g", label="Test (World Frame)")
+    # Create plot in world frame
+    plt.title(f"Train points: {len(grids['WORLD_FRAME']['train'])}, Test points: {len(grids['WORLD_FRAME']['test'])}")
+    plt.scatter(grids["WORLD_FRAME"]['train'][:,0], grids["WORLD_FRAME"]['train'][:,1], color="b", label="Train (World Frame)")
+    plt.scatter(grids["WORLD_FRAME"]['test'][:,0], grids["WORLD_FRAME"]['test'][:,1], color="g", label="Test (World Frame)")
     plt.scatter(landmarks[0][0], landmarks[0][1], marker="x", color="r", s=100)
     plt.scatter(landmarks[1][0], landmarks[1][1], marker="x", color="r", s=100)
     plt.plot(
@@ -105,6 +138,17 @@ if __name__ == "__main__":
         label="Landmarks",
     )
     plt.axis("equal")
+    plt.xlabel("X (m)")
+    plt.ylabel("Y (m)")
+    plt.legend()
+    plt.show()
+
+    # Create plot in sensor frame
+    plt.title(f"Train points: {len(grids['SENSOR_FRAME']['train'])}, Test points: {len(grids['SENSOR_FRAME']['test'])}")
+    plt.scatter(grids['SENSOR_FRAME']['train'][:,0], grids["SENSOR_FRAME"]['train'][:,1], color="b", label="Train (Sensor Frame)")
+    plt.scatter(grids['SENSOR_FRAME']['test'][:,0], grids["SENSOR_FRAME"]['test'][:,1], color="g", label="Test (Sensor Frame)")
+    plt.xlim(0, 0.1)
+    plt.ylim(0, 0.1)
     plt.xlabel("X (m)")
     plt.ylabel("Y (m)")
     plt.legend()
