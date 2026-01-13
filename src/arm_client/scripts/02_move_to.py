@@ -28,11 +28,11 @@ robot.wait_until_ready(timeout=2.0)
 #
 robot.controller_switcher_client.switch_controller("fr3_pose_controller")
 robot.fr3_pose_controller_parameters_client.load_param_config(
-    file_path=CONFIG_DIR / "controllers" / "osc_pd" / "default.yaml"
+    file_path=CONFIG_DIR / "controllers" / "fr3_pose" / "default.yaml"
 )
 
 # -- Move
-position = [0.4, 0.0, 0.4]  # x, y, z in meters
+position = [0.04, 0.04, 0.04]  # x, y, z in meters
 robot.move_to(position=position, speed=0.05)
 
 print("Done")

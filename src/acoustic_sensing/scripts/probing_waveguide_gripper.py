@@ -115,7 +115,7 @@ def main():
 
     robot.controller_switcher_client.switch_controller("fr3_pose_controller")
     robot.fr3_pose_controller_parameters_client.load_param_config(
-        file_path=CONFIG_DIR / "controllers" / "fr3_pose" / "default.yaml"
+        file_path=CONFIG_DIR / "controllers" / "fr3_pose" / "probing.yaml"
     )
 
     # Load landmark file
@@ -196,7 +196,7 @@ def main():
             probe_time=PROBE_TIME,
             traj_freq=TRAJ_FREQ,
             fixed_ori=BASE_ORI,
-            probe_func='linear'
+            probe_func='cos'
         )
 
         # Convert Pose objects to numpy arrays for saving
