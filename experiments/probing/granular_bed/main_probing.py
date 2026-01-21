@@ -5,8 +5,10 @@ from arm_client.robot import Robot, Pose, Twist
 from arm_client import CONFIG_DIR
 from pathlib import Path
 import pickle
+from datetime import datetime
+import subprocess
 
-SETTLE_SEC = 0.500  # wait time after moves (s)
+SETTLE_SEC = 0.50  # wait time after moves (s)
 TRAJ_FREQ = 10.0 # Hz
 
 # Helper functions
@@ -101,10 +103,10 @@ def probe(
 Z_INIT = 0.15 # m
 BUTTON_X = 0.681 # m
 BUTTON_Y = -0.147 # m
-PROBE_DEPTH = 0.0250 # m (previously 0.0650 m)
+PROBE_DEPTH = 0.0300 # m (previously 0.0650 m)
 PROBE_TIME = 2.0 # plunge and retract time (s)
-TRIG_DEPTH = 0.01983 # m (previously 0.0250 m)
-TRIG_TIME = 1.00 # m
+TRIG_DEPTH = 0.02067 # m (previously 0.0250 m)
+TRIG_TIME = 2.0 # s
 BASE_ORI = R.from_euler("xyz", [-180, 0, 0], degrees=True)
 PROBE_START_Z = 0.112 # start height for probing at the surface of the sensor (m)
 
@@ -115,15 +117,20 @@ def main():
 
     robot.controller_switcher_client.switch_controller("fr3_pose_controller")
     robot.fr3_pose_controller_parameters_client.load_param_config(
-        file_path=CONFIG_DIR / "controllers" / "fr3_pose" / "default.yaml"
+        file_path=CONFIG_DIR / "controllers" / "fr3_pose" / "probing.yaml"
     )
 
     # Parameters
     home_position = np.array([BUTTON_X, BUTTON_Y, Z_INIT])  # button location at initial z-height
     home_pose = Pose(home_position, BASE_ORI)
+    ## trig_position = np.array([BUTTON_X, BUTTON_Y, Z_INIT - TRIG_DEPTH])
+    ## trig_pose = Pose(trig_position, BASE_ORI)
+
+    # Run grid generator
+    PROJECT_ROOT = Path(__file__).resolve().parent  # or Path.cwd()
+    subprocess.run(["python3", PROJECT_ROOT / "grid_generator_random.py"]) # run grid generator, ensure params are correct
 
     # Load probe locations from grid file
-    PROJECT_ROOT = Path(__file__).resolve().parent  # or Path.cwd()
     grid_file = PROJECT_ROOT / "results" / "grids" / "grids.pkl"
 
     # Check if grid file exists
@@ -238,10 +245,11 @@ def main():
     results_dir.mkdir(parents=True, exist_ok=True)
 
     # Generate filename based on set name and number of points
-    # Add number suffix if file exists (starting from 00)
-    base_filename = f"{len(grid_xy_world)}_grid_{set_name.upper()}"
+    # Find month and date
+    base_filename = "R_" + datetime.now().strftime("%m_%d")  # e.g., "R_01_01"
+
     counter = 0
-    filename = f"{base_filename}_{counter:02d}.pkl"
+    filename = f"{base_filename}_{counter:02d}.pkl" # add number suffix if file exists (starting from 00)
     full_path = results_dir / filename
 
     # Find the next available number
