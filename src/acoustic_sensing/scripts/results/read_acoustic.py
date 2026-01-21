@@ -213,11 +213,11 @@ def replay_probe(
 
 if __name__ == "__main__":
     # 1) set this
-    pkl_path = "/home/ros/ros2_ws/src/adl-ros2/src/acoustic_sensing/scripts/results/7_grid_TEST_04.pkl"
+    pkl_path = "/home/ros/ros2_ws/src/adl-ros2/src/acoustic_sensing/scripts/results/7_grid_TEST_01.pkl"
     exp = load_exp(pkl_path)
 
     # 2) choose which probe
-    probe_idx = 0
+    probe_idx = 4
 
     # 3) replay processed waveforms
     replay_probe(exp, probe_idx, mode="processed", fps=30.0)

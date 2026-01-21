@@ -6,7 +6,7 @@ from arm_client import CONFIG_DIR
 from pathlib import Path
 import pickle
 
-SETTLE_SEC = 2.00  # wait time after moves (s)
+SETTLE_SEC = 0.500  # wait time after moves (s)
 TRAJ_FREQ = 10.0 # Hz
 
 # Helper functions
@@ -17,6 +17,7 @@ def probe(
     probe_time: float,
     traj_freq: float = 5.0,
     fixed_ori: R | None = None,
+    plunge_func: str = 'cos'
 ):
     """
     Complete plunge and retract motion.
@@ -26,7 +27,8 @@ def probe(
         start_xyz: np.array([x, y, z_surface]) start point of plunge.
         depth: probe depth (positive indicates downwards).
         probe_time: seconds to complete the probe cycle (plunge + retract).
-        traj_freq: Frequency of trajectory points per second.
+        traj_freq: frequency of trajectory points per second.
+        plunge_func: plunge function (cosine and linear plunge have been implemented)
     """
     # Define starting orientation
     cur = robot.end_effector_pose.copy()  # Pose(position, orientation)
@@ -43,7 +45,6 @@ def probe(
     z_init = float(start_xyz[2])
     N = max(1, int(probe_time * traj_freq))
     dt = 1.0 / traj_freq
-    t0 = time.perf_counter()
 
     waypoints = []  # list of (Pose, Twist) tuples of the trajectory
     time_from_start = []  # matching time of the trajectory points
@@ -51,7 +52,10 @@ def probe(
     # Include the endpoint (k = 0..N)
     for k in range(N + 1):
         s = k / N  # 0..1
-        z = z_init + depth / 2 * (np.cos(2 * np.pi * s) - 1)
+        if plunge_func == 'cos': # cosine-based plunge function
+            z = z_init + depth / 2 * (np.cos(2 * np.pi * s) - 1)
+        elif plunge_func == 'linear': # linear
+            z = z_init + depth * (np.abs(2*s - 1) - 1)
         t = k * dt
 
         target_position = np.array([start_xyz[0], start_xyz[1], z], dtype=float)
@@ -71,18 +75,17 @@ def probe(
 
     robot.execute_trajectory(waypoints, time_from_start)
 
-    t0 = time.perf_counter()
     t_min = 0.0
     z_min = z_init
     while robot.wait_for_trajectory_completion(probe_time, timeout_margin=0.5):
         ee_force = robot.end_effector_wrench["force"]
         ee_pose = robot.end_effector_pose
-        time_stamp = time.perf_counter() - t0 # time since trajectory start
+        time_stamp = time.perf_counter() # absolute time
 
         # Time-stamp when z-displacement is max
         if ee_pose.position[2] < z_min:
             z_min = ee_pose.position[2]
-            t_min = time.perf_counter() # absolute time
+            t_min = time_stamp # absolute time
 
         # Record data
         ee_poses.append(ee_pose.copy())
@@ -96,12 +99,14 @@ def probe(
 
 
 Z_INIT = 0.15 # m
-BUTTON_X = 0.68 # m
-BUTTON_Y = -0.13 # m
-PROBE_DEPTH = 0.0650 # m
+BUTTON_X = 0.681 # m
+BUTTON_Y = -0.147 # m
+PROBE_DEPTH = 0.0250 # m (previously 0.0650 m)
 PROBE_TIME = 2.0 # plunge and retract time (s)
-TRIG_DEPTH = 0.0250 # m
+TRIG_DEPTH = 0.01983 # m (previously 0.0250 m)
+TRIG_TIME = 1.00 # m
 BASE_ORI = R.from_euler("xyz", [-180, 0, 0], degrees=True)
+PROBE_START_Z = 0.112 # start height for probing at the surface of the sensor (m)
 
 def main():
     # Setup
@@ -170,36 +175,47 @@ def main():
             robot,
             start_xyz=home_position,
             depth=TRIG_DEPTH,
-            probe_time=PROBE_TIME,
+            probe_time=TRIG_TIME,
             traj_freq=TRAJ_FREQ,
             fixed_ori=BASE_ORI,
+            plunge_func='cos',
         )
 
         # --- Move to probe location ---
         print("\tMoving to probe location...")
-        approach_xy = np.array([x, y, Z_INIT], dtype=float)
-        robot.set_target(position=approach_xy)
+        approach_xyz = np.array([x, y, Z_INIT], dtype=float)
+        robot.set_target(position=approach_xyz)
+        time.sleep(SETTLE_SEC)
+
+        # Descend to probe start height
+        print("\tDescending to probe start height...")
+        approach_xyz = np.array([x, y, PROBE_START_Z], dtype=float)
+        robot.set_target(position=approach_xyz)
         time.sleep(SETTLE_SEC)
 
         # --- Probe cycle ---
         print("\tStarting probe...")
-        t_probe = time.perf_counter()
         ts, ee_poses, ee_forces, _ = probe(
             robot,
-            start_xyz=approach_xy,
+            start_xyz=approach_xyz,
             depth=PROBE_DEPTH,
             probe_time=PROBE_TIME,
             traj_freq=TRAJ_FREQ,
             fixed_ori=BASE_ORI,
         )
 
+        # Retract in z
+        print("\tRetracting in z...")
+        retract_position = np.array([x, y, Z_INIT], dtype=float)
+        robot.set_target(position=retract_position)
+        time.sleep(SETTLE_SEC)
+
         # Convert Pose objects to numpy arrays for saving
         ee_positions = [pose.position for pose in ee_poses]
         ee_orientations = [pose.orientation.as_quat() for pose in ee_poses]
 
         # --- Store results ---
-        time_offset = t_probe - t_ref
-        ts_adjusted = [t + time_offset for t in ts] # time referenced to trigger
+        ts_adjusted = [t - t_ref for t in ts] # time referenced to trigger
         exp_dict["ts"].append(ts_adjusted)
         # Store numpy arrays instead of Pose objects
         exp_dict["ee_poses"].append({
