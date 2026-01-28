@@ -3,6 +3,10 @@ import matplotlib.pyplot as plt
 from pathlib import Path
 import pickle
 
+"""
+Uniform grid generation + depths.
+"""
+
 
 def generate_grid(x_extent, y_extent, nx, ny):
     """Generate training and testing grid points within a rectangular area."""
@@ -68,8 +72,11 @@ if __name__ == "__main__":
     Y_EXTENT = 0.10 - PROBE_DIAMETER - 2*ADD_OFFSET # (m)
     grids = {}  # dictionary to hold grids
 
+    # ***Add depths***
+    DEPTHS = np.linspace(5e-3, 3e-2, 5) # plunge depths
+
     train_, test_ = generate_grid(
-        x_extent=X_EXTENT, y_extent=Y_EXTENT, nx=5, ny=5
+        x_extent=X_EXTENT, y_extent=Y_EXTENT, nx=2, ny=2
     )  # generate rectangular grid
     temp_train = train_.copy()
     temp_train[0, :] += PROBE_DIAMETER/2 + ADD_OFFSET
@@ -101,34 +108,36 @@ if __name__ == "__main__":
     grids["WORLD_FRAME"] = {"train": train, "test": test}
 
     # Repeat and randomize points
-    RANDOM = True
-    COPIES = 1
+    RANDOM = False
+    COPIES = len(DEPTHS)
     temp_train_rep = np.tile(temp_train, (COPIES, 1))
     temp_test_rep = np.tile(temp_test, (COPIES, 1))
     train_rep = np.tile(train, (COPIES, 1))
     test_rep = np.tile(test, (COPIES, 1))
-    perm_train = np.random.permutation(train_rep.shape[0])
-    perm_test = np.random.permutation(test_rep.shape[0])
-    if RANDOM:
-        temp_train_rep = temp_train_rep[perm_train]
-        temp_test_rep = temp_test_rep[perm_test]
-        train_rep = train_rep[perm_train]
-        test_rep = test_rep[perm_test]
 
-        # Update grids with repeated and randomized points
-        grids["SENSOR_FRAME"]["train"] = temp_train_rep
-        grids["SENSOR_FRAME"]["test"] = temp_test_rep
-        grids["WORLD_FRAME"]["train"] = train_rep
-        grids["WORLD_FRAME"]["test"] = test_rep
+    # Update grids with repeated points and append depths
+    n_train = train.shape[0]
+    n_test = test.shape[0]
+    depths_train_expand = np.repeat(DEPTHS, n_train)[:, None]
+    depths_test_expand = np.repeat(DEPTHS, n_test)[:, None]
+    grids["SENSOR_FRAME"]["train"] = np.hstack((temp_train_rep, depths_train_expand))
+    grids["SENSOR_FRAME"]["test"] = np.hstack((temp_test_rep, depths_test_expand))
+    grids["WORLD_FRAME"]["train"] = np.hstack((train_rep, depths_train_expand))
+    grids["WORLD_FRAME"]["test"] = np.hstack((test_rep, depths_test_expand))
 
     # Save
-    with open(PROJECT_ROOT / "results" / "grids" / "MEGA_GRID.pkl", "wb") as f:
+    with open(PROJECT_ROOT / "results" / "grids" / "grids.pkl", "wb") as f:
         pickle.dump(grids, f)
 
     # Create plot in world frame
-    plt.title(f"Train points: {len(grids['WORLD_FRAME']['train'])}, Test points: {len(grids['WORLD_FRAME']['test'])}")
-    plt.scatter(grids["WORLD_FRAME"]['train'][:,0], grids["WORLD_FRAME"]['train'][:,1], color="b", label="Train (World Frame)")
-    plt.scatter(grids["WORLD_FRAME"]['test'][:,0], grids["WORLD_FRAME"]['test'][:,1], color="g", label="Test (World Frame)")
+    fig, ax = plt.subplots()
+    ax.set_title(f"Train points: {len(grids['WORLD_FRAME']['train'])}, Test points: {len(grids['WORLD_FRAME']['test'])}")
+    ax.scatter(grids["WORLD_FRAME"]['train'][:,0],
+               grids["WORLD_FRAME"]['train'][:,1],
+               color="b", label="Train (World Frame)")
+    ax.scatter(grids["WORLD_FRAME"]['test'][:,0],
+                grids["WORLD_FRAME"]['test'][:,1],
+                color="g", label="Test (World Frame)")
     plt.scatter(landmarks[0][0], landmarks[0][1], marker="x", color="r", s=100)
     plt.scatter(landmarks[1][0], landmarks[1][1], marker="x", color="r", s=100)
     plt.plot(

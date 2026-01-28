@@ -90,7 +90,7 @@ if __name__ == "__main__":
         )  # generate rectangular grid
     elif GRID_TYPE == 'random':
         train_, test_ = random_generate_grid(
-            x_extent=X_EXTENT, y_extent=Y_EXTENT, num_points=100
+            x_extent=X_EXTENT, y_extent=Y_EXTENT, num_points=50 # change num. points here
         )  # generate rectangular grid
     temp_train = train_.copy()
     temp_train[0, :] += PROBE_DIAMETER/2 + ADD_OFFSET

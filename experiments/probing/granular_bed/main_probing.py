@@ -8,7 +8,7 @@ import pickle
 from datetime import datetime
 import subprocess
 
-SETTLE_SEC = 0.50  # wait time after moves (s)
+SETTLE_SEC = 1.25  # wait time after moves (s)
 TRAJ_FREQ = 10.0 # Hz
 
 # Helper functions
@@ -103,12 +103,12 @@ def probe(
 Z_INIT = 0.15 # m
 BUTTON_X = 0.681 # m
 BUTTON_Y = -0.147 # m
-PROBE_DEPTH = 0.0300 # m (previously 0.0650 m)
-PROBE_TIME = 2.0 # plunge and retract time (s)
-TRIG_DEPTH = 0.02067 # m (previously 0.0250 m)
+PROBE_DEPTH = 0.0400 # m (previously 0.0650 m)
+PROBE_TIME = 2.00 # plunge and retract time (s)
+TRIG_DEPTH = 0.0206 # m (previously 0.0250 m)
 TRIG_TIME = 2.0 # s
 BASE_ORI = R.from_euler("xyz", [-180, 0, 0], degrees=True)
-PROBE_START_Z = 0.112 # start height for probing at the surface of the sensor (m)
+PROBE_START_Z = 0.10799 # start height for probing at the surface of the sensor (m) - 0.112 m
 
 def main():
     # Setup
