@@ -108,7 +108,7 @@ TRIG_TIME = 2.0 # s
 
 # Orientation/starting position
 BASE_ORI = R.from_euler("xyz", [-180, 0, 0], degrees=True)
-PROBE_START_Z = 0.10799 # start height for probing at the surface of the sensor (m) - originally 0.112 m
+PROBE_START_Z = 0.1078 # start height for probing at the surface of the sensor (m) - originally 0.112 m
 
 # ***Add depths***
 DEPTH_INC = 5e-3  # depth increment (m)

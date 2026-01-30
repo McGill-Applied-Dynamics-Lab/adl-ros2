@@ -69,7 +69,7 @@ if __name__ == "__main__":
     grids = {}  # dictionary to hold grids
 
     train_, test_ = generate_grid(
-        x_extent=X_EXTENT, y_extent=Y_EXTENT, nx=5, ny=5
+        x_extent=X_EXTENT, y_extent=Y_EXTENT, nx=6, ny=6
     )  # generate rectangular grid
     temp_train = train_.copy()
     temp_train[0, :] += PROBE_DIAMETER/2 + ADD_OFFSET
