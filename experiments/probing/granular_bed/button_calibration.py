@@ -87,7 +87,7 @@ PROBE_DEPTH = 0.0650 # m
 PROBE_TIME = 2.0 # plunge and retract time (s)
 TRIG_DEPTH = 0.0220 # m
 STOP_DEPTHS = np.linspace(Z_INIT - 0.0175, Z_INIT - TRIG_DEPTH, num=30, endpoint=True)
-PLUNGE_DEPTHS = np.linspace(0.0205, 0.0207, num=10, endpoint=True)
+PLUNGE_DEPTHS = np.linspace(0.0205, 0.0210, num=10, endpoint=True)
 BASE_ORI = R.from_euler("xyz", [-180, 0, 0], degrees=True)
 
 def main():

@@ -90,7 +90,7 @@ if __name__ == "__main__":
         )  # generate rectangular grid
     elif GRID_TYPE == 'random':
         train_, test_ = random_generate_grid(
-            x_extent=X_EXTENT, y_extent=Y_EXTENT, num_points=50 # change num. points here
+            x_extent=X_EXTENT, y_extent=Y_EXTENT, num_points=1000 # change num. points here
         )  # generate rectangular grid
     temp_train = train_.copy()
     temp_train[0, :] += PROBE_DIAMETER/2 + ADD_OFFSET
@@ -142,8 +142,25 @@ if __name__ == "__main__":
         grids["WORLD_FRAME"]["train"] = train_rep
         grids["WORLD_FRAME"]["test"] = test_rep
 
+    # Save depths and plunge times
+    DEPTH_RANGE = (0.01, 0.03)  # depth range in meters (min, max)
+    TIME_RANGE = (1, 4)  # time range in seconds (min, max)
+    depths_train = np.random.uniform(DEPTH_RANGE[0], DEPTH_RANGE[1], size=len(train))
+    times_train = np.random.uniform(TIME_RANGE[0], TIME_RANGE[1], size=len(train))
+    depths_test = np.random.uniform(DEPTH_RANGE[0], DEPTH_RANGE[1], size=len(test))
+    times_test = np.random.uniform(TIME_RANGE[0], TIME_RANGE[1], size=len(test))
+    grids['DEPTHS'] = {"train": depths_train, "test": depths_test}
+    grids['PLUNGE_TIMES'] = {"train": times_train, "test": times_test}
+    plt.scatter(depths_train, times_train, color="b", label="Train")
+    plt.scatter(depths_test, times_test, color="g", label="Test")
+    plt.title(f"Train points: {len(depths_train)}, Test points: {len(depths_test)}")
+    plt.xlabel("Depth (m)")
+    plt.ylabel("Plunge Time (s)")
+    plt.legend()
+    plt.show()
+
     # Save
-    with open(PROJECT_ROOT / "results" / "grids" / "grids.pkl", "wb") as f:
+    with open(PROJECT_ROOT / "results" / "grids" / "GLYCERIN_GRID.pkl", "wb") as f:
         pickle.dump(grids, f)
 
     # Create plot in world frame

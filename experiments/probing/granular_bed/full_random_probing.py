@@ -8,7 +8,7 @@ import pickle
 from datetime import datetime
 import subprocess
 
-SETTLE_SEC = 1.25  # wait time after moves (s)
+SETTLE_SEC = 1.00  # wait time after moves (s)
 TRAJ_FREQ = 10.0 # Hz
 
 # Helper functions
@@ -103,21 +103,12 @@ def probe(
 Z_INIT = 0.15 # m
 BUTTON_X = 0.681 # m
 BUTTON_Y = -0.147 # m
-TRIG_DEPTH = 0.0200 # m (previously 0.0250 m)
+TRIG_DEPTH = 0.0205 # m (previously 0.0250 m)
 TRIG_TIME = 2.0 # s
 
 # Orientation/starting position
 BASE_ORI = R.from_euler("xyz", [-180, 0, 0], degrees=True)
-PROBE_START_Z = 0.116 # start height for probing at the surface of the sensor (m) - originally 0.112 m
-
-# ***Add depths***
-DEPTH_INC = 5e-3  # depth increment (m)
-DEPTHS = np.arange(1e-2, 3e-2 + DEPTH_INC, DEPTH_INC) # plunge depths
-DEPTHS = np.array([3.0/100]) # validation set (m)
-# ***Add times***
-TIME_INC = 0.5  # time increment (s)
-PLUNGE_TIMES = np.arange(1, 4 + TIME_INC, TIME_INC)  # plunge times (s)
-PLUNGE_TIMES = np.array([1.0]) # validation set (s)
+PROBE_START_Z = 0.1150 # start height for probing at the surface of the sensor (m) - originally 0.112 m
 
 def main():
     # Setup
@@ -140,7 +131,7 @@ def main():
     """
 
     # Load probe locations from grid file
-    grid_file = PROJECT_ROOT / "results" / "grids" / "VALIDATION_GRID.pkl" # update if required
+    grid_file = PROJECT_ROOT / "results" / "grids" / "GLYCERIN_GRID.pkl" # update if required
 
     # Check if grid file exists
     if not grid_file.exists():
@@ -163,6 +154,14 @@ def main():
     # Get sensor frame grid (N, 2) array for data saving
     grid_xy_sensor = grids["SENSOR_FRAME"][set_name]  # (N, 2) array in sensor frame
 
+    # Get depths and plunge times
+    depths = grids['DEPTHS'][set_name]
+    plunge_times = grids['PLUNGE_TIMES'][set_name]
+    N_POINTS = len(depths)
+    # Ensure consistency
+    if not (len(plunge_times) == N_POINTS and len(grid_xy_world) == N_POINTS and len(grid_xy_sensor) == N_POINTS):
+        raise ValueError("Inconsistent grid data lengths.")
+
     # Initialize results
     exp_dict = {
         "ts": [],
@@ -177,7 +176,7 @@ def main():
     # Open/check if pickle file exists
     results_dir = PROJECT_ROOT / "results"
     results_dir.mkdir(parents=True, exist_ok=True)
-    filename = f"R_VALIDATION.pkl"  # results filename
+    filename = f"R_GLYCERIN_GRID_{set_name}.pkl"  # results filename
     full_path = results_dir / filename
 
     start_idx = 0 # default start index
@@ -192,103 +191,86 @@ def main():
             # Check current index
             start_idx = len(exp_dict["grid_positions"])
 
-    # Compute starting indices
-    H = len(DEPTHS)
-    J = len(PLUNGE_TIMES)
-    K = len(grid_xy_world)
-
-    si = start_idx // (J*K)
-    r = start_idx %  (J*K)
-    sj = r // K
-    sk = r %  K
-    print(f"Resuming from depth i={si}, time j={sj}, location k={sk}")
-
+    print(f"Resuming from probe number {start_idx + 1}")
     input("Press Enter to start probing...")
+
     # Iterate over depths, plunge times, and locations
-    for i in range(si, H):
-        depth = DEPTHS[i]
-        j0 = sj if i == si else 0
+    for i in range(start_idx, N_POINTS):
+        x, y = grid_xy_world[i]
+        x_sensor, y_sensor = grid_xy_sensor[i]
 
-        for j in range(j0, J):
-            plunge_time = PLUNGE_TIMES[j]
-            k0 = sk if (i == si and j == sj) else 0
+        print(f"\n Probe {i + 1} / {N_POINTS}")
 
-            for k in range(k0, K):
-                x, y = grid_xy_world[k]
-                x_sensor, y_sensor = grid_xy_sensor[k]
+        # --- Travel home ---
+        robot.set_target(pose=home_pose)
+        time.sleep(SETTLE_SEC)
 
-                print(f"\n Probe {i*(J*K) + j*K + k + 1} / {H*J*K}")
+        # --- Press trigger ---
+        print("\tPressing trigger...")
+        _, _, _, t_ref = probe(
+            robot,
+            start_xyz=home_position,
+            depth=TRIG_DEPTH,
+            probe_time=TRIG_TIME,
+            traj_freq=TRAJ_FREQ,
+            fixed_ori=BASE_ORI,
+            plunge_func='cos',
+        )
 
-                # --- Travel home ---
-                robot.set_target(pose=home_pose)
-                time.sleep(SETTLE_SEC)
+        # --- Move to probe location ---
+        print("\tMoving to probe location...")
+        approach_xyz = np.array([x, y, Z_INIT], dtype=float)
+        robot.set_target(position=approach_xyz)
+        time.sleep(SETTLE_SEC)
 
-                # --- Press trigger ---
-                print("\tPressing trigger...")
-                _, _, _, t_ref = probe(
-                    robot,
-                    start_xyz=home_position,
-                    depth=TRIG_DEPTH,
-                    probe_time=TRIG_TIME,
-                    traj_freq=TRAJ_FREQ,
-                    fixed_ori=BASE_ORI,
-                    plunge_func='cos',
-                )
+        # Descend to probe start height
+        print("\tDescending to probe start height...")
+        approach_xyz = np.array([x, y, PROBE_START_Z], dtype=float)
+        robot.set_target(position=approach_xyz)
+        time.sleep(SETTLE_SEC)
 
-                # --- Move to probe location ---
-                print("\tMoving to probe location...")
-                approach_xyz = np.array([x, y, Z_INIT], dtype=float)
-                robot.set_target(position=approach_xyz)
-                time.sleep(SETTLE_SEC)
+        # --- Probe cycle ---
+        print("\tStarting probe...")
+        ts, ee_poses, ee_forces, _ = probe(
+            robot,
+            start_xyz=approach_xyz,
+            depth=depths[i], # new
+            probe_time=plunge_times[i], # new
+            traj_freq=TRAJ_FREQ,
+            fixed_ori=BASE_ORI,
+        )
 
-                # Descend to probe start height
-                print("\tDescending to probe start height...")
-                approach_xyz = np.array([x, y, PROBE_START_Z], dtype=float)
-                robot.set_target(position=approach_xyz)
-                time.sleep(SETTLE_SEC)
+        # Retract in z
+        print("\tRetracting in z...")
+        retract_position = np.array([x, y, Z_INIT], dtype=float)
+        robot.set_target(position=retract_position)
+        time.sleep(SETTLE_SEC)
+        print("\tPlunge complete.")
 
-                # --- Probe cycle ---
-                print("\tStarting probe...")
-                ts, ee_poses, ee_forces, _ = probe(
-                    robot,
-                    start_xyz=approach_xyz,
-                    depth=depth, # new
-                    probe_time=plunge_time, # new
-                    traj_freq=TRAJ_FREQ,
-                    fixed_ori=BASE_ORI,
-                )
+        # Convert Pose objects to numpy arrays
+        ee_positions = [pose.position for pose in ee_poses]
+        ee_orientations = [pose.orientation.as_quat() for pose in ee_poses]
 
-                # Retract in z
-                print("\tRetracting in z...")
-                retract_position = np.array([x, y, Z_INIT], dtype=float)
-                robot.set_target(position=retract_position)
-                time.sleep(SETTLE_SEC)
-                print("\tPlunge complete.")
+        # --- Store results ---
+        if np.any(np.asarray(ee_positions)[:,2] <= (PROBE_START_Z - depths[i] + 2.5e-3)): # allow small tolerance
+            ts_adjusted = [t - t_ref for t in ts] # time referenced to trigger
+            exp_dict["ts"].append(ts_adjusted)
+            # Store numpy arrays instead of Pose objects
+            exp_dict["ee_poses"].append({
+                "positions": ee_positions,
+                "orientations": ee_orientations
+            })
+            exp_dict["ee_forces"].append(ee_forces)  # already numpy arrays
+            exp_dict["plunge_depths"].append(depths[i])
+            exp_dict["plunge_times"].append(plunge_times[i])
+            exp_dict["grid_positions"].append([x_sensor, y_sensor])
 
-                # Convert Pose objects to numpy arrays
-                ee_positions = [pose.position for pose in ee_poses]
-                ee_orientations = [pose.orientation.as_quat() for pose in ee_poses]
-
-                # --- Store results ---
-                if np.any(np.asarray(ee_positions)[:,2] <= (PROBE_START_Z - depth + 2.5e-3)): # allow small tolerance
-                    ts_adjusted = [t - t_ref for t in ts] # time referenced to trigger
-                    exp_dict["ts"].append(ts_adjusted)
-                    # Store numpy arrays instead of Pose objects
-                    exp_dict["ee_poses"].append({
-                        "positions": ee_positions,
-                        "orientations": ee_orientations
-                    })
-                    exp_dict["ee_forces"].append(ee_forces)  # already numpy arrays
-                    exp_dict["plunge_depths"].append(depth)
-                    exp_dict["plunge_times"].append(plunge_time)
-                    exp_dict["grid_positions"].append([x_sensor, y_sensor])
-
-                    # Save data
-                    with open(full_path, "wb") as f:
-                        pickle.dump(exp_dict, f)
-                        print(f"Results saved to: {full_path}")
-                else:
-                    raise(ValueError(f"Plunge depth not achieved. Check robot operation."))
+            # Save data
+            with open(full_path, "wb") as f:
+                pickle.dump(exp_dict, f)
+                print(f"Results saved to: {full_path}")
+        else:
+            raise(ValueError(f"Plunge depth not achieved. Check robot operation."))
 
     # Return home at the end
     print("\nReturning home...")
