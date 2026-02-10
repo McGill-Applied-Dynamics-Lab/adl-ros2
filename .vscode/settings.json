@@ -173,4 +173,6 @@
     //--- Docker
     "containers.composeCommand": "docker compose",
     "cmake.sourceDirectory": "/home/ros/ros2_ws/src/adl-ros2/src/arm_interfaces",
+    "python-envs.defaultEnvManager": "ms-python.python:system",
+    "python-envs.pythonProjects": [],
 }
