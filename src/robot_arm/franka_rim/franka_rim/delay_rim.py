@@ -18,6 +18,8 @@ from arm_interfaces.msg import FrankaRIM
 
 from copy import copy
 
+Z_TABLE = 0.0  # m, height of table in RIM frame
+
 
 class DelayCompensationMethod(Enum):
     ZOH = "zoh"
@@ -468,13 +470,13 @@ class DelayRIM:
         self, rim: ReducedModelState, haptic_position: np.ndarray, haptic_velocity: np.ndarray
     ) -> None:
         """Compute the interface force based on the current reduced model state"""
-        # # For stepping v3
-        # rim.phi_position = rim.position - haptic_position
-        # rim.phi_velocity = rim.velocity - haptic_velocity
+        # For stepping v3
+        rim.phi_position = rim.position - haptic_position
+        rim.phi_velocity = rim.velocity - haptic_velocity
 
-        # For my stepping
-        rim.phi_position = haptic_position - rim.position
-        rim.phi_velocity = haptic_velocity - rim.velocity
+        # # For my stepping
+        # rim.phi_position = haptic_position - rim.position
+        # rim.phi_velocity = haptic_velocity - rim.velocity
 
         K = rim.stiffness
         D = rim.damping
@@ -552,35 +554,7 @@ class DelayRIM:
 
         *original code from local_processes.py oneStep*
         """
-
-        # #! Code from Joe
-        # # Force terms from oneStep method
-        # regular_force_terms = (
-        #     reduced_model.effective_mass @ haptic_acc / reduced_model.hl
-        #     + reduced_model.effective_force
-        #     - reduced_model.stiffness * reduced_model.phi_position
-        #     + (reduced_model.damping + reduced_model.hl * reduced_model.stiffness) * haptic_vel
-        # )
-
-        # # Update reduced model state (from oneStep method)
-        # reduced_model.rim_velocity = (
-        #     reduced_model.mass_factor @ reduced_model.rim_velocity
-        #     + reduced_model.hl * reduced_model.inverse_augmented_mass_matrix @ regular_force_terms
-        # )
-        # reduced_model.rim_position = reduced_model.rim_position + reduced_model.hl * reduced_model.rim_velocity
-
-        # #! V2
-        # force_term = reduced_model.effective_force - reduced_model.stiffness * reduced_model.phi_position
-        # rim_velocity_p = (
-        #     reduced_model.A_inv @ reduced_model.rim_velocity
-        #     + reduced_model.A_inv * (1 / reduced_model.hl) * reduced_model.effective_mass * force_term
-        # )
-        # reduced_model.rim_velocity = rim_velocity_p
-
-        # rim_position_p = reduced_model.rim_position + reduced_model.hl * reduced_model.rim_velocity
-        # reduced_model.rim_position = rim_position_p
-
-        #! V3
+        #! --- Option 1 - From Joe's code
         # Update constraint deviation
         reduced_model.phi_position = reduced_model.position - haptic_pos
         reduced_model.phi_velocity = reduced_model.velocity - haptic_vel
@@ -596,9 +570,6 @@ class DelayRIM:
         regular_force_terms = (
             reduced_model.effective_force - Ki * reduced_model.phi_position + (Di + hl * Ki) * haptic_vel
         )
-        # regular_force_terms = -reduced_model.effective_force
-
-        # regular_force_terms = self._node._ctrl_force[0].reshape(1, 1)  # TODO: DEBUG
 
         rim_velocity_p = (
             reduced_model.mass_factor @ reduced_model.velocity
@@ -609,7 +580,7 @@ class DelayRIM:
         rim_position_p = reduced_model.position + reduced_model.hl * reduced_model.velocity
         reduced_model.position = rim_position_p
 
-        # #! My stepping (test)
+        # #! --- Option 2 - My stepping
         # # Update constraint deviation
         # reduced_model.phi_position = haptic_pos - reduced_model.position
         # reduced_model.phi_velocity = haptic_vel - reduced_model.velocity
@@ -657,6 +628,56 @@ class DelayRIM:
 
         # reduced_model.velocity = w_i_plus
         # reduced_model.position = p_plus
+
+        # #! --- Option 3 - LCP
+        # # Current states
+        # x_rim_m = reduced_model.position  # RIM position at beginning of timestep
+        # x_rim_dot_m = reduced_model.velocity  # RIM velocity at beginning of timestep
+
+        # x_rim_p = None  # RIM position at end of timestep - to be computed
+        # x_rim_dot_p = None  # RIM velocity at end of timestep - to be computed
+
+        # x_l_m = haptic_pos  # Haptic position at beginning of timestep
+        # x_l_dot_m = haptic_vel  # Haptic velocity at beginning of timestep
+
+        # phi_m = x_rim_m - x_l_m
+        # phi_dot_m = x_rim_dot_m - x_l_dot_m
+
+        # if hl is None:
+        #     hl = reduced_model.hl
+
+        # Di = reduced_model.damping
+        # Ki = reduced_model.stiffness
+
+        # lambda_eff = reduced_model.effective_force
+
+        # # wi = reduced_model.phi_velocity
+
+        # # Solve for next velocity
+        # regular_force_terms = lambda_eff - Ki * phi_m + (Di + hl * Ki) * x_l_dot_m
+
+        # x_rim_dot_p = (
+        #     reduced_model.mass_factor @ x_rim_dot_m
+        #     + hl * reduced_model.inverse_augmented_mass_matrix @ regular_force_terms
+        # )
+
+        # # # LCP
+        # # if x_rim_m <= Z_TABLE and x_rim_dot_p < 0:
+        # #     # Contact occurs, recompute with contact
+        # #     x_rim_dot_p = np.zeros_like(x_rim_dot_p)
+        # #     lambda_i_p = Ki * phi_m + (Ki * hl + Di) * (x_l_dot_m)
+        # #     # lambda_n_p = -lambda_i_p - m / hl * x_rim_dot_m - f_g
+
+        # # else:
+        # #     # No contact, proceed as normal
+        # #     lambda_i_p = Ki * phi_m + (Ki * hl + Di) * (x_l_dot_m - x_rim_dot_p)
+
+        # # Integration update
+        # x_rim_p = x_rim_m + hl * x_rim_dot_p
+
+        # # Update states
+        # reduced_model.velocity = x_rim_dot_p
+        # reduced_model.position = x_rim_p
 
     def _catchup_zoh(self, rim: ReducedModelState, haptic_states: List[HapticState]) -> np.ndarray:
         """

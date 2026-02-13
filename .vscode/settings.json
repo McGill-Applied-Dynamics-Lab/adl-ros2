@@ -184,5 +184,6 @@
     "files.exclude": {
         "**/build/**/*.py": true,
         "**/install/**/*.py": true
-    }
+    },
+    "ROS2.distro": "humble"
 }
