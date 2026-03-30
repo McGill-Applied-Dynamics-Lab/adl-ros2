@@ -108,7 +108,6 @@ RUN apt-get update && \
     # ros-${ROS_DISTRO}-topic-based-ros2-control \
     ros-${ROS_DISTRO}-pinocchio \
     ros-${ROS_DISTRO}-joy \
-    ros-${ROS_DISTRO}-foxglove-bridge \
     ros-${ROS_DISTRO}-rqt-graph \
     ros-${ROS_DISTRO}-rviz2 \
     && rm -rf /var/lib/apt/lists/*

@@ -5,6 +5,14 @@
     "version": "0.2.0",
     "configurations": [
         {
+            "name": "Run Python File (in Container)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${file}",
+            "console": "integratedTerminal",
+            "preLaunchTask": "run-current-file-in-container"
+        },
+        {
             "name": "Python: Current File",
             "type": "debugpy",
             "request": "launch",
