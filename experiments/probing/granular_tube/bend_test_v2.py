@@ -1,7 +1,7 @@
 import time
 import numpy as np
 from scipy.spatial.transform import Rotation as R
-from arm_client.robot import Robot, Pose
+from arm_client.robot import Robot, Pose, Twist
 from arm_client import CONFIG_DIR
 
 # --- Configuration ---
@@ -39,22 +39,15 @@ def execute_circular_arc(
     while t <= duration:
         loop_start = time.perf_counter()
         t = loop_start - start_time
-
-        # Fraction of completion [0.0, 1.0]
         s = min(t / duration, 1.0)
-
-        # Current polar angle based on fraction
         current_angle = s * polar_angle
-
-        # --- Calculate Dynamic Orientation ---
-        # The rotation axis is perpendicular to the radial direction and the Z-axis
         rot_axis = np.array([-np.sin(azimuthal_angle), np.cos(azimuthal_angle), 0.0])
 
         # Create a rotation vector and apply it to the base orientation
         incremental_rot = R.from_rotvec(rot_axis * current_angle)
         current_ori = incremental_rot * BASE_ORI
 
-        # --- Calculate Position ---
+        # Calculate position
         r_prime = radius * np.sin(current_angle)
         z_offset = radius * (np.cos(current_angle) - 1)
 
@@ -76,7 +69,7 @@ def execute_circular_arc(
         if elapsed > dt:
             slow_loops += 1
             if slow_loops <= 5:
-                print(f"⚠️ Slow loop {slow_loops}: took {elapsed*1000:.1f}ms (target {dt*1000:.1f}ms)")
+                print(f"Slow loop {slow_loops}: took {elapsed*1000:.3g} ms (target {dt*1000:.3g} ms)")
 
         if sleep_time > 0:
             time.sleep(sleep_time)
@@ -84,9 +77,58 @@ def execute_circular_arc(
     print("Forward arc complete.")
     time.sleep(SETTLE_SEC)
 
-    # Return to the start position smoothly
-    print("Returning to start pose...")
-    robot.move_to(pose=start_pose, speed=0.15)
+    print("Starting backward arc...")
+    # Reset timers and counters for the backward pass
+    start_time = time.perf_counter()
+    t = 0.0
+    slow_loops_backward = 0
+
+    # High-frequency control loop for backward arc
+    while t <= duration:
+        loop_start = time.perf_counter()
+        t = loop_start - start_time
+        s = min(t / duration, 1.0)
+
+        # Reverse the interpolation: go from polar_angle down to 0
+        current_angle = (1.0 - s) * polar_angle 
+        
+        rot_axis = np.array([-np.sin(azimuthal_angle), np.cos(azimuthal_angle), 0.0])
+
+        # Create a rotation vector and apply it to the base orientation
+        incremental_rot = R.from_rotvec(rot_axis * current_angle)
+        current_ori = incremental_rot * BASE_ORI
+
+        # Calculate position
+        r_prime = radius * np.sin(current_angle)
+        z_offset = radius * (np.cos(current_angle) - 1)
+
+        target_position = np.array([
+            start_pos[0] + r_prime * np.cos(azimuthal_angle),
+            start_pos[1] + r_prime * np.sin(azimuthal_angle),
+            start_pos[2] + z_offset
+        ])
+
+        target_pose = Pose(target_position, current_ori)
+
+        # Stream the target pose to the controller
+        robot.set_target(pose=target_pose)
+
+        # Precise timing to maintain loop frequency
+        elapsed = time.perf_counter() - loop_start
+        sleep_time = dt - elapsed
+
+        if elapsed > dt:
+            slow_loops_backward += 1
+            if slow_loops_backward <= 5:
+                print(f"Backward slow loop {slow_loops_backward}: took {elapsed*1000:.3g} ms (target {dt*1000:.3g} ms)")
+
+        if sleep_time > 0:
+            time.sleep(sleep_time)
+
+    # Anchor to true arc start location (which is the end of the backward arc)
+    robot.move_to(pose=Pose(start_pos, BASE_ORI), speed=0.05)
+
+    print("Backward arc complete.")
     time.sleep(SETTLE_SEC)
 
     return None
@@ -102,15 +144,15 @@ def main():
     robot.controller_switcher_client.switch_controller("osc_pd_controller")
 
     # Load default parameters for osc_pd_controller
-    config_path = CONFIG_DIR / "controllers" / "osc_pd" / "default.yaml"
+    config_path = CONFIG_DIR / "controllers" / "osc_pd" / "bending.yaml"
     robot.osc_pd_controller_parameters_client.load_param_config(file_path=config_path)
     print("Controller configured and ready.")
 
     # --- Trajectory Parameters ---
     RADIUS = 0.25                    # 25 cm radius
     POLAR_ANGLE = np.radians(45)     # 45 degrees tilt from vertical
-    AZIMUTHAL_ANGLE = np.radians(-60)  # 0 degrees yaw (x-z plane)
-    DURATION = 5.0                  # Complete the arc in 12 seconds
+    AZIMUTHAL_ANGLE = np.radians(-35)  # 0 degrees yaw (x-z plane)
+    DURATION = 3.0                  # Complete the arc in 12 seconds
 
     print("-" * 50)
     print("BEND TEST V2 (OSC_PD Regulation Streaming)")

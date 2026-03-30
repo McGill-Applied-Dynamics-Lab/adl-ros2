@@ -91,7 +91,7 @@ def main():
     # Use Cartesian impedance controller for smooth trajectory execution
     robot.controller_switcher_client.switch_controller("fr3_pose_controller")
     robot.fr3_pose_controller_parameters_client.load_param_config(
-        file_path=CONFIG_DIR / "controllers" / "fr3_pose" / "probing.yaml"
+        file_path=CONFIG_DIR / "controllers" / "osc_pd" / "bending.yaml"
     )
 
     # --- Trajectory Parameters ---
