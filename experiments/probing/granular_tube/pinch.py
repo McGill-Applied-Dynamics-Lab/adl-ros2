@@ -12,25 +12,45 @@ SAFE_ORI = R.from_euler("xyz", [-180, 0, 0], degrees=True)
 SAFE_POS = np.array([0.40, 0, 0.30]) # safe starting location
 PROJECT_ROOT = Path(__file__).resolve().parent
 TRAJ_FREQ = 10 # (Hz)
+MOVE_SPEED = 0.01 # (m/s)
 
-TUBE_CENTER_POS = np.array([0.45, 0, 0.30]) # center of tube
+Z_MIN = 0.20 # minimum sensor height from table (m)
+TUBE_CENTER_POS = np.array([0.40, 0]) # center of tube (x, y), (m)
 OUTER_RADIUS = 0.15
 INNER_RADIUS = 0.05
 PINCH_TIME = 1.0
+TUBE_LENGTH = 0.10
 
-def move_waypoints(start_rad, end_rad, radius, end_ori, end_z, speed, traj_freq):
-    delta = np.remainder(end_rad - start_rad, 2 * np.pi)
+def move_waypoints(start_rad, end_rad, start_z, end_z):
+    """
+    Generate trajectory between consecutive pinch locations.
+    """
+    # Calculate shortest angular path (handles wrapping around 0/360)
+    delta = (end_rad - start_rad + np.pi) % (2 * np.pi) - np.pi
+
     waypoints = []
-    ds = radius*np.abs(delta)
-    dt = 1/traj_freq
-    N = int(np.ceil(ds/(speed * dt)))
+    arc_length = OUTER_RADIUS * np.abs(delta)
+    z_diff = end_z - start_z
+    ds = np.sqrt(arc_length**2 + z_diff**2)
+    dt = 1 / TRAJ_FREQ
+    N = int(np.ceil(ds / (MOVE_SPEED * dt))) if ds > 0 else 1
+    dz = z_diff / N # increment in z (m)
 
     for i in range(N + 1):
         current_theta = start_rad + (delta * i / N)
-        x = radius * np.cos(current_theta)
-        y = radius * np.sin(current_theta)
+
+        # Offset by the tube's center position
+        x = TUBE_CENTER_POS[0] + (OUTER_RADIUS * np.cos(current_theta))
+        y = TUBE_CENTER_POS[1] + (OUTER_RADIUS * np.sin(current_theta))
+
+        # Add the starting z height
+        z = start_z + (dz * i)
+
         twist = Twist(np.array([0.0, 0.0, 0.0]), np.array([0.0, 0.0, 0.0]))
-        waypoints.append((Pose(np.array([x, y, end_z]), end_ori), twist))
+
+        # Calculate rotation relative to SAFE_ORI directly
+        rotation = R.from_euler('z', current_theta, degrees=False) * SAFE_ORI
+        waypoints.append((Pose(np.array([x, y, z]), rotation), twist))
 
     return np.linspace(0, N * dt, N + 1), waypoints
 
@@ -49,40 +69,51 @@ def main():
     robot.set_target(pose=Pose(SAFE_POS, SAFE_ORI))
     time.sleep(SETTLE_SEC)
 
-    gripper.open()
-    time.sleep(SETTLE_SEC)
+    angles = np.radians(np.random.uniform(low=0, high=180, size=(50,)))
+    heights = np.random.uniform(low=0, high=1.0, size=(50,))*TUBE_LENGTH + Z_MIN
 
-    prev_angle = None
-    for aidx, angle in enumerate(np.radians(np.arange(0, 360, 90))):
-        target_rot = R.from_euler('z', angle, degrees=False) * SAFE_ORI
+    for i in range(len(angles)):
+        target_rot = R.from_euler('z', angles[i], degrees=False) * SAFE_ORI
 
-        if aidx != 0:
-            times, waypoints = move_waypoints(prev_angle, angle, OUTER_RADIUS, target_rot, 0.30, speed=0.05, traj_freq=TRAJ_FREQ)
+        if i > 0:
+            times, waypoints = move_waypoints(angles[i-1], angles[i], heights[i-1], heights[i])
             robot.execute_trajectory(waypoints, times)
-            while robot.wait_for_trajectory_completion(times[-1], timeout_margin=0.5):
-                time.sleep(0.01)
-        # Set orientation
-        target_rot = R.from_euler('z', angle, degrees=False) * SAFE_ORI
-        robot.set_target(pose=Pose(SAFE_POS, target_rot))
-        time.sleep(SETTLE_SEC)
-        # Move to outer position
-        outer_pos = TUBE_CENTER_POS + np.array([np.cos(angle), np.sin(angle), 0]) * OUTER_RADIUS
+            robot.wait_for_trajectory_completion(times[-1], timeout_margin=0.5)
+
+        center_x, center_y = TUBE_CENTER_POS[0], TUBE_CENTER_POS[1]
+
+        outer_pos = np.array([
+            center_x + (np.cos(angles[i]) * OUTER_RADIUS),
+            center_y + (np.sin(angles[i]) * OUTER_RADIUS),
+            heights[i]
+        ])
+
+        inner_pos = np.array([
+            center_x + (np.cos(angles[i]) * INNER_RADIUS),
+            center_y + (np.sin(angles[i]) * INNER_RADIUS),
+            heights[i]
+        ])
+
         robot.set_target(pose=Pose(outer_pos, target_rot))
         time.sleep(SETTLE_SEC)
+
+        # Open gripper
+        gripper.open()
+        time.sleep(SETTLE_SEC)
+
         # Move radially inward
-        inner_pos = TUBE_CENTER_POS + np.array([np.cos(angle), np.sin(angle), 0]) * INNER_RADIUS
         robot.set_target(pose=Pose(inner_pos, target_rot))
         time.sleep(SETTLE_SEC)
+
         # Cycle the gripper
         gripper.close()
         time.sleep(PINCH_TIME)
         gripper.open()
         time.sleep(SETTLE_SEC)
+
         # Move radially outward
         robot.set_target(pose=Pose(outer_pos, target_rot))
         time.sleep(SETTLE_SEC)
-        # Save previous angle
-        prev_angle = angle
 
     # Move back to safe position
     print("\nReturning to safe pos...")

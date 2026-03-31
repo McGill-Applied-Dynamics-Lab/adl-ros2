@@ -5,13 +5,13 @@ from pathlib import Path
 import pickle
 
 # --- Configuration ---
-SETTLE_SEC = 0.50  # wait time after moves (s)
+SETTLE_SEC = 2.00  # wait time after moves (s)
 DELAY_SEC = 1.00 # delay between forward and reverse motion (s)
 
 # File paths
 PROJECT_ROOT = Path(__file__).resolve().parent
 PARAMETERS_FILE = PROJECT_ROOT / "results" / "grids" / "rotation_params.pkl"
-RESULTS_FILE = PROJECT_ROOT / "results" / "RANDOM_WRIST_ROTATION_DATA.pkl"
+RESULTS_FILE = PROJECT_ROOT / "results" / "RANDOM_TWIST.pkl"
 
 def execute_wrist_rotation_pair(
     robot: Robot, target_angle_rad: float, speed_rad_s: float
@@ -48,12 +48,9 @@ def execute_wrist_rotation_pair(
 
     # Calculate trajectory duration
     speed_rad_s = abs(speed_rad_s)
-    duration_per_direction = abs(target_angle_rad / speed_rad_s) if speed_rad_s > 0 else 1.0
+    duration_per_direction = abs(target_angle_rad / speed_rad_s)
 
-    poll_rate = 20.0  # robot data sampling rate (Hz)
-    poll_period = 1.0 / poll_rate
-
-    # ===== FORWARD ROTATION =====
+    # Forward rotation
     target_joint7_forward = start_joint7 + target_angle_rad
     q_target_forward = start_q.copy()
     q_target_forward[6] = target_joint7_forward
@@ -80,9 +77,9 @@ def execute_wrist_rotation_pair(
         angles_fwd.append(current_j7)  # absolute angle
         torques_fwd.append(ee_wrench["torque"].copy())
 
-        time.sleep(poll_period)
+        time.sleep(0.01)
 
-    # ===== REVERSE ROTATION =====
+    # Reverse direction
     q_target_reverse = start_q.copy()
     q_target_reverse[6] = start_joint7
 
@@ -108,7 +105,7 @@ def execute_wrist_rotation_pair(
         angles_rev.append(current_j7)  # absolute angle
         torques_rev.append(ee_wrench["torque"].copy())
 
-        time.sleep(poll_period)
+        time.sleep(0.01)
 
     time.sleep(SETTLE_SEC)
 
@@ -198,22 +195,22 @@ def main():
         angle = planned_angles[i]
         speed = planned_speeds[i]
 
-        angle_deg = np.degrees(angle)
-        speed_deg_s = np.degrees(speed)
+        angle_deg = np.degrees(angle) # for print-out only
+        speed_deg_s = np.degrees(speed) # for print-out only
 
         print(
             f"\nRotation Pair {i + 1} / {num_points} | Target Angle: {angle_deg:.3g} deg., Speed: {speed_deg_s:.3g} deg./s"
         )
 
         try:
-            # --- Perform Forward and Reverse Rotation ---
+            # Perform Forward and Reverse Rotation
             print("\tExecuting forward + reverse rotation...")
             (ts_fwd, angles_fwd, torques_fwd,
              ts_rev, angles_rev, torques_rev) = execute_wrist_rotation_pair(
                 robot=robot, target_angle_rad=angle, speed_rad_s=speed
             )
 
-            # --- Store results ---
+            # Store results
             exp_dict["ts_forward"].append(ts_fwd)
             exp_dict["joint7_angles_forward"].append(angles_fwd)
             exp_dict["torques_forward"].append(torques_fwd)
