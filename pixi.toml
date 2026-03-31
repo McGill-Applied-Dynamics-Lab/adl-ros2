@@ -1,0 +1,112 @@
+[workspace]
+authors = ["Charles Sirois <charles.sirois@mail.mcgill.ca>"]
+channels = ["conda-forge"]
+name = "adl-ros2"
+platforms = ["linux-64"]
+version = "0.1.0"
+
+[tasks]
+setup-colcon = { cmd = """
+colcon mixin add default https://raw.githubusercontent.com/colcon/colcon-mixin-repository/master/index.yaml && \
+colcon mixin update default
+""" }
+build = { cmd = [
+    "colcon",
+    "build",
+    "--build-base",
+    "build_$ROS_DISTRO",
+    "--install-base",
+    "install_$ROS_DISTRO",
+] }
+test = { cmd = [
+    "colcon",
+    "test",
+    "--python-testing",
+    "pytest",
+    "--build-base",
+    "build_$ROS_DISTRO",
+    "--install-base",
+    "install_$ROS_DISTRO",
+], depends-on = "build" }
+gen-vscode-env = { cmd = """
+bash -c '
+  mkdir -p .vscode &&
+  source install_$ROS_DISTRO/setup.bash &&
+  env | grep -E "^(AMENT|COLCON|ROS|PYTHONPATH|LD_LIBRARY_PATH|PATH|CMAKE)" > .vscode/.env.$ROS_DISTRO
+'
+""" }
+
+[activation.env]
+CMAKE_INSTALL_MODE = "SYMLINK"
+COLCON_DEFAULT_OUTPUT_STYLE = "catkin_tools"
+
+[environments]
+humble = { features = ["humble", "dev"] }
+
+# --- General dependencies
+[dependencies]
+python = ">=3.10"
+compilers = "*"
+c-compiler = "*"
+cxx-compiler = "*"
+cmake = "<4.0"
+make = "*"
+pkg-config = "*"
+ninja = "*"
+colcon-common-extensions = ">=0.3.0,<0.4"
+colcon-mixin = ">=0.2.3,<0.3"
+# vim = "*"
+# git = "*"
+# curl = "*"
+# unzip = "*"
+# pip = "*"
+# pytorch = "*"
+# torchvision = "*"
+# torchaudio = "*"
+
+[pypi-dependencies]
+adl-ros2 = { path = ".", editable = true }
+colcon-ansi-colors = { git = "https://github.com/SimbeRobotics/colcon-ansi-colors" }
+
+# --- Humble
+[feature.humble]
+channels = ["https://prefix.dev/robostack-humble"]
+
+[feature.humble.dependencies]
+ros-humble-desktop = "*"
+ros-humble-ament-cmake = "<4.0"
+ros-humble-control-toolbox = "*"
+ros-humble-controller-interface = "*"
+ros-humble-control-msgs = "*"
+ros-humble-controller-manager = "*"
+ros-humble-geometry-msgs = "*"
+ros-humble-hardware-interface = "*"
+ros-humble-ros2-control = "*"
+ros-humble-ros2-controllers = "*"
+ros-humble-sensor-msgs = "*"
+ros-humble-joy = "*"
+ros-humble-rqt-graph = "*"
+ros-humble-rviz2 = "*"
+colcon-common-extensions = "*"
+rosdep = "*"
+libstdcxx-ng = "*"
+
+[feature.humble.pypi-dependencies]
+viser = ">=1.0.16, <2"
+websockets = "*"
+
+# --- dev dependencies
+[feature.dev.pypi-dependencies]
+ruff = "*"
+bumpver = "*"
+build = "*"
+twine = "*"
+pre-commit = "*"
+pytest = "*"                                                 # for testing
+mkdocs = ">=1.6.0"
+mkdocs-material = ">=9.6.0"
+mkdocstrings = { version = ">=0.30.0", extras = ["python"] }
+mkdocs-gen-files = ">=0.5.0"
+mkdocs-literate-nav = ">=0.6.0"
+mkdocs-section-index = ">=0.3.0"
+markdown-callouts = "*"

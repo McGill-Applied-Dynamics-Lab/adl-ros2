@@ -3,21 +3,27 @@
 .vs/
 # .vscode/
 # !**/adg_ros2/.vscode/
+.vscode/.env.humble
 
 # Python
 *.pyc
 **/__pycache/
 *.egg-info/
 # robot_arm_interface/robot_arm_interface/__pycache__/fr3_interface.cpython-310.pyc
+.pytest_cache/
 
 .github/
+
+# pixi
+.pixi/
 
 # ROS2
 COLCON_IGNORE
 AMENT_IGNORE
 cmake-build-*/
 build/
-install/
+build_humble/
+install_humble/
 log/
 
 # Data
@@ -28,4 +34,6 @@ data/
 # Docs
 site/
 
-crisp_py/
+crisp_py/# pixi environments
+.pixi/*
+!.pixi/config.toml

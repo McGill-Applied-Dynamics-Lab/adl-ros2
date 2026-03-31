@@ -1,5 +1,5 @@
 # Documentation Setup
-This directory contains the MkDocs-based documentation for the ADG ROS2 project.
+This directory contains the MkDocs-based documentation for the ADL ROS2 project.
 
 ## Features
 - **Static Site Generation**: Uses MkDocs with Material theme
@@ -7,10 +7,9 @@ This directory contains the MkDocs-based documentation for the ADG ROS2 project.
 
 ## To Add
 Robot Setup:
-- Franka Desk logins
-- SSH Instructions
-- FCI screenshots
-
+- [ ] Franka Desk logins
+- [ ] SSH Instructions
+- [ ] FCI screenshots
 
 
 ## Quick Start

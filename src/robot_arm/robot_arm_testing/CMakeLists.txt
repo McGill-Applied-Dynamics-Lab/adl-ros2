@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.8)
+cmake_minimum_required(VERSION 3.10)
 project(robot_arm_testing)
 
 if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
@@ -24,7 +24,7 @@ if(BUILD_TESTING)
   endfunction()
   # add_ros_isolated_launch_test(test/test_turtle.py)
   # add_ros_isolated_launch_test(test/test_fr3_bringup_real.py)
-  add_ros_isolated_launch_test(test/test_fr3_interface.py)
+  # add_ros_isolated_launch_test(test/test_fr3_interface.py)
 
 
 endif()

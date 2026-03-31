@@ -1,5 +1,4 @@
 # Franka Server
-
 The *Franka Server* consists of group of ROS2 nodes sending the low level torque commands to the *Franka Controller*. 
 The main component is the ros2 controller.
 
@@ -9,29 +8,18 @@ The main component is the ros2 controller.
 > - [IsaacSim Documentation](https://docs.isaacsim.omniverse.nvidia.com/4.5.0/index.html)
 > - [IsaacSim API](https://docs.isaacsim.omniverse.nvidia.com/4.5.0/py/index.html)
 
-The following steps assume you have access to the shell and files of the FrankaPC, either directly or via ssh.
+See also:
 
-## Testing `libfranka`
-Libfranka is the low level c++ api to send commands to the robot. 
-Test that you are able to connect to the robot:
-```
-cd ~/git/libfranka/build
-./examples/echo_robot_state $FR3_IP
-```
+- [Server Setup and Installation](./installation.md): Initial setup of the Franka and server
 
-To check the realtime is working:
-```
-# This moves the robot home
-./examples/communication_test $FR3_IP
-```
+TODO: 
 
-Other examples are available. You can take a look with 
-```
-ls examples
-```
-
+- Add login infos
+- Add mini PC setup: folders, project locations, ...
 
 ## Starting the Server
+*Login to the server via [SSH](../franka-client/installation.md) or physically*
+
 1. Launch the server
 
 ```
@@ -88,8 +76,6 @@ It's in the Franka Server that the low level controllers are implemented using
 [ros2 control](https://control.ros.org/rolling/index.html).
 
 We also have the [CRISP PY](https://utiasdsl.github.io/crisp_controllers/getting_started/) controllers. 
-
-It's currently hard to modify add new controllers because of the desktop limitations. 
 
 TODO: Add available controllers, math, their configurations, ... to the franka-server package doc
 

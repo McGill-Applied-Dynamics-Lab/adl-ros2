@@ -66,7 +66,6 @@ setup(
     maintainer_email="charles.sirois@mail.mcgill.ca",
     description="Compute Reduced Interface Model (RIM) for Franka Research 3",
     license="Apache-2.0",
-    tests_require=["pytest"],
     entry_points={
         "console_scripts": [
             "franka_model_node = franka_rim.franka_model_node:main",
