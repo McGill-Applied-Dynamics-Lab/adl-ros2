@@ -10,6 +10,7 @@ setup-colcon = { cmd = """
 colcon mixin add default https://raw.githubusercontent.com/colcon/colcon-mixin-repository/master/index.yaml && \
 colcon mixin update default
 """ }
+
 build = { cmd = [
     "colcon",
     "build",
@@ -18,6 +19,7 @@ build = { cmd = [
     "--install-base",
     "install_$ROS_DISTRO",
 ] }
+
 test = { cmd = [
     "colcon",
     "test",
@@ -28,13 +30,19 @@ test = { cmd = [
     "--install-base",
     "install_$ROS_DISTRO",
 ], depends-on = "build" }
+
 gen-vscode-env = { cmd = """
 bash -c '
   mkdir -p .vscode &&
   source install_$ROS_DISTRO/setup.bash &&
   env | grep -E "^(AMENT|COLCON|ROS|PYTHONPATH|LD_LIBRARY_PATH|PATH|CMAKE)" > .vscode/.env.$ROS_DISTRO
 '
-""" }
+""" } # Export env for debugger
+
+test-install = { cmd = [
+    "python",
+    "scripts/test_install.py",
+] } # Test installation
 
 [activation.env]
 CMAKE_INSTALL_MODE = "SYMLINK"
