@@ -32,7 +32,7 @@ robot.osc_pd_controller_parameters_client.load_param_config(
 )
 
 # -- Move
-position = [0.4, 0.0, 0.4]  # x, y, z in meters
+position = [0.4, 0.0, 0.5]  # x, y, z in meters
 robot.move_to(position=position, speed=0.05)
 
 print("Done")

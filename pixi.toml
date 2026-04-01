@@ -5,6 +5,9 @@ name = "adl-ros2"
 platforms = ["linux-64"]
 version = "0.1.0"
 
+# -----------------------------
+# MARK: Tasks
+# -----------------------------
 [tasks]
 setup-colcon = { cmd = """
 colcon mixin add default https://raw.githubusercontent.com/colcon/colcon-mixin-repository/master/index.yaml && \
@@ -51,7 +54,9 @@ COLCON_DEFAULT_OUTPUT_STYLE = "catkin_tools"
 [environments]
 humble = { features = ["humble", "dev"] }
 
-# --- General dependencies
+# -----------------------------
+# MARK: General dependencies
+# -----------------------------
 [dependencies]
 python = ">=3.10"
 compilers = "*"
@@ -63,20 +68,17 @@ pkg-config = "*"
 ninja = "*"
 colcon-common-extensions = ">=0.3.0,<0.4"
 colcon-mixin = ">=0.2.3,<0.3"
-# vim = "*"
-# git = "*"
-# curl = "*"
-# unzip = "*"
-# pip = "*"
-# pytorch = "*"
-# torchvision = "*"
-# torchaudio = "*"
 
 [pypi-dependencies]
 adl-ros2 = { path = ".", editable = true }
 colcon-ansi-colors = { git = "https://github.com/SimbeRobotics/colcon-ansi-colors" }
+pyroki = { git = "https://github.com/chungmin99/pyroki.git" }
+pyglet = ">=2.1.13, <3"
+jax = { version = ">=0.9.2, <0.10", extras = ["cuda12"] }
 
-# --- Humble
+# -----------------------------
+# MARK: Humble
+# -----------------------------
 [feature.humble]
 channels = ["https://prefix.dev/robostack-humble"]
 
@@ -103,14 +105,16 @@ libstdcxx-ng = "*"
 viser = ">=1.0.16, <2"
 websockets = "*"
 
-# --- dev dependencies
+# -----------------------------
+# MARK: Dev
+# -----------------------------
 [feature.dev.pypi-dependencies]
 ruff = "*"
 bumpver = "*"
 build = "*"
 twine = "*"
 pre-commit = "*"
-pytest = "*"                                                 # for testing
+pytest = "*"
 mkdocs = ">=1.6.0"
 mkdocs-material = ">=9.6.0"
 mkdocstrings = { version = ">=0.30.0", extras = ["python"] }
