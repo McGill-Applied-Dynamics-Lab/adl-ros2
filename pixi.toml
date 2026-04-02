@@ -74,6 +74,7 @@ ninja = "*"
 numpy = "<=2, <=2.4.3"
 colcon-common-extensions = ">=0.3.0,<0.4"
 colcon-mixin = ">=0.2.3,<0.3"
+pyserial = ">=3.5,<4"
 
 [pypi-dependencies]
 adl-ros2 = { path = ".", editable = true }

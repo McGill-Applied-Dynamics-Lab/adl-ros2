@@ -14,12 +14,12 @@ robot.home()
 
 print("Switching to fr3_pose_controller...")
 robot.controller_switcher_client.switch_controller("osc_pd_controller")
-robot.fr3_pose_controller_parameters_client.load_param_config(
-    file_path=CONFIG_DIR / "controllers" / "fr3_pose" / "default.yaml"
+robot.osc_pd_controller_parameters_client.load_param_config(
+    file_path=CONFIG_DIR / "controllers" / "osc_pd" / "default.yaml"
 )
 
 current_pose = robot.end_effector_pose
-target_orientation = Rotation.from_euler("xyz", [180.0, 0.0, 0.0], degrees=True)
+target_orientation = Rotation.from_euler("xyz", [90.0, 0.0, 0.0], degrees=True)
 target_pose = Pose(position=current_pose.position, orientation=target_orientation)
 
 print("Moving to target orientation (roll, pitch, yaw) = (180, 0, 0) deg...")
