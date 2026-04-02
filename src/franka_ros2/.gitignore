@@ -1,0 +1,14 @@
+.env
+.idea
+.vscode
+*.pyc
+COLCON_IGNORE
+!franka_mobile_sensors/COLCON_IGNORE
+AMENT_IGNORE
+cmake-build-*/
+build/
+install/
+log/
+libfranka
+franka_description
+olvx_descriptions_module

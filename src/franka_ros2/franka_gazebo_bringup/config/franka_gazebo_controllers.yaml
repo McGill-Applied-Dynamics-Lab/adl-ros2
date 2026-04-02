@@ -1,0 +1,61 @@
+/**:
+  controller_manager:
+    ros__parameters:
+      update_rate: 1000  # Hz
+
+      joint_position_example_controller:
+        type: franka_example_controllers/JointPositionExampleController
+
+      joint_velocity_example_controller:
+        type: franka_example_controllers/JointVelocityExampleController
+
+      joint_impedance_example_controller:
+        type: franka_example_controllers/JointImpedanceExampleController
+
+      joint_state_broadcaster:
+        type: joint_state_broadcaster/JointStateBroadcaster
+      
+      mobile_cartesian_velocity_with_ik_example_controller:
+        type: franka_example_controllers/MobileCartesianVelocityWithIkExampleController
+
+      mobile_fr3_duo_joint_impedance_example_controller:
+        type: franka_example_controllers/MobileFr3DuoJointImpedanceExampleController
+      
+      gravity_compensation_example_controller:
+        type: franka_example_controllers/GravityCompensationExampleController
+
+/**:
+  joint_position_example_controller:
+    ros__parameters:
+      gazebo: true
+
+/**:
+  joint_velocity_example_controller:
+    ros__parameters:
+      gazebo: true
+
+/**:    
+  joint_impedance_example_controller:
+    ros__parameters:
+      robot_type: "fr3v2"
+      k_gains:
+        - 24.0
+        - 24.0
+        - 24.0
+        - 24.0
+        - 10.0
+        - 6.0
+        - 2.0
+      d_gains:
+        - 2.0
+        - 2.0
+        - 2.0
+        - 1.0
+        - 1.0
+        - 1.0
+        - 0.5
+
+/**:  
+  mobile_cartesian_velocity_with_ik_example_controller:
+    ros__parameters:
+      robot_type: "tmrv0_2"

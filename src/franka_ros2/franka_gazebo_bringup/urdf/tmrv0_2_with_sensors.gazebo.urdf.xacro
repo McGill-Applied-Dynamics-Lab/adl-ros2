@@ -1,0 +1,28 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro"
+       name="tmrv0_2_with_sensors_gazebo">
+
+  <!-- Include TMR with physical sensor links -->
+  <xacro:include filename="$(find franka_mobile_sensors)/robots/tmrv0_2_with_sensors.urdf.xacro"/>
+
+  <!-- Include Gazebo sensor plugin macros -->
+  <xacro:include filename="$(find franka_gazebo_bringup)/urdf/sensors.xacro"/>
+
+  <!-- ================= CAMERA SENSORS ================= -->
+  <xacro:franka_gazebo_camera link_reference="camera_front_link"
+                              sensor_name="camera_front"
+                              gz_topic="/camera_front/image_raw"/>
+  <xacro:franka_gazebo_camera link_reference="camera_rear_link"
+                              sensor_name="camera_rear"
+                              gz_topic="/camera_rear/image_raw"/>
+  <xacro:franka_gazebo_camera link_reference="camera_left_link"
+                              sensor_name="camera_left"
+                              gz_topic="/camera_left/image_raw"/>
+  <xacro:franka_gazebo_camera link_reference="camera_right_link"
+                              sensor_name="camera_right"
+                              gz_topic="/camera_right/image_raw"/>
+
+  <!-- ================= IMU SENSOR ================= -->
+  <xacro:franka_gazebo_body_imu link_reference="imu_body_link"
+                                gz_topic="/imu/data"/>
+</robot>
