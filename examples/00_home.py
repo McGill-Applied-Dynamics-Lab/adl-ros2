@@ -15,7 +15,7 @@ robot.home()
 print("Switching to fr3_pose_controller...")
 robot.controller_switcher_client.switch_controller("osc_pd_controller")
 robot.fr3_pose_controller_parameters_client.load_param_config(
-    file_path=CONFIG_DIR / "controllers" / "osc_pd" / "probe_controller.yaml"
+    file_path=CONFIG_DIR / "controllers" / "fr3_pose" / "default.yaml"
 )
 
 current_pose = robot.end_effector_pose

@@ -35,7 +35,7 @@ x-base: &base
     PATH: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
     PKG_CONFIG_PATH: /usr/local/lib/pkgconfig:/usr/lib/pkgconfig
     LD_LIBRARY_PATH: /usr/local/lib:/usr/lib
-    PYTHONPATH: /u`sr/local/lib/python3.10/site-packages
+    PYTHONPATH: /usr/local/lib/python3.10/site-packages
     CMAKE_PREFIX_PATH: /usr/local
     NVIDIA_VISIBLE_DEVICES: "0"
     NVIDIA_DRIVER_CAPABILITIES: "all"
@@ -52,6 +52,9 @@ x-base: &base
 
   device_cgroup_rules:
     - 'c *:* rmw'
+
+  devices:
+    - "/dev/ttyACM0:/dev/ttyACM0"
 
   deploy:
     resources:
