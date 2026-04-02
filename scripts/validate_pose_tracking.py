@@ -68,13 +68,13 @@ JOINT_NAMES = [
 ]
 
 TRAJ_TYPE = "spherical"  # "straight" or "spherical"
-SPHERICAL_RADIUS = 0.2  # meters
+SPHERICAL_RADIUS = 0.15  # meters
 SPHERICAL_THETA = 90.0  # degrees (arc length)
 SPHERICAL_PHI = 0.0  # degrees (azimuthal angle / direction of travel)
 
 TRAJ_DURATION = 3.0
 N_WP = 10
-N_POINTS = 50
+N_POINTS = 20
 TRAJ_START_TIME = 2.0
 SETTLE_TIME = 1.0
 
@@ -544,6 +544,125 @@ def generate_spherical_waypoints(
     return waypoints
 
 
+def plan_joint_trajectory_fast(
+    robot: pk.Robot,
+    target_link_name: str,
+    waypoints: list[dict],
+    joint_names: list[str],
+    n_points: int,
+    current_joint_config: Optional[onp.ndarray] = None,
+) -> tuple[list[float], list[onp.ndarray]]:
+    """
+    Plan joint trajectory using extremely fast Sequential Dense IK via parameterized jaxls.
+
+    Args:
+        robot: PyRoki Robot instance
+        target_link_name: Name of end-effector link
+        waypoints: List of waypoint dicts with position, orientation, s
+        joint_names: List of joint names (only arm joints, e.g., 7 for FR3)
+        n_points: Number of points for the interpolated trajectory
+        current_joint_config: Current joint configuration for warm start
+
+    Returns:
+        Tuple of (s_values, joint_configs)
+    """
+    target_link_index = jnp.array(robot.links.names.index(target_link_name), dtype=jnp.int32)
+    s_values = np.linspace(0.0, 1.0, n_points)
+
+    print(f"  Fast Parameterized IK Setup: interpolating {n_points} points...")
+
+    # 1. Extract and interpolate Cartesian waypoints
+    ref_s = np.array([w.get("s", i / (len(waypoints) - 1)) for i, w in enumerate(waypoints)])
+    ref_pos = np.array([w["position"] for w in waypoints])
+    ref_quat = np.array([w["orientation"].as_quat() for w in waypoints])  # xyzw format
+
+    interp_pos = np.column_stack([np.interp(s_values, ref_s, ref_pos[:, i]) for i in range(3)])
+
+    from scipy.spatial.transform import Slerp
+
+    slerp = Slerp(ref_s, Rotation.from_quat(ref_quat))
+    interp_rot = slerp(s_values)
+    interp_quat_wxyz = interp_rot.as_quat()[:, [3, 0, 1, 2]]  # convert xyzw back to wxyz
+
+    # 2. Build parameterized JAXLS problem
+    print(f"  Compiling parameterized IK solver...")
+    import jaxls
+
+    joint_var = robot.joint_var_cls(1)
+
+    class TargetVar(jaxls.Var, default_factory=lambda: jnp.zeros(7)):
+        @property
+        def tangent_dim(self):
+            return 7
+
+        def __lt__(self, other):
+            return str(type(self)) + str(self.id) < str(type(other)) + str(other.id)
+
+    target_var = TargetVar(2)
+    prev_joint_var = robot.joint_var_cls(3)
+
+    @jaxls.Cost.factory
+    def param_pose_cost(vals: jaxls.VarValues, j_var: jaxls.Var, t_var: jaxls.Var) -> jax.Array:
+        target_param = vals[t_var]
+        target_pose = jaxlie.SE3.from_rotation_and_translation(
+            rotation=jaxlie.SO3(target_param[:4]), translation=target_param[4:]
+        )
+        return pk.costs.pose_residual(
+            vals=vals,
+            robot=robot,
+            joint_var=j_var,
+            target_pose=target_pose,
+            target_link_index=target_link_index,
+            pos_weight=100.0,  # Stronger position tracking
+            ori_weight=1.0,  # Stronger orientation tracking
+        )
+
+    @jaxls.Cost.factory
+    def param_similarity_cost(vals: jaxls.VarValues, j_var: jaxls.Var, p_var: jaxls.Var) -> jax.Array:
+        return (vals[j_var] - vals[p_var]) * 20.0
+
+    costs = [
+        param_pose_cost(joint_var, target_var),
+        param_similarity_cost(joint_var, prev_joint_var),
+    ]
+    # Add limit constraint if it exists natively in PyRoki costs
+    if hasattr(pk.costs, "limit_constraint"):
+        costs.append(pk.costs.limit_constraint(robot, joint_var))
+
+    solver = jaxls.LeastSquaresProblem(variables=[joint_var, target_var, prev_joint_var], costs=costs).analyze()
+
+    # 3. Solve sequentially using compiled solver
+    print(f"  Solving {n_points} waypoints sequentially...")
+    start_time = time.time()
+
+    current_cfg = np.zeros(len(joint_names)) if current_joint_config is None else current_joint_config
+    if len(current_cfg) == 7:
+        current_cfg = np.pad(current_cfg, (0, 1), mode="constant")  # Pad finger joint for solver
+
+    joint_configs = []
+
+    for i in range(n_points):
+        target_se3_param = jnp.concatenate([interp_quat_wxyz[i], interp_pos[i]])
+
+        solution = solver.solve(
+            initial_vals=jaxls.VarValues.make(
+                (
+                    joint_var.with_value(jnp.array(current_cfg)),
+                    target_var.with_value(jnp.array(target_se3_param)),
+                    prev_joint_var.with_value(jnp.array(current_cfg)),
+                )
+            ),
+            verbose=False,
+            trust_region=jaxls.TrustRegionConfig(lambda_initial=1.0),
+        )
+        current_cfg = np.array(solution[joint_var])
+        joint_configs.append(current_cfg)
+
+    print(f"  IK solved in {time.time() - start_time:.3f} seconds!")
+
+    return s_values.tolist(), np.array(joint_configs)
+
+
 def plan_joint_trajectory(
     robot: pk.Robot,
     target_link_name: str,
@@ -792,26 +911,29 @@ def _solve_ik_with_similarity(
                 jnp.array(target_position),
             ),
             jnp.array(target_link_index),
-            pos_weight=50.0,
-            ori_weight=10.0,
+            pos_weight=200.0,
+            ori_weight=100.0,
         ),
         pk.costs.limit_constraint(robot, joint_var),
-        # # Self-collision avoidance
-        # pk.costs.self_collision_cost(
-        #     jax.tree.map(lambda x: x[None], robot),
-        #     jax.tree.map(lambda x: x[None], robot),
-        #     joint_var,
-        #     0.02,
-        #     5.0,
-        # ),
     ]
 
-    # Similarity cost - encourage solution to be close to zero config
-    @jaxls.Cost.factory(name="SimilarityCost")
-    def similarity_cost(vals: jaxls.VarValues, var) -> jax.Array:
-        return vals[var].flatten() * 0.1  # Soft regularization
+    init_vals = None
+    if initial_joint_config is not None:
+        init_vals = jaxls.VarValues.make((joint_var.with_value(jnp.array(initial_joint_config)),))
 
-    costs.append(similarity_cost(joint_var))
+        # Similarity cost - encourage solution to be close to previous config
+        @jaxls.Cost.factory(name="SimilarityCost")
+        def similarity_cost(vals: jaxls.VarValues, var) -> jax.Array:
+            return (vals[var].flatten() - initial_joint_config) * 2.0  # regularization against large jumps
+
+        costs.append(similarity_cost(joint_var))
+    else:
+        # Fallback similarity cost - encourage solution to be close to zero config
+        @jaxls.Cost.factory(name="SimilarityCost")
+        def similarity_cost(vals: jaxls.VarValues, var) -> jax.Array:
+            return vals[var].flatten() * 0.1  # Soft regularization
+
+        costs.append(similarity_cost(joint_var))
 
     sol = (
         jaxls.LeastSquaresProblem(costs=costs, variables=variables)
@@ -819,6 +941,7 @@ def _solve_ik_with_similarity(
         .solve(
             verbose=False,
             linear_solver="dense_cholesky",
+            initial_vals=init_vals,
             trust_region=jaxls.TrustRegionConfig(lambda_initial=1.0),
         )
     )
@@ -1160,7 +1283,7 @@ def plot_results(recorded_data: dict, reference_trajectory: dict, traj_msg, conf
     fig_joints.tight_layout()
     fig_joints.savefig(save_dir / "trajectory_joints.png", dpi=150)
 
-    print("\nPlots saved to /tmp/trajectory_cartesian.png and /tmp/trajectory_joints.png")
+    print(f"\nPlots saved to {save_dir}")
     plt.show()
 
 
@@ -1287,7 +1410,7 @@ def main():
     # MARK: 4 - Plan trajectory
     # ---------------------------
     print("\n4. Planning joint trajectory using PyRoki...")
-    s_values, joint_trajectory = plan_joint_trajectory(
+    s_values, joint_trajectory = plan_joint_trajectory_fast(
         robot,
         target_link_name,
         waypoints,
