@@ -101,3 +101,65 @@ class JointTrajectoryControllerClient(ActionClient):
 
             self.node.get_logger().debug(f"Goal result: {future.result()}")
             return future.result()
+
+    def send_joint_trajectory(
+        self,
+        joint_names: list[str],
+        joint_positions: list[list[float]],
+        time_from_start: list[float],
+        blocking: bool = True,
+    ) -> Optional[FollowJointTrajectory.Result]:
+        """Send a full joint trajectory to the robot.
+
+        Args:
+            joint_names (list[str]): Joint names corresponding to each trajectory point.
+            joint_positions (list[list[float]]): Joint position trajectory.
+            time_from_start (list[float]): Cumulative trajectory times in seconds.
+            blocking (bool, optional): Whether to block until completion.
+
+        Returns:
+            Optional[FollowJointTrajectory.Result]: Result when blocking, otherwise None.
+        """
+        if len(joint_positions) != len(time_from_start):
+            raise ValueError("joint_positions and time_from_start must have the same length")
+        if len(joint_positions) == 0:
+            raise ValueError("joint_positions cannot be empty")
+
+        self._goal.trajectory.joint_names = [self._prefix + joint_name for joint_name in joint_names]
+        self._goal.trajectory.header.stamp = self.node.get_clock().now().to_msg()
+        self._goal.trajectory.points = []
+
+        n_points = len(joint_positions)
+        for i, (positions, t) in enumerate(zip(joint_positions, time_from_start)):
+            point = JointTrajectoryPoint()
+            point.positions = positions
+
+            if i >= n_points - 2:
+                point.velocities = [0.0] * len(joint_names)
+                point.accelerations = [0.0] * len(joint_names)
+
+            point.time_from_start = Duration(seconds=int(t), nanoseconds=int((t % 1) * 1e9)).to_msg()
+
+            # point = JointTrajectoryPoint(
+            #     positions=positions,
+            #     velocities=len(positions) * [0.0],
+            #     accelerations=len(positions) * [0.0],
+            #     time_from_start=Duration(seconds=int(t), nanoseconds=int((t % 1.0) * 1e9)).to_msg(),
+            # )
+
+            self._goal.trajectory.points.append(point)
+
+        future = self.send_goal_async(self._goal)
+
+        if blocking:
+            while not future.done():
+                self.node.get_logger().debug("Waiting for trajectory goal answer...", throttle_duration_sec=1.0)
+
+            goal_handle = future.result()
+
+            future = goal_handle.get_result_async()
+            while not future.done():
+                self.node.get_logger().debug("Waiting for trajectory result...", throttle_duration_sec=1.0)
+
+            self.node.get_logger().debug(f"Trajectory goal result: {future.result()}")
+            return future.result()
