@@ -69,10 +69,10 @@ JOINT_NAMES = [
 
 TRAJ_TYPE = "spherical"  # "straight" or "spherical"
 SPHERICAL_RADIUS = 0.15  # meters
-SPHERICAL_THETA = 90.0  # degrees (arc length)
+SPHERICAL_THETA = -90.0  # degrees (arc length)
 SPHERICAL_PHI = 0.0  # degrees (azimuthal angle / direction of travel)
 
-TRAJ_DURATION = 3.0
+TRAJ_DURATION = 2.0
 N_WP = 10
 N_POINTS = 20
 TRAJ_START_TIME = 2.0
@@ -550,6 +550,177 @@ def plan_joint_trajectory_fast(
     waypoints: list[dict],
     joint_names: list[str],
     n_points: int,
+    current_joint_config: Optional[np.ndarray] = None,
+) -> tuple[list[float], np.ndarray]:
+    """
+    Plan a joint-space trajectory from Cartesian waypoints.
+
+    Solves IK sequentially along the interpolated path, warm-starting each
+    solution from the previous one to keep the joint trajectory smooth.
+    Uses @jdc.jit so the solver compiles once and is reused for all points.
+
+    Args:
+        robot:                PyRoki Robot instance
+        target_link_name:     Name of end-effector link (e.g. "fr3_hand_tcp")
+        waypoints:            List of dicts, each with:
+                                'position'    (3,) np.ndarray
+                                'orientation' scipy.spatial.transform.Rotation
+                                's'           float in [0, 1]
+        joint_names:          List of joint names — length sets n_joints
+        n_points:             Number of IK solutions along the path
+        current_joint_config: Current robot joint state, used as seed for
+                              the first IK solve. Always pass the live state
+                              here — starting from zero can cause large jumps.
+
+    Returns:
+        (s_values, joint_configs)
+            s_values:      list of n_points floats in [0, 1]
+            joint_configs: np.ndarray shape (n_points, n_joints)
+    """
+    t_start = time.time()
+
+    target_link_index = robot.links.names.index(target_link_name)
+    n_joints = len(joint_names) + 1  # To support fingers
+    s_values = np.linspace(0.0, 1.0, n_points)
+
+    # ------------------------------------------------------------------
+    # 1. Interpolate Cartesian waypoints onto the dense s grid (numpy only)
+    # ------------------------------------------------------------------
+    ref_s = np.array([w.get("s", i / max(len(waypoints) - 1, 1)) for i, w in enumerate(waypoints)])
+    ref_pos = np.array([w["position"] for w in waypoints])  # (M, 3)
+    ref_quat = np.array([w["orientation"].as_quat() for w in waypoints])  # (M, 4) xyzw
+
+    interp_pos = np.column_stack([np.interp(s_values, ref_s, ref_pos[:, j]) for j in range(3)])  # (n_points, 3)
+
+    slerp = Slerp(ref_s, Rotation.from_quat(ref_quat))
+    interp_quat_wxyz = slerp(s_values).as_quat()[:, [3, 0, 1, 2]]  # (n_points, 4) wxyz
+
+    # ------------------------------------------------------------------
+    # 2. Define the single-point IK solve as a @jdc.jit function
+    #
+    # @jdc.jit traces and compiles the function body to XLA on first call.
+    # On subsequent calls with different array values, JAX dispatches
+    # directly to the cached XLA kernel — no Python recompilation.
+    #
+    # For this to work correctly, the problem structure must stay identical
+    # across all calls: same cost types, same variable types, same shapes.
+    # It always will here: one joint_var, three cost terms, fixed n_joints.
+    # ------------------------------------------------------------------
+    @jdc.jit
+    def solve_ik_single(
+        target_wxyz: jax.Array,  # (4,)       target orientation as wxyz quaternion
+        target_pos: jax.Array,  # (3,)       target position
+        q_seed: jax.Array,  # (n_joints,) warm-start initial config
+        q_prev: jax.Array,  # (n_joints,) previous solution for similarity cost
+    ) -> jax.Array:  # (n_joints,) solved joint configuration
+        """
+        Solve IK for one target pose. Compiled once, reused for all N points.
+        """
+        joint_var = robot.joint_var_cls(0)
+        target_se3 = jaxlie.SE3.from_rotation_and_translation(
+            jaxlie.SO3(target_wxyz),
+            target_pos,
+        )
+
+        costs = [
+            # Pose cost: pulls EE to target SE3.
+            # analytic_jac uses the analytic Jacobian — faster than finite-diff.
+            pk.costs.pose_cost_analytic_jac(
+                robot,
+                joint_var,
+                target_se3,
+                jnp.array(target_link_index),
+                pos_weight=200.0,
+                ori_weight=100.0,
+            ),
+            # Similarity cost: pulls solution towards previous joint config.
+            # This enforces smoothness across the trajectory — without it,
+            # each IK solve is independent and can produce large joint jumps.
+            # Increase weight for smoother path; decrease for better pose accuracy.
+            pk.costs.rest_cost(
+                joint_var,
+                q_prev[None],  # rest_cost expects shape (1, n_joints)
+                jnp.array(2.0),
+            ),
+            # Joint limit constraint: keeps solutions within FR3 limits.
+            pk.costs.limit_constraint(robot, joint_var),
+        ]
+
+        sol = (
+            jaxls.LeastSquaresProblem(costs=costs, variables=[joint_var])
+            .analyze()
+            .solve(
+                verbose=False,
+                initial_vals=jaxls.VarValues.make(
+                    [
+                        joint_var.with_value(q_seed),
+                    ]
+                ),
+                trust_region=jaxls.TrustRegionConfig(lambda_initial=1.0),
+            )
+        )
+        return sol[joint_var]
+
+    # ------------------------------------------------------------------
+    # 3. Solve sequentially, warm-starting each point from the last
+    # ------------------------------------------------------------------
+    print(f"  Solving {n_points} IK points (JIT compiles on first call)...")
+
+    # q_current = np.array(current_joint_config[:n_joints]) if current_joint_config is not None else np.zeros(n_joints)
+    q_current = current_joint_config
+
+    joint_configs = np.zeros((n_points, n_joints))
+    t_loop_start = time.time()
+
+    for i in range(n_points):
+        q_jax = jnp.array(q_current)
+        q_sol = solve_ik_single(
+            jnp.array(interp_quat_wxyz[i]),
+            jnp.array(interp_pos[i]),
+            q_jax,
+            q_jax,
+        )
+
+        # Block until XLA kernel completes before reading the value
+        q_sol.block_until_ready()
+        q_current = np.array(q_sol)
+        joint_configs[i] = q_current
+
+        # Progress reporting
+        elapsed = time.time() - t_loop_start
+        if i == 0:
+            print(f"  [1/{n_points}] {elapsed:.2f}s  ← includes JIT compile")
+        elif (i + 1) % 10 == 0 or i == n_points - 1:
+            ms_per_pt = elapsed / (i + 1) * 1000
+            eta = (n_points - i - 1) * elapsed / (i + 1)
+            print(f"  [{i + 1}/{n_points}] {elapsed:.1f}s elapsed | ~{ms_per_pt:.0f}ms/pt | ETA {eta:.1f}s")
+
+    t_total = time.time() - t_start
+
+    # Estimate per-point time excluding the first-call JIT overhead
+    if n_points > 1:
+        t_after_first = time.time() - t_loop_start  # rough proxy
+        ms_per_pt_jit_free = (t_after_first / max(n_points - 1, 1)) * 1000
+    else:
+        ms_per_pt_jit_free = t_total * 1000
+
+    print(f"\n  Done in {t_total:.1f}s total")
+    print(f"  Per-point time (post-JIT):  ~{ms_per_pt_jit_free:.0f}ms")
+    print(
+        f"  10-trajectory estimate:     "
+        f"~{(t_total + ms_per_pt_jit_free / 1000 * n_points * 9) / 60:.1f}min "
+        f"(JIT cached after first run)"
+    )
+
+    return s_values.tolist(), joint_configs
+
+
+def plan_joint_trajectory_fast_old(
+    robot: pk.Robot,
+    target_link_name: str,
+    waypoints: list[dict],
+    joint_names: list[str],
+    n_points: int,
     current_joint_config: Optional[onp.ndarray] = None,
 ) -> tuple[list[float], list[onp.ndarray]]:
     """
@@ -974,42 +1145,22 @@ def create_joint_trajectory_msg(
     )
 
     n_points = len(all_times)
-    # velocities = np.zeros_like(all_configs)
-    # accelerations = np.zeros_like(all_configs)
-
-    # if n_points > 1:
-    #     # Compute numerical derivatives using the actual execution times
-    #     # to ensure controller tracks smoothly over the given durations.
-    #     velocities = np.gradient(all_configs, all_times, axis=0)
-    #     accelerations = np.gradient(velocities, all_times, axis=0)
-
-    #     # Force zero velocity and acceleration at start and stop to ensure
-    #     # a smooth transition from and to rest.
-    #     velocities[0] = 0.0
-    #     velocities[-1] = 0.0
-    #     accelerations[0] = 0.0
-    #     accelerations[-1] = 0.0
-
-    #     # Enforce conservative FR3 limits
-    #     max_vel = np.array([2.0, 2.0, 2.0, 2.0, 2.5, 2.5, 2.5])
-    #     max_acc = np.array([8.0, 8.0, 8.0, 8.0, 8.0, 8.0, 8.0])
-
-    #     if np.any(np.abs(velocities) > max_vel):
-    #         print("  ⚠ WARNING: Generated trajectory exceeds max joint velocities. Clamping to limits.")
-    #         velocities = np.clip(velocities, -max_vel, max_vel)
-
-    #     if np.any(np.abs(accelerations) > max_acc):
-    #         print("  ⚠ WARNING: Generated trajectory exceeds max joint accelerations. Clamping to limits.")
-    #         accelerations = np.clip(accelerations, -max_acc, max_acc)
 
     # Populate the JointTrajectory message
     for i in range(n_points):
         point = JointTrajectoryPoint()
         point.positions = [float(q) for q in all_configs[i]]
 
-        # Leaving velocities and accelerations empty to test the controller's interpolation
-        point.velocities = []
-        point.accelerations = []
+        # Only set velocity for the last point — forces the spline to arrive
+        # at zero velocity at the settle point, eliminating the abrupt stop.
+        # The controller interpolates everything else freely.
+        if i >= n_points - 2:
+            point.velocities = [0.0] * len(joint_names)
+            point.accelerations = [0.0] * len(joint_names)
+
+        # # Leaving velocities and accelerations empty to test the controller's interpolation
+        # point.velocities = []
+        # point.accelerations = []
 
         t = all_times[i]
         point.time_from_start = Duration(sec=int(t), nanosec=int((t % 1) * 1e9))
@@ -1060,13 +1211,26 @@ def visualize_trajectory(
     timesteps = len(joint_trajectory)
     slider = server.gui.add_slider("Timestep", min=0, max=timesteps - 1, step=1, initial_value=0)
     playing = server.gui.add_checkbox("Playing", initial_value=True)
-    finish_btn = server.gui.add_button("Finish Visualization")
+    send_btn = server.gui.add_button("Send Trajectory")
+    cancel_btn = server.gui.add_button("Cancel")
 
     finished = False
+    send_traj = False
+    cancel_traj = False
 
-    @finish_btn.on_click
+    @send_btn.on_click
     def _(_) -> None:
         nonlocal finished
+        nonlocal send_traj
+        send_traj = True
+        finished = True
+
+    @cancel_btn.on_click
+    def _(_) -> None:
+        nonlocal finished
+        nonlocal cancel_traj
+        cancel_traj = True
+        finished = True
         finished = True
 
     # Animation loop - run a few times
@@ -1083,31 +1247,13 @@ def visualize_trajectory(
 
             time.sleep(1.0 / 10.0)
 
-            # for i, joint_values in enumerate(joint_trajectory):
-            #     # full_cfg = np.hstack([joint_values, 0.04])
-
-            #     # Update visualization
-            #     urdf_vis.update_cfg(joint_values)
-            #     # status_label.value = f"Waypoint {i + 1}/{len(joint_trajectory)} (t={times[i]:.2f}s)"
-            #     status_label.value = f"Waypoint {i + 1}/{len(joint_trajectory)}"
-
-            #     # Small delay between waypoints
-            #     time.sleep(0.05)
-
     except KeyboardInterrupt:
         pass
 
     # Ask user for approval
     print("\n   Trajectory visualization complete.")
-    print("   You can still see the robot in the viser viewer.")
 
-    # Keep server running briefly for user to inspect
-    time.sleep(1)
-
-    # Ask for approval
-    response = input("\n   Approve trajectory? (y/n): ").strip().lower()
-
-    return response == "y"
+    return send_traj
 
 
 def plot_results(recorded_data: dict, reference_trajectory: dict, traj_msg, config):
@@ -1439,6 +1585,9 @@ def main():
         node.destroy_node()
         # rclpy.shutdown()
         return
+
+    else:
+        print("\n   Trajectory accepted by user")
 
     # Create trajectory message
     print("\n6. Creating trajectory message...")
