@@ -235,8 +235,8 @@ class FrankaRIMNode(Node):
             rim_velocity = self.v_ee[self._rim_axis_idx]
 
             # --- Contacts
-            if rim_position <= 0.05:
-                M_eff += 1_000_000
+            # if rim_position <= 0.05:
+            #     M_eff += 1_000_000
 
             # M_eff += 100
 

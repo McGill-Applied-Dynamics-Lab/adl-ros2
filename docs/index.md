@@ -6,23 +6,27 @@
 
 Welcome to the **Applied Dynamics Lab ROS2** documentation! 
 This guide covers all the ROS2 packages developed by the McGill Applied Dynamics Lab for robotic systems, 
-particularly focusing on the Franka Research 3 and teleoperation.
+particularly focusing on controlling the Franka Research 3.
 
-## Overview
-The ADL ROS2 ecosystem consists of several packages:
+## Franka Controller
+Main packages to control and develop with the Franka. 
+The controller is dividied in two:
 
-- **[Robot Arm](packages/robot-arm.md)**: Complete robot arm control system including interfaces, controllers, and bringup
-- **[Robot Tasks](packages/robot-tasks.md)**: Task execution framework with reinforcement learning capabilities
-- **[Teleop](packages/teleop.md)**: Teleoperation system for remote robot control
+1. **[Franka Server](franka-server/index.md)**: Low level interface with the arm. Runs on the mini-pc
+2. **[Franka Client](franka-client/index.md)**: Higher level interface. Runs on the user's workstation. 
 
-## Quick Start
+<figure markdown="span">
+  ![test](media/figures/network_architecture.png){ width="500" }
+  <figcaption>Network Setup</figcaption>
+</figure>
+
+### Quick Start
 
 1. **Getting Started**: Check out the [getting started guide](user-guide/getting-started.md)
 2. **Installation**: For steps on how to setup the robots and PCs, follow the [installation guide](user-guide/installation.md)
 3. **Examples**: Explore the [tutorials](tutorials/index.md) (To Come...)
 
-
-## User Guides
+### User Guides
 Documentation and user guides of each packages.
 
 - **[Installation](user-guide/installation.md)**
@@ -31,10 +35,15 @@ Documentation and user guides of each packages.
 - **[Experiments](user-guide/experiments.md)**
 - **[DelayRIM](user-guide/delay-rim.md)**
 
-## Key Features
+## Other packages
+...
+
+
+
+<!-- ## Key Features
 - 🦾 **Robot Arm Control**: Complete control stack for Franka FR3 robot
 - 🤖 **RL Integration**: Reinforcement learning task execution
-- 🎮 **Teleoperation**: Teleoperation of the arm with the Inverse3 and Joystick
+- 🎮 **Teleoperation**: Teleoperation of the arm with the Inverse3 and Joystick -->
 
 ## System Requirements
 

@@ -51,7 +51,7 @@
     {
       "label": "Source ROS2 ws",
       "type": "shell",
-      "command": "source ${workspaceFolder}/install/setup.bash && sleep 1"
+      "command": "source ${workspaceFolder}/install_humble/setup.bash && sleep 1"
     },
     {
       "label": "ROS2 Test - robot_arm_testing",

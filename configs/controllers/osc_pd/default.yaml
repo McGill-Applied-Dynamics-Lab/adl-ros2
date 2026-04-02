@@ -35,7 +35,7 @@ workspace.torque_limit: 10.0  # Maximum allowed torque magnitude (Nm) (at EE)
 tool.length: -0.06 # length of the tool attached to the flange, in meters
 
 log.enabled: true
-log.timing: false
+log.timing: true
 log.robot_state: false  #  ee position, velocity, joint states, ...
 log.targets: false  # target pose
 log.virtual_coupling: false  # interface variables and forces
