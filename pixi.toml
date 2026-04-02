@@ -21,6 +21,9 @@ build = { cmd = [
     "build_$ROS_DISTRO",
     "--install-base",
     "install_$ROS_DISTRO",
+    "--symlink-install",
+    "--cmake-args",
+    "'-DCMAKE_BUILD_TYPE=Debug'",
 ] }
 
 test = { cmd = [
@@ -58,14 +61,17 @@ humble = { features = ["humble", "dev"] }
 # MARK: General dependencies
 # -----------------------------
 [dependencies]
-python = ">=3.10"
+# ROS 2 Humble is built against Python 3.10.
+python = ">=3.10,<3.13"
 compilers = "*"
 c-compiler = "*"
 cxx-compiler = "*"
-cmake = "<4.0"
+# Keep CMake below 3.27 to avoid ROS Humble/Python discovery policy issues.
+cmake = ">=3.22,<3.27"
 make = "*"
 pkg-config = "*"
 ninja = "*"
+numpy = "<=2, <=2.4.3"
 colcon-common-extensions = ">=0.3.0,<0.4"
 colcon-mixin = ">=0.2.3,<0.3"
 
