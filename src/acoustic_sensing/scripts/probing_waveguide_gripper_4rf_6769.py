@@ -15,7 +15,7 @@ TRAJ_FREQ = 10.0  # Hz
 
 # Probing parameters
 Z_OFFSET = 0.0250  # (m) offset from landmark z to surface
-PROBE_DEPTH = 0.0200  # m (additional depth beyond z_offset)
+PROBE_DEPTH = 0.0090  # m (additional depth beyond z_offset)
 PROBE_TIME = 2.0  # plunge and retract (s)
 BASE_ORI = R.from_euler("xyz", [-270, 0, 0], degrees=True)
 

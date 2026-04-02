@@ -8,7 +8,7 @@ gains.d_pos_x: -1.0
 gains.d_pos_y: -1.0
 gains.d_pos_z: -1.0
 
-gains.k_rot_x: 120.0
+gains.k_rot_x: 30.0
 gains.k_rot_y: 30.0
 gains.k_rot_z: 30.0
   
