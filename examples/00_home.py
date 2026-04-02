@@ -1,4 +1,4 @@
-"""Home the robot, then set end-effector orientation to (180, 0, 0) deg."""
+"""Home the robot, then set end-effector orientation to (90, 0, 0) deg."""
 
 from scipy.spatial.transform import Rotation
 
@@ -22,7 +22,7 @@ current_pose = robot.end_effector_pose
 target_orientation = Rotation.from_euler("xyz", [90.0, 0.0, 0.0], degrees=True)
 target_pose = Pose(position=current_pose.position, orientation=target_orientation)
 
-print("Moving to target orientation (roll, pitch, yaw) = (180, 0, 0) deg...")
+print("Moving to target orientation (roll, pitch, yaw) = (90, 0, 0) deg...")
 robot.move_to(pose=target_pose, speed=0.05)
 
 print("Done")
