@@ -43,6 +43,8 @@ import matplotlib.pyplot as plt
 import viser
 from viser.extras import ViserUrdf
 
+REAL_ROBOT = False
+
 JOINT_STATE_TOPIC = "/fr3/franka/joint_states"
 
 POSE_STATE_TOPIC = "/fr3/current_pose"
@@ -52,7 +54,7 @@ POSE_STATE_TOPIC = "/fr3/current_pose"
 TRAJECTORY_TOPIC = "/fr3/joint_trajectory_controller/joint_trajectory"
 
 N_WP = 2
-N_POINTS = 50
+N_POINTS = 10
 DT = 0.02
 
 JOINT_NAMES = [
@@ -64,6 +66,8 @@ JOINT_NAMES = [
     "fr3_joint6",
     "fr3_joint7",
 ]
+
+TRAJ_DURATION = 5.0
 
 
 class TrajectoryRecorder:
@@ -666,17 +670,38 @@ def create_joint_trajectory_msg(
     joint_names: list[str],
     times: list[float],
     joint_configs: list[onp.ndarray],
+    start_joint_config: onp.ndarray,
+    start_time: float,
 ) -> JointTrajectory:
     """Create a JointTrajectory message from planned waypoints."""
     traj = JointTrajectory()
     traj.joint_names = joint_names
 
+    # Add initial position
+    point = JointTrajectoryPoint()
+    joint_values = start_joint_config
+    point.positions = [float(q) for q in joint_values]
+    point.velocities = [0.0] * len(joint_values)
+    point.accelerations = [0.0] * len(joint_values)
+    point.time_from_start = Duration(sec=int(0.0), nanosec=int((0.0 % 1) * 1e9))
+    traj.points.append(point)
+
+    # point = JointTrajectoryPoint()
+    # joint_values = start_joint_config
+    # point.positions = [float(q) for q in joint_values]
+    # point.velocities = [0.0] * len(joint_values)
+    # point.accelerations = [0.0] * len(joint_values)
+    # point.time_from_start = Duration(sec=int(start_time), nanosec=int((start_time % 1) * 1e9))
+    # traj.points.append(point)
+
     for t, joint_config in zip(times, joint_configs):
+        traj_time = t + start_time
         point = JointTrajectoryPoint()
-        point.positions = [float(q) for q in joint_config]
-        point.velocities = [0.0] * len(joint_config)
-        point.accelerations = [0.0] * len(joint_config)
-        point.time_from_start = Duration(sec=int(t), nanosec=int((t % 1) * 1e9))
+        joint_values = joint_config[:-1]
+        point.positions = [float(q) for q in joint_values]
+        point.velocities = [0.0] * len(joint_values)
+        point.accelerations = [0.0] * len(joint_values)
+        point.time_from_start = Duration(sec=int(traj_time), nanosec=int((traj_time % 1) * 1e9))
         traj.points.append(point)
 
     return traj
@@ -799,13 +824,17 @@ def plot_results(recorded_data: dict, reference_trajectory: dict, config):
     actual_positions = np.array([p["position"] for p in pose_states])
 
     # Interpolate reference to actual timestamps
-    ref_pos_interp = np.interp(
-        timestamps,
-        ref_times,
-        ref_positions,
-        axis=0,
-        left=ref_positions[0],
-        right=ref_positions[-1],
+    ref_pos_interp = np.column_stack(
+        [
+            np.interp(
+                timestamps,
+                ref_times,
+                ref_positions[:, i],
+                left=ref_positions[0, i],
+                right=ref_positions[-1, i],
+            )
+            for i in range(3)
+        ]
     )
 
     # Compute position error
@@ -882,6 +911,7 @@ def main():
     # Initialize ROS2
     # disable default signal handler so Ctrl+C doesn't shutdown rclpy and invalidate publishers
     # rclpy.init(signal_handler_options=rclpy.signals.SignalHandlerOptions.NO)
+    rclpy.init()
     node = rclpy.create_node("trajectory_validator")
     recorder = TrajectoryRecorder(node)
 
@@ -926,36 +956,8 @@ def main():
     # Initialize with default values (for testing without robot)
     current_joint_state = [0.0, -np.pi / 4, 0.0, -3 * np.pi / 4, 0.0, np.pi / 2, np.pi / 4]  # Home config
 
-    # current_pose_state = PoseStamped(
-    #     header=Header(frame_id="base"),
-    #     pose=Pose(
-    #         position=Point(x=0.307, y=0.0, z=0.486),  # Approximate home pose
-    #         orientation=Quaternion(x=0.0, y=1.0, z=0.0, w=0.0),  # Pointing down
-    #     ),
-    # )
     current_position = np.array([0.307, 0.0, 0.486])
     current_orientation = Rotation.from_quat(np.array([0.0, 1.0, 0.0, 0.0]))
-
-    # def joint_callback(msg: JointState):
-    #     nonlocal current_joint_state
-    #     current_joint_state = msg
-
-    # def pose_callback(msg: PoseStamped):
-    #     nonlocal current_pose_state
-    #     current_pose_state = msg
-
-    # node.create_subscription(
-    #     JointState,
-    #     JOINT_STATE_TOPIC,
-    #     joint_callback,
-    #     qos_profile_sensor_data,
-    # )
-    # node.create_subscription(
-    #     PoseStamped,
-    #     POSE_STATE_TOPIC,
-    #     pose_callback,
-    #     qos_profile_sensor_data,
-    # )
 
     # Wait for first messages (with timeout - will use defaults if robot not connected)
     print("   Waiting for robot state messages (3s timeout)...")
@@ -972,15 +974,9 @@ def main():
         print("   ✓ Received live robot state")
     else:
         print("   ⚠ Using default state (robot may be disconnected)")
+        if REAL_ROBOT:
+            raise RuntimeError("Robot state not received")
 
-    # Extract current configuration
-    # current_joint_cfg = []
-    # for joint_name in config.joint_names:
-    #     if joint_name in current_joint_state.name:
-    #         idx = current_joint_state.name.index(joint_name)
-    #         current_joint_cfg.append(current_joint_state.position[idx])
-
-    # current_joint_cfg = np.array(current_joint_cfg)
     print(f"   Current joint config: {current_joint_state}")
 
     # Extract current pose
@@ -999,7 +995,7 @@ def main():
         "position": end_position,
         "orientation": current_pose["orientation"],
     }
-    trajectory_duration = 3.0
+    trajectory_duration = TRAJ_DURATION
 
     # Generate waypoints
     print(f"   Generating waypoints (start -> end in {trajectory_duration}s)...")
@@ -1030,7 +1026,7 @@ def main():
 
     # Store reference trajectory for later plotting
     reference_cart_trajectory = {
-        "times": times,
+        "times": np.array([w["time"] for w in waypoints]),
         "positions": np.array([w["position"] for w in waypoints]),
         "quats": np.array([w["orientation"].as_quat()[[3, 0, 1, 2]] for w in waypoints]),
     }
@@ -1048,14 +1044,14 @@ def main():
 
     # Create trajectory message
     print("\n6. Creating trajectory message...")
-    traj_msg = create_joint_trajectory_msg(config.joint_names, times, joint_trajectory)
+    traj_msg = create_joint_trajectory_msg(config.joint_names, times, joint_trajectory, current_joint_state, 1.0)
 
     # Start recording
     print("\n7. Starting state recording...")
     recorder.start_recording()
 
     # ---------------------------
-    # MARK: 5 - Send trajectory
+    # MARK: 8 - Send trajectory
     # ---------------------------
     #
     print("\n8. Sending trajectory to robot...")
