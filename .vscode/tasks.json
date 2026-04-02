@@ -5,11 +5,12 @@
       "label": "colcon build",
       "type": "shell",
       "command": [
-        "source /opt/ros/humble/setup.sh &&",
-        "cd ${workspaceFolder}/../.. &&",
-        "colcon build",
-        "--symlink-install",
-        "--cmake-args '-DCMAKE_BUILD_TYPE=Debug'"
+        // "source /opt/ros/humble/setup.sh &&",
+        // "cd ${workspaceFolder}/../.. &&",
+        // "colcon build",
+        // "--symlink-install",
+        // "--cmake-args '-DCMAKE_BUILD_TYPE=Debug'"
+        "pixi run -e humble build"
       ],
       "problemMatcher": [],
       "group": {
