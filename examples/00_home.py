@@ -21,7 +21,7 @@ robot.osc_pd_controller_parameters_client.load_param_config(
 )
 
 current_pose = robot.end_effector_pose
-target_orientation = Rotation.from_euler("xyz", [90.0, 0.0, 0.0], degrees=True)
+target_orientation = Rotation.from_euler("xyz", [180.0, 0.0, 0.0], degrees=True)
 target_pose = Pose(position=current_pose.position, orientation=target_orientation)
 
 print("Moving to target orientation (roll, pitch, yaw) = (90, 0, 0) deg...")
