@@ -2,15 +2,15 @@
 #define AVG 2
 
 //Trigger a ranging cycle on
-#define TRIGGER_PIN_MB0 2
-#define TRIGGER_PIN_MB1 3
-#define TRIGGER_PIN_MB2 4
-#define TRIGGER_PIN_MB3 5
+#define TRIGGER_PIN_MB3 2
+#define TRIGGER_PIN_MB2 3
+#define TRIGGER_PIN_MB0 4
+#define TRIGGER_PIN_MB1 5
 
-#define AR_PIN_MB0 A0
-#define AR_PIN_MB1 A1
-#define AR_PIN_MB2 A2
-#define AR_PIN_MB3 A3
+#define AR_PIN_MB3 A0
+#define AR_PIN_MB2 A1
+#define AR_PIN_MB0 A2
+#define AR_PIN_MB1 A3
 
 #define US_DELAY 21813
 

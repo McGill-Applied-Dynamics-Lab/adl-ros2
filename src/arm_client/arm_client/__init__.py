@@ -1,9 +1,9 @@
+import ctypes
+import importlib.metadata
+import os
 from pathlib import Path
 
 """Initialize crisp_py."""
-
-import ctypes
-import importlib.metadata
 
 
 def _preload_workspace_typesupport() -> None:
@@ -15,11 +15,23 @@ def _preload_workspace_typesupport() -> None:
     libraries keeps the examples usable in that mode.
     """
 
-    package_root = Path(__file__).resolve().parents[2]
-    workspace_root = package_root.parent.parent
-    install_root = workspace_root / "install_humble" / "arm_interfaces" / "lib"
-    if not install_root.exists():
+    install_root = None
+    current_file = Path(__file__).resolve()
+    for candidate_root in current_file.parents:
+        candidate_install_root = candidate_root / "install_humble" / "arm_interfaces" / "lib"
+        if candidate_install_root.exists():
+            install_root = candidate_install_root
+            break
+    if install_root is None:
         return
+
+    existing_ld_library_path = os.environ.get("LD_LIBRARY_PATH")
+    install_root_str = str(install_root)
+    if existing_ld_library_path:
+        if install_root_str not in existing_ld_library_path.split(":"):
+            os.environ["LD_LIBRARY_PATH"] = f"{install_root_str}:{existing_ld_library_path}"
+    else:
+        os.environ["LD_LIBRARY_PATH"] = install_root_str
 
     for lib_path in sorted(install_root.glob("libarm_interfaces__rosidl_typesupport_*.so")):
         ctypes.CDLL(str(lib_path), mode=ctypes.RTLD_GLOBAL)

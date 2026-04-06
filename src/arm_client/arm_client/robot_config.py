@@ -34,19 +34,17 @@ class RobotConfig:
     target_frame: str = "end_effector_link"
 
     default_controller: str = "cartesian_impedance_controller"
-    cartesian_impedance_controller_name: str = "/fr3/cartesian_impedance_controller"
-    joint_trajectory_controller_name: str = "/fr3/joint_impedance_controller"
+    cartesian_impedance_controller_name: str = "cartesian_impedance_controller"
+    joint_trajectory_controller_name: str = "joint_impedance_controller"
 
     target_pose_topic: str = "target_pose"
     target_joint_topic: str = "target_joint"
     target_trajectory_topic: str = "target_trajectory"
 
-    current_pose_topic: str = "current_pose"
+    current_pose_topic: str = "franka_robot_state_broadcaster/current_pose"
     current_joint_topic: str = "joint_states"
 
-    current_wrench_topic: str = (
-        "/fr3/franka_robot_state_broadcaster/external_wrench_in_base_frame"  # added current wrench topic
-    )
+    current_wrench_topic: str = "franka_robot_state_broadcaster/external_wrench_in_base_frame"
 
     publish_frequency: float = 50.0
     time_to_home: float = 5.0

@@ -24,6 +24,19 @@ While streaming, the Teensy behaves like the original free-running version: it c
 | Measured sample rate | ~178,804 Hz |
 | Baud rate | 3,000,000 |
 
+### Sensor Pin Mapping
+
+The firmware defines the pins per sensor as:
+
+| Sensor | Trigger pin | Analog input pin |
+|--------|-------------|------------------|
+| MB0 / S0 | D4 | A2 |
+| MB1 / S1 | D5 | A3 |
+| MB2 / S2 | D3 | A1 |
+| MB3 / S3 | D2 | A0 |
+
+This mapping comes directly from the active firmware in `teensy4_1_MB1340_4x.ino`.
+
 ## Buffer Sizing
 
 The buffer size is derived from the target ranging distance:
@@ -87,20 +100,13 @@ STREAM_END
 teensy_firmware/
 ├── README.md
 ├── receive_fast.py
-├── test_serial.py
 ├── teensy4_1_MB1340_4x/
 │   └── teensy4_1_MB1340_4x.ino
-├── teensy_original_4RF/
-│   ├── teensy4_1_MB1340_4x.ino
-│   └── receive_fast.py
-└── teensy_67_69/
-    ├── teensy_tx.ino
-    └── twist_v2.py
 ```
 
 ## Usage
 
-1. Flash [teensy4_1_MB1340_4x.ino](/home/sni22/Downloads/teensy_firmware/teensy4_1_MB1340_4x/teensy4_1_MB1340_4x.ino) to the Teensy 4.1.
+1. Flash [teensy4_1_MB1340_4x.ino](/home/sni22/Documents/sim2real_adlros/src/acoustic_sensing/teensy_firmware/teensy4_1_MB1340_4x/teensy4_1_MB1340_4x.ino) to the Teensy 4.1.
 2. Connect the Teensy over USB and confirm it prints `Ready` on boot.
 3. Activate the Conda environment:
 
@@ -108,13 +114,7 @@ teensy_firmware/
 conda activate teensy_firmware
 ```
 
-4. For a quick smoke test, run:
-
-```bash
-python test_serial.py
-```
-
-5. To manually control the protocol from Python:
+4. To manually control the protocol from Python:
 
 ```python
 ser.write(b"C")  # start streaming
@@ -123,5 +123,4 @@ ser.write(b"E")  # stop after the current frame
 
 ## Notes On Host Scripts
 
-- [test_serial.py](/home/sni22/Downloads/teensy_firmware/test_serial.py) is a minimal protocol smoke test.
-- [receive_fast.py](/home/sni22/Downloads/teensy_firmware/receive_fast.py) currently implements the earlier capture/dump workflow and does not match the new continuous-streaming firmware protocol.
+- [receive_fast.py](/home/sni22/Documents/sim2real_adlros/src/acoustic_sensing/teensy_firmware/receive_fast.py) currently implements the earlier capture/dump workflow and does not match the continuous-streaming firmware protocol described above.

@@ -10,8 +10,6 @@ from pathlib import Path
 import pickle
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
-from concurrent.futures import as_completed
 
 import numpy as np
 import serial
@@ -26,7 +24,6 @@ LINEAR_WAYPOINTS = 12
 PROBE_WAYPOINTS = 21
 STATE_SAMPLE_PERIOD = 0.01
 PROBE_TIMEOUT_MARGIN = 1.0
-PREPLAN_WORKERS = 8
 
 Z_OFFSET = 0.0250
 PROBE_DEPTH = 0.0090
@@ -37,7 +34,6 @@ APPROACH_DURATION = 4.0
 PLUNGE_DURATION = 2.0
 RETRACT_DURATION = 2.0
 RETURN_HOME_DURATION = 4.0
-PROBE_CYCLE_DURATION = PLUNGE_DURATION + RETRACT_DURATION
 
 SERIAL_PORT = "/dev/ttyACM0"
 BAUD_RATE = 3000000
@@ -45,16 +41,6 @@ SERIAL_TIMEOUT_SEC = 10
 CMD_START = bytes([0x43])
 CMD_STOP = bytes([0x45])
 CHANNEL_MARKERS = ("S0", "S1", "S2", "S3")
-
-
-def print_progress(prefix: str, current: int, total: int) -> None:
-    """Print a simple single-line progress bar."""
-    width = 30
-    filled = int(width * current / max(total, 1))
-    bar = "#" * filled + "-" * (width - filled)
-    print(f"\r{prefix}: [{bar}] {current}/{total}", end="", flush=True)
-    if current >= total:
-        print()
 
 
 def fetch_landmarks(landmark_file: Path, to_fetch: list[str]) -> dict[str, float]:
@@ -157,35 +143,6 @@ def generate_smooth_linear_waypoints(
     return waypoints
 
 
-def generate_probe_cycle_waypoints(
-    approach_pose: Pose,
-    depth: float,
-    num_waypoints: int,
-) -> list[CartesianWaypoint]:
-    """Generate one continuous down-and-up probe motion with a smooth turnaround."""
-    if num_waypoints < 3:
-        raise ValueError("num_waypoints must be >= 3")
-
-    waypoints: list[CartesianWaypoint] = []
-    base_position = np.array(approach_pose.position, dtype=float)
-    orientation = approach_pose.orientation
-
-    for i in range(num_waypoints):
-        s = i / (num_waypoints - 1)
-        alpha = 0.5 - 0.5 * np.cos(2.0 * np.pi * s)
-        position = base_position.copy()
-        position[2] = base_position[2] - depth * alpha
-        waypoints.append(
-            CartesianWaypoint(
-                position=position,
-                orientation=orientation,
-                s=float(s),
-            )
-        )
-
-    return waypoints
-
-
 def merge_trajectories(trajectories: list[PlannedJointTrajectory]) -> PlannedJointTrajectory:
     """Concatenate planned joint trajectories into one continuous trajectory."""
     if len(trajectories) == 0:
@@ -225,7 +182,7 @@ def plan_linear_trajectory(
         waypoints=generate_smooth_linear_waypoints(start_pose, end_pose, num_waypoints),
         duration=duration,
         visualize=False,
-        show_progress=False,
+        show_progress=True,
     )
 
 
@@ -259,97 +216,11 @@ def execute_trajectory_and_record(
     return ts, ee_poses, ee_forces
 
 
-def _build_probe_geometry(
-    world_xy: np.ndarray,
-    gripper_xy: np.ndarray,
-    z_surface: float,
-) -> dict:
-    approach_position = np.array([world_xy[0], world_xy[1], z_surface], dtype=float)
-    approach_pose = Pose(approach_position, BASE_ORI)
-    probe_waypoints = generate_probe_cycle_waypoints(
-        approach_pose,
-        Z_OFFSET + PROBE_DEPTH,
-        PROBE_WAYPOINTS,
-    )
-    return {
-        "gripper_xy": np.array(gripper_xy, dtype=float),
-        "approach_pose": approach_pose,
-        "probe_waypoints": probe_waypoints,
-    }
-
-
-def precompute_probe_geometry(
-    grid_xy_world: np.ndarray,
-    grid_xy_gripper: np.ndarray,
-    z_surface: float,
-) -> list[dict]:
-    """Prepare per-probe poses/waypoints in parallel on the PC."""
-    total = len(grid_xy_world)
-    results: list[dict | None] = [None] * total
-    print(f"Precompute workers: {PREPLAN_WORKERS} threads")
-    with ThreadPoolExecutor(max_workers=PREPLAN_WORKERS) as executor:
-        future_to_idx = {
-            executor.submit(_build_probe_geometry, world_xy, gripper_xy, z_surface): i
-            for i, (world_xy, gripper_xy) in enumerate(zip(grid_xy_world, grid_xy_gripper))
-        }
-        completed = 0
-        for future in as_completed(future_to_idx):
-            idx = future_to_idx[future]
-            results[idx] = future.result()
-            completed += 1
-            print_progress("Geometry precompute", completed, total)
-    return [result for result in results if result is not None]
-
-
-def plan_probe_trajectories(
-    robot: Robot,
-    probe_geometries: list[dict],
-    start_pose: Pose,
-) -> tuple[list[dict], PlannedJointTrajectory]:
-    """Plan all per-probe trajectories from the measured startup pose."""
-    cached_plans: list[dict] = []
-    nominal_pose = start_pose.copy()
-    total = len(probe_geometries)
-
-    for i, geometry in enumerate(probe_geometries):
-        approach_traj = plan_linear_trajectory(
-            robot,
-            nominal_pose,
-            geometry["approach_pose"],
-            APPROACH_DURATION,
-            LINEAR_WAYPOINTS,
-        )
-        probe_traj = robot.plan_joint_trajectory(
-            waypoints=geometry["probe_waypoints"],
-            duration=PROBE_CYCLE_DURATION,
-            visualize=False,
-            show_progress=False,
-        )
-
-        cached_plans.append(
-            {
-                "gripper_xy": geometry["gripper_xy"],
-                "approach_traj": approach_traj,
-                "probe_traj": probe_traj,
-            }
-        )
-        nominal_pose = geometry["approach_pose"]
-        print_progress("Trajectory planning", i + 1, total)
-
-    return_home_traj = plan_linear_trajectory(
-        robot,
-        nominal_pose,
-        start_pose,
-        RETURN_HOME_DURATION,
-        LINEAR_WAYPOINTS,
-    )
-    return cached_plans, return_home_traj
-
-
 def main() -> None:
-    project_root = Path(__file__).resolve().parent
-    landmark_file = project_root / "results" / "grids" / "landmarks.txt"
-    grid_file = project_root / "results" / "grids" / "grids.pkl"
+    repo_root = Path(__file__).resolve().parents[1]
+    acoustic_root = repo_root / "src" / "acoustic_sensing" / "scripts"
+    landmark_file = acoustic_root / "results" / "grids" / "landmarks.txt"
+    grid_file = acoustic_root / "results" / "grids" / "grids.pkl"
 
     if not landmark_file.exists():
         raise FileNotFoundError(
@@ -373,6 +244,8 @@ def main() -> None:
     grid_xy_gripper = np.asarray(grids["GRIPPER_FRAME"][set_name], dtype=float)
 
     z_surface = landmarks["z"] + Z_OFFSET
+    home_position = np.array([landmarks["x"], landmarks["y"], z_surface], dtype=float)
+    home_pose = Pose(home_position, BASE_ORI)
 
     exp_dict = {
         "ts": [],
@@ -390,41 +263,70 @@ def main() -> None:
 
     try:
         robot.wait_until_ready()
-
         print("Switching to joint trajectory controller...")
         robot.controller_switcher_client.switch_controller("joint_trajectory_controller")
-        time.sleep(0.1)
 
-        start_pose = robot.end_effector_pose.copy()
-        print(f"Captured startup pose for planning: {start_pose.position.tolist()}")
-        print(
-            "Assuming the robot was already homed and oriented before launching this script."
-        )
-
-        print(f"Precomputing geometry for {len(grid_xy_world)} probes...")
-        probe_geometries = precompute_probe_geometry(
-            grid_xy_world,
-            grid_xy_gripper,
-            z_surface,
-        )
-
-        print(f"Planning {len(grid_xy_world)} probe trajectories from startup pose...")
-        cached_plans, return_home_traj = plan_probe_trajectories(
+        print("Planning initial move to home pose...")
+        initial_home_traj = plan_linear_trajectory(
             robot,
-            probe_geometries,
-            start_pose,
+            robot.end_effector_pose.copy(),
+            home_pose,
+            TO_HOME_DURATION,
+            LINEAR_WAYPOINTS,
         )
+        robot.follow_joint_trajectory(initial_home_traj, blocking=True)
+        time.sleep(SETTLE_SEC)
 
         input("Press Enter to start probing...")
-        for i, plan in enumerate(cached_plans):
-            print(f"\nProbe {i + 1}/{len(cached_plans)}")
-            exp_dict["grid_positions"].append(
-                [float(plan["gripper_xy"][0]), float(plan["gripper_xy"][1])]
+        for i, (world_xy, gripper_xy) in enumerate(zip(grid_xy_world, grid_xy_gripper)):
+            print(f"\nProbe {i + 1}/{len(grid_xy_world)}")
+            exp_dict["grid_positions"].append([float(gripper_xy[0]), float(gripper_xy[1])])
+
+            approach_position = np.array([world_xy[0], world_xy[1], z_surface], dtype=float)
+            approach_pose = Pose(approach_position, BASE_ORI)
+            plunge_pose = Pose(
+                np.array(
+                    [
+                        approach_position[0],
+                        approach_position[1],
+                        approach_position[2] - (Z_OFFSET + PROBE_DEPTH),
+                    ],
+                    dtype=float,
+                ),
+                BASE_ORI,
+            )
+
+            print("\tPlanning move to approach pose...")
+            approach_traj = plan_linear_trajectory(
+                robot,
+                robot.end_effector_pose.copy(),
+                approach_pose,
+                APPROACH_DURATION,
+                LINEAR_WAYPOINTS,
             )
 
             print("\tExecuting move to approach pose...")
-            robot.follow_joint_trajectory(plan["approach_traj"], blocking=True)
+            robot.follow_joint_trajectory(approach_traj, blocking=True)
             time.sleep(SETTLE_SEC)
+
+            print("\tPlanning plunge/retract sequence...")
+            probe_start_pose = robot.end_effector_pose.copy()
+            plunge_waypoints = generate_smooth_linear_waypoints(
+                probe_start_pose,
+                plunge_pose,
+                PROBE_WAYPOINTS,
+            )
+            retract_waypoints = generate_smooth_linear_waypoints(
+                plunge_pose,
+                approach_pose,
+                PROBE_WAYPOINTS,
+            )
+            plunge_traj, retract_traj = robot.plan_joint_trajectory_sequence(
+                [plunge_waypoints, retract_waypoints],
+                [PLUNGE_DURATION, RETRACT_DURATION],
+                show_progress=True,
+            )
+            probe_traj = merge_trajectories([plunge_traj, retract_traj])
 
             print("\tStarting RF stream...")
             rf_frames, stop_event, rf_thread = rf_stream_start(ser)
@@ -432,7 +334,7 @@ def main() -> None:
             print("\tExecuting planned probe trajectory...")
             ts, ee_poses, ee_forces = execute_trajectory_and_record(
                 robot,
-                plan["probe_traj"],
+                probe_traj,
                 timeout_margin=PROBE_TIMEOUT_MARGIN,
             )
 
@@ -454,6 +356,13 @@ def main() -> None:
             print("\tProbe complete.")
 
         print("\nReturning home...")
+        return_home_traj = plan_linear_trajectory(
+            robot,
+            robot.end_effector_pose.copy(),
+            home_pose,
+            RETURN_HOME_DURATION,
+            LINEAR_WAYPOINTS,
+        )
         robot.follow_joint_trajectory(return_home_traj, blocking=True)
         time.sleep(SETTLE_SEC)
 
@@ -461,7 +370,7 @@ def main() -> None:
         ser.close()
         robot.shutdown()
 
-    results_dir = project_root / "results"
+    results_dir = acoustic_root / "results"
     results_dir.mkdir(parents=True, exist_ok=True)
 
     base_filename = f"{len(grid_xy_world)}_grid_{set_name.upper()}_4RF_joint_sequence"

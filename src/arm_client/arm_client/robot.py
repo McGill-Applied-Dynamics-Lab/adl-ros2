@@ -168,6 +168,7 @@ class Robot:
         self._current_twist = None
 
         self._target_pose = None
+        self._target_pose_command_active = False
         self._target_joint = None
         self._target_wrench = None
         self._target_twist = None
@@ -175,6 +176,7 @@ class Robot:
 
         # Flag to disable target_pose publishing during trajectory execution
         self._trajectory_mode_active = False
+        self._spin_thread: threading.Thread | None = None
 
         self._callback_monitor = CallbackMonitor(
             node=self.node,
@@ -250,15 +252,25 @@ class Robot:
 
 
         if spin_node:
-            threading.Thread(target=self._spin_node, daemon=True).start()
+            self._spin_thread = threading.Thread(target=self._spin_node, daemon=True)
+            self._spin_thread.start()
 
     def _spin_node(self):
         if not rclpy.ok():
             rclpy.init()
         executor = rclpy.executors.MultiThreadedExecutor(num_threads=self.THREADS_REQUIRED)
         executor.add_node(self.node)
-        while rclpy.ok():
-            executor.spin_once(timeout_sec=0.1)
+        try:
+            while rclpy.ok():
+                executor.spin_once(timeout_sec=0.1)
+        except (rclpy.executors.ExternalShutdownException, RuntimeError):
+            # Exit quietly if shutdown happens while the background thread is spinning.
+            return
+        finally:
+            try:
+                executor.remove_node(self.node)
+            except Exception:
+                pass
 
     @property
     def nq(self) -> int:
@@ -406,6 +418,7 @@ class Robot:
         effectively stopping any ongoing movement or force application.
         """
         self._target_pose = None
+        self._target_pose_command_active = False
         self._q_target = None
         self._target_wrench = None
 
@@ -424,7 +437,17 @@ class Robot:
             rate.sleep()
             timeout -= 1.0 / check_frequency
             if timeout <= 0:
-                raise TimeoutError("Timeout waiting for end-effector pose.")
+                missing = []
+                if self._current_pose is None:
+                    missing.append(self.config.current_pose_topic)
+                if self._target_pose is None:
+                    missing.append(f"{self.config.current_pose_topic} (to initialize target pose)")
+                if self._q_current is None:
+                    missing.append(self.config.current_joint_topic)
+                if self._q_target is None:
+                    missing.append(f"{self.config.current_joint_topic} (to initialize target joint)")
+                missing_topics = ", ".join(missing) if missing else "unknown state topics"
+                raise TimeoutError(f"Timeout waiting for robot state. Missing messages on: {missing_topics}")
 
         print("Robot is ready.")
 
@@ -441,6 +464,7 @@ class Robot:
         """
         target_pose = self._parse_pose_or_position(position, pose)
         self._target_pose = target_pose.copy()
+        self._target_pose_command_active = True
         # Re-enable continuous pose publishing (single-pose mode)
         self._trajectory_mode_active = False
 
@@ -465,7 +489,12 @@ class Robot:
         Note: Does not publish when trajectory mode is active to avoid
         interfering with trajectory execution.
         """
-        if self._target_pose is None or not rclpy.ok() or self._trajectory_mode_active:
+        if (
+            self._target_pose is None
+            or not self._target_pose_command_active
+            or not rclpy.ok()
+            or self._trajectory_mode_active
+        ):
             return
         self._target_pose_publisher.publish(self._pose_to_pose_msg(self._target_pose))
 
@@ -577,6 +606,7 @@ class Robot:
         self._current_pose = self._pose_msg_to_pose(msg)
         if self._target_pose is None:
             self._target_pose = self._current_pose.copy()
+            self._target_pose_command_active = False
 
     def _callback_current_joint(self, msg: JointState):
         """Update the current joint state (position, velocity and torque) from a ROS message.
@@ -658,6 +688,7 @@ class Robot:
             trajectory = self.plan_joint_trajectory(waypoints, duration=time_to_move, visualize=False)
             self.follow_joint_trajectory(trajectory, blocking=True)
             self._target_pose = desired_pose.copy()
+            self._target_pose_command_active = False
             return
 
         N = int(time_to_move * self.config.publish_frequency)
@@ -673,9 +704,11 @@ class Robot:
             ori = slerp([t])[0]
             next_pose = Pose(pos, ori)
             self._target_pose = next_pose
+            self._target_pose_command_active = True
             rate.sleep()
 
         self._target_pose = desired_pose
+        self._target_pose_command_active = True
 
     def plan_joint_trajectory(
         self,
@@ -1014,6 +1047,12 @@ class Robot:
         msg.max_linear_velocity = max_linear_velocity
         msg.max_angular_velocity = max_angular_velocity
 
+        # Clear any latched single-pose target before switching to trajectory mode.
+        # Otherwise the 100 Hz pose publisher can keep feeding the controller while it
+        # is preparing or executing a Cartesian trajectory.
+        self._target_pose = None
+        self._target_pose_command_active = False
+
         # Enable trajectory mode to stop continuous pose publishing
         self._trajectory_mode_active = True
 
@@ -1056,6 +1095,7 @@ class Robot:
         if elapsed >= self._trajectory_timeout:
             # Re-enable pose publishing and clean up
             self._trajectory_mode_active = False
+            self._target_pose_command_active = False
             delattr(self, "_trajectory_start_time")
             delattr(self, "_trajectory_timeout")
             self.node.get_logger().debug("Trajectory execution completed")
@@ -1077,6 +1117,7 @@ class Robot:
 
         # Set to none to avoid publishing the previous target pose after activating the next controller
         self._target_pose = None
+        self._target_pose_command_active = False
         self._q_target = None
 
         if blocking:
@@ -1162,5 +1203,13 @@ class Robot:
 
     def shutdown(self):
         """Shutdown the node."""
+        try:
+            self.node.destroy_node()
+        except Exception:
+            pass
+
         if rclpy.ok():
             rclpy.shutdown()
+
+        if self._spin_thread is not None and self._spin_thread.is_alive() and threading.current_thread() is not self._spin_thread:
+            self._spin_thread.join(timeout=1.0)

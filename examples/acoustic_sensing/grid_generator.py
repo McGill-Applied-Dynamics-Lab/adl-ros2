@@ -1,1 +1,1 @@
-../../experiments/probing/granular_bed/grid_generator.py
+../../experiments/probing/waveguide_gripper/waveguide_gripper_grid_generator.py

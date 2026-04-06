@@ -52,7 +52,7 @@ if __name__ == "__main__":
     GRIPPER_WIDTH = 0.0320  # (m)
     GRIPPER_LENGTH = 0.1250  # (m)
     X_SHIFT = -0.0070  # from CAD (m)
-    Y_SHIFT = 0.0050  # from CAD (m)
+    Y_SHIFT = -0.0050  # from CAD (m)
     X_EXTENT = GRIPPER_WIDTH  # (m)
     Y_EXTENT = GRIPPER_LENGTH  # (m)
 
@@ -64,7 +64,7 @@ if __name__ == "__main__":
     grids = {}
 
     train_, test_ = generate_grid(
-        x_extent=X_EXTENT, y_extent=Y_EXTENT, nx=nx, ny=ny, xdir=-1, ydir=1
+        x_extent=X_EXTENT, y_extent=Y_EXTENT, nx=nx, ny=ny, xdir=-1, ydir=-1
     )  # generate rectangular grid
 
     # Store gripper frame (before landmark offset)

@@ -18,7 +18,7 @@ import jaxlie
 import jaxls
 import pyroki as pk
 import yourdfpy
-from ament_index_python.packages import get_package_share_directory
+from ament_index_python.packages import PackageNotFoundError, get_package_share_directory
 
 
 def _configure_quiet_ik_logging() -> None:
@@ -51,10 +51,36 @@ def _print_progress(current: int, total: int) -> None:
         sys.stdout.write("\n")
 
 
+def _find_franka_rim_share() -> Path:
+    """Resolve the franka_rim share directory from install space or workspace source."""
+    try:
+        return Path(get_package_share_directory("franka_rim"))
+    except (PackageNotFoundError, OSError):
+        pass
+
+    current_file = Path(__file__).resolve()
+    searched: list[Path] = []
+    for candidate_root in current_file.parents:
+        install_candidate = candidate_root / "install_humble" / "franka_rim" / "share" / "franka_rim"
+        source_candidate = candidate_root / "src" / "robot_arm" / "franka_rim"
+        searched.extend([install_candidate, source_candidate])
+
+        if install_candidate.exists():
+            return install_candidate
+        if source_candidate.exists():
+            return source_candidate
+
+    searched_str = ", ".join(str(path) for path in searched)
+    raise FileNotFoundError(
+        "Could not locate the franka_rim package share directory. "
+        f"Searched: {searched_str}"
+    )
+
+
 def load_fr3_urdf() -> Any:
     """Load FR3 URDF from franka_rim package."""
-    share = get_package_share_directory("franka_rim")
-    models_dir = Path(share) / "models"
+    share = _find_franka_rim_share()
+    models_dir = share / "models"
     urdf_path = models_dir / "fr3_franka_hand.urdf"
     meshes_dir = models_dir / "meshes"
 
