@@ -2,7 +2,7 @@
 
 import threading
 from dataclasses import dataclass
-from typing import List
+from typing import Any, List, Sequence
 
 import numpy as np
 import rclpy
@@ -19,6 +19,10 @@ from sensor_msgs.msg import JointState
 from arm_client.control.controller_switcher import ControllerSwitcherClient
 from arm_client.control.joint_trajectory_controller_client import JointTrajectoryControllerClient
 from arm_client.control.parameters_client import ParametersClient
+from arm_client.planning.ik_pyroki import plan_fr3_joint_trajectory
+from arm_client.planning.types import CartesianWaypoint, PlannedJointTrajectory
+from arm_client.planning.visualization import visualize_planned_joint_trajectory
+from arm_client.planning.waypoints import generate_linear_waypoints
 from arm_client.robot_config import FR3Config, RobotConfig
 from arm_client.utils.callback_monitor import CallbackMonitor
 from arm_interfaces.msg import CartesianTrajectory
@@ -103,6 +107,7 @@ class Robot:
     """
 
     THREADS_REQUIRED = 4
+    _JOINT_CONTROLLER_KEYWORDS = ("joint_trajectory_controller", "joint_impedance_controller", "joint_space_controller")
 
     def __init__(
         self,
@@ -619,7 +624,11 @@ class Robot:
         speed: float = 0.05,
         time_to_move: float | None = None,
     ):
-        """Move the end-effector to a given pose by interpolating linearly between the poses.
+        """Move the end-effector to a target pose.
+
+        Dispatches behavior based on the active controller:
+        - Joint controller: plan IK trajectory and execute through joint trajectory action.
+        - Other controllers: keep Cartesian interpolation/publishing behavior.
 
         Args:
             position: Position to move to. If None, the pose is used.
@@ -637,6 +646,20 @@ class Robot:
         if time_to_move is None:
             time_to_move = float(distance / speed)
 
+        active_controller = self.controller_switcher_client.get_active_controller()
+        if active_controller is not None and self._is_joint_controller(active_controller):
+            waypoints = generate_linear_waypoints(
+                start_position=start_pose.position,
+                start_orientation=start_pose.orientation,
+                end_position=desired_pose.position,
+                end_orientation=desired_pose.orientation,
+                num_waypoints=2,
+            )
+            trajectory = self.plan_joint_trajectory(waypoints, duration=time_to_move, visualize=False)
+            self.follow_joint_trajectory(trajectory, blocking=True)
+            self._target_pose = desired_pose.copy()
+            return
+
         N = int(time_to_move * self.config.publish_frequency)
 
         rate = self.node.create_rate(self.config.publish_frequency)
@@ -653,6 +676,281 @@ class Robot:
             rate.sleep()
 
         self._target_pose = desired_pose
+
+    def plan_joint_trajectory(
+        self,
+        waypoints: Sequence[CartesianWaypoint],
+        duration: float,
+        visualize: bool = False,
+        n_points: int | None = None,
+        show_progress: bool = True,
+        initial_joint_config: NDArray | None = None,
+    ) -> PlannedJointTrajectory:
+        """Plan a joint trajectory from Cartesian waypoints using FR3 IK.
+
+        Args:
+            waypoints: Cartesian path waypoints.
+            duration: Trajectory duration in seconds.
+            visualize: If True, open preview and require approval.
+            n_points: Number of dense IK solve points.
+            show_progress: If True, print planner progress bar.
+            initial_joint_config: Optional seed for the first IK point.
+                If None, uses the current measured robot joint state.
+        """
+        trajectory = plan_fr3_joint_trajectory(
+            waypoints=list(waypoints),
+            duration=duration,
+            joint_names=self.config.joint_names,
+            target_link_name=self.config.ik_target_link_name,
+            n_points=self.config.ik_default_num_points if n_points is None else n_points,
+            current_joint_config=self.q
+            if initial_joint_config is None
+            else np.array(initial_joint_config, dtype=float),
+            pos_weight=self.config.ik_position_weight,
+            ori_weight=self.config.ik_orientation_weight,
+            similarity_weight=self.config.ik_similarity_weight,
+            show_progress=show_progress,
+        )
+
+        if visualize:
+            approved = visualize_planned_joint_trajectory(trajectory)
+            if not approved:
+                raise RuntimeError("Trajectory rejected by user.")
+
+        return trajectory
+
+    def plan_joint_trajectory_sequence(
+        self,
+        waypoints_list: Sequence[Sequence[CartesianWaypoint]],
+        durations: Sequence[float],
+        n_points: int | None = None,
+        show_progress: bool = True,
+    ) -> list[PlannedJointTrajectory]:
+        """Plan multiple trajectories with chained joint seeds for continuity.
+
+        Each segment uses the previous segment's final joint configuration as the
+        IK seed for the next one to prevent joint discontinuities.
+        """
+        if len(waypoints_list) != len(durations):
+            raise ValueError("waypoints_list and durations must have the same length")
+        if len(waypoints_list) == 0:
+            return []
+
+        trajectories: list[PlannedJointTrajectory] = []
+        seed = self.q
+
+        for waypoints, duration in zip(waypoints_list, durations):
+            traj = self.plan_joint_trajectory(
+                waypoints=waypoints,
+                duration=duration,
+                visualize=False,
+                n_points=n_points,
+                show_progress=show_progress,
+                initial_joint_config=seed,
+            )
+            trajectories.append(traj)
+            seed = traj.joint_positions[-1]
+
+        return trajectories
+
+    def follow_joint_trajectory(
+        self,
+        trajectory: PlannedJointTrajectory,
+        blocking: bool = True,
+        settle_time: float = 0.0,
+    ):
+        """Execute a planned joint trajectory.
+
+        Args:
+            trajectory: Planned trajectory to execute.
+            blocking: If True, wait for action completion.
+            settle_time: Hold time added at start and end in the sent trajectory message.
+        """
+        active_controller = self.controller_switcher_client.get_active_controller()
+        if active_controller != "joint_trajectory_controller":
+            self.controller_switcher_client.switch_controller("joint_trajectory_controller")
+
+        trajectory_to_send = self._with_settle_points(trajectory, settle_time) if settle_time > 0.0 else trajectory
+
+        self.joint_trajectory_controller_client.send_joint_trajectory(
+            joint_names=trajectory_to_send.joint_names,
+            joint_positions=trajectory_to_send.joint_positions.tolist(),
+            time_from_start=trajectory_to_send.time_from_start,
+            blocking=blocking,
+        )
+
+        if len(trajectory.joint_positions) > 0:
+            self._q_target = np.array(trajectory.joint_positions[-1], dtype=float)
+
+    def visualize_sequence(
+        self,
+        steps: Sequence[Any],
+        playback_hz: float = 10.0,
+        respect_timing: bool = True,
+    ) -> bool:
+        """Visualize the full joint trajectory sequence before execution.
+
+        This merges all `PlannedJointTrajectory` steps into one continuous trajectory
+        and opens a single viewer session for approval.
+
+        Args:
+            steps: Sequence containing `PlannedJointTrajectory` and/or callables.
+            playback_hz: Playback frequency for visualization.
+            respect_timing: If True, preview playback follows trajectory timestamps.
+
+        Returns:
+            bool: True if approved, False if rejected.
+        """
+        full_trajectory = self._build_full_sequence_trajectory(steps)
+        return visualize_planned_joint_trajectory(
+            full_trajectory,
+            playback_hz=playback_hz,
+            respect_timing=respect_timing,
+        )
+
+    def execute_sequence(
+        self,
+        steps: Sequence[Any],
+        stop_on_error: bool = True,
+        visualize_before_execution: bool = False,
+        playback_hz: float = 10.0,
+        respect_timing_in_preview: bool = True,
+        settle_time_between_trajectories: float | None = None,
+    ):
+        """Execute an experiment sequence of trajectories and callables.
+
+        Supported step types:
+            - PlannedJointTrajectory
+            - callable (e.g. gripper actions)
+
+        Args:
+            steps: Ordered sequence to execute.
+            stop_on_error: If True, re-raise exceptions and stop execution.
+            visualize_before_execution: If True, preview full concatenated trajectory first.
+            playback_hz: Playback rate used when `visualize_before_execution=True`.
+            respect_timing_in_preview: If True, preview follows trajectory timestamps.
+            settle_time_between_trajectories: Optional wait time in seconds between
+                consecutive trajectory steps. If None, uses config default.
+        """
+        if visualize_before_execution:
+            approved = self.visualize_sequence(
+                steps,
+                playback_hz=playback_hz,
+                respect_timing=respect_timing_in_preview,
+            )
+            if not approved:
+                raise RuntimeError("Sequence trajectory rejected by user.")
+
+        settle_time = (
+            self.config.trajectory_settle_time
+            if settle_time_between_trajectories is None
+            else settle_time_between_trajectories
+        )
+
+        for step in steps:
+            try:
+                if isinstance(step, PlannedJointTrajectory):
+                    self.follow_joint_trajectory(step, blocking=True, settle_time=settle_time)
+                elif callable(step):
+                    step()
+                else:
+                    raise TypeError(f"Unsupported sequence step type: {type(step).__name__}")
+            except Exception:
+                if stop_on_error:
+                    raise
+
+    def _with_settle_points(self, trajectory: PlannedJointTrajectory, settle_time: float) -> PlannedJointTrajectory:
+        """Add start/end hold points directly in the trajectory message timing.
+
+        This follows the sequence requested for each trajectory:
+          1) shift all times by `settle_time`
+          2) duplicate first point at `settle_time`
+          3) duplicate last point at `duration + 2 * settle_time`
+        """
+        if settle_time <= 0.0:
+            return trajectory
+        if len(trajectory.time_from_start) == 0 or len(trajectory.joint_positions) == 0:
+            raise ValueError("Trajectory is empty")
+
+        original_times = [float(t) for t in trajectory.time_from_start]
+        if any(t2 <= t1 for t1, t2 in zip(original_times, original_times[1:])):
+            raise ValueError("Trajectory times must be strictly increasing")
+
+        shifted_times = [t + settle_time for t in original_times]
+        duration = original_times[-1]
+
+        first_q = np.array(trajectory.joint_positions[0], dtype=float)
+        last_q = np.array(trajectory.joint_positions[-1], dtype=float)
+
+        # Requested shape:
+        #   - duplicate first point at t_settle
+        #   - shift all message times by t_settle
+        #   - duplicate last point at duration + 2*t_settle
+        # If original trajectory starts at t=0, the shifted first point equals t_settle.
+        # To keep strictly increasing timestamps for ros2_control, drop that duplicated shifted point.
+        eps = 1e-6
+        include_shifted_first = shifted_times[0] > (settle_time + eps)
+
+        new_times = [settle_time]
+        new_positions: list[np.ndarray] = [first_q]
+
+        if include_shifted_first:
+            new_times.append(shifted_times[0])
+            new_positions.append(np.array(trajectory.joint_positions[0], dtype=float))
+
+        new_times.extend(shifted_times[1:])
+        new_positions.extend([np.array(q, dtype=float) for q in trajectory.joint_positions[1:]])
+
+        new_times.append(duration + 2.0 * settle_time)
+        new_positions.append(last_q)
+
+        # Final guard against floating-point equality at segment boundaries.
+        for i in range(1, len(new_times)):
+            if new_times[i] <= new_times[i - 1]:
+                new_times[i] = new_times[i - 1] + eps
+
+        return PlannedJointTrajectory(
+            joint_names=trajectory.joint_names,
+            time_from_start=new_times,
+            joint_positions=np.array(new_positions),
+        )
+
+    def _build_full_sequence_trajectory(self, steps: Sequence[Any]) -> PlannedJointTrajectory:
+        """Build one continuous trajectory from all trajectory steps in a sequence."""
+        traj_steps = [step for step in steps if isinstance(step, PlannedJointTrajectory)]
+        if len(traj_steps) == 0:
+            raise ValueError("No PlannedJointTrajectory found in sequence.")
+
+        joint_names = traj_steps[0].joint_names
+        all_times: list[float] = []
+        all_positions: list[np.ndarray] = []
+        time_offset = 0.0
+
+        for i, trajectory in enumerate(traj_steps):
+            if trajectory.joint_names != joint_names:
+                raise ValueError("All trajectory steps must share the same joint_names.")
+            if len(trajectory.time_from_start) != len(trajectory.joint_positions):
+                raise ValueError("Trajectory time_from_start and joint_positions length mismatch.")
+
+            for j, (t, q) in enumerate(zip(trajectory.time_from_start, trajectory.joint_positions)):
+                # Avoid duplicate timestamp at segment boundaries.
+                if i > 0 and j == 0:
+                    continue
+                all_times.append(float(t) + time_offset)
+                all_positions.append(np.array(q, dtype=float))
+
+            if len(trajectory.time_from_start) > 0:
+                time_offset += float(trajectory.time_from_start[-1])
+
+        return PlannedJointTrajectory(
+            joint_names=joint_names,
+            time_from_start=all_times,
+            joint_positions=np.array(all_positions),
+        )
+
+    def _is_joint_controller(self, controller_name: str) -> bool:
+        """Return True if the controller name corresponds to a joint-space controller."""
+        return any(keyword in controller_name for keyword in self._JOINT_CONTROLLER_KEYWORDS)
 
     def execute_trajectory(
         self,
@@ -702,7 +1000,6 @@ class Robot:
         # Add waypoints
         for path, time_sec in zip(waypoints, time_from_start):
             pose = path[0]
-            twist = path[1]
 
             point = self._pose_to_pose_msg(pose)
             msg.points.append(point)  # msg.points = [*msg.points, point]

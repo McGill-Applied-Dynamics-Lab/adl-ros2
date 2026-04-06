@@ -24,11 +24,12 @@
       "label": "colcon build",
       "type": "shell",
       "command": [
-        "source /opt/ros/humble/setup.sh &&",
-        "cd ${workspaceFolder}/../.. &&",
-        "colcon build",
-        "--symlink-install",
-        "--cmake-args '-DCMAKE_BUILD_TYPE=Debug'"
+        // "source /opt/ros/humble/setup.sh &&",
+        // "cd ${workspaceFolder}/../.. &&",
+        // "colcon build",
+        // "--symlink-install",
+        // "--cmake-args '-DCMAKE_BUILD_TYPE=Debug'"
+        "pixi run -e humble build"
       ],
       "problemMatcher": [],
       "group": {
@@ -71,7 +72,7 @@
     {
       "label": "Source ROS2 ws",
       "type": "shell",
-      "command": "source ${workspaceFolder}/install/setup.bash && sleep 1"
+      "command": "source ${workspaceFolder}/install_humble/setup.bash && sleep 1"
     },
     {
       "label": "ROS2 Test - robot_arm_testing",
