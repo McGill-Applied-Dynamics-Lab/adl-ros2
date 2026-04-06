@@ -216,6 +216,53 @@ def execute_trajectory_and_record(
     return ts, ee_poses, ee_forces
 
 
+def execute_sequence_and_record(
+    robot: Robot,
+    trajectories: list[PlannedJointTrajectory],
+    timeout_margin: float,
+) -> tuple[list[float], list[Pose], list[dict]]:
+    """Execute a trajectory sequence while sampling robot state."""
+    if len(trajectories) == 0:
+        raise ValueError("Trajectory sequence is empty")
+
+    ts: list[float] = []
+    ee_poses: list[Pose] = []
+    ee_forces: list[dict] = []
+    error: list[Exception] = []
+
+    def _runner():
+        try:
+            robot.execute_sequence(
+                trajectories,
+                visualize_before_execution=False,
+                settle_time_between_trajectories=0.0,
+            )
+        except Exception as exc:
+            error.append(exc)
+
+    worker = threading.Thread(target=_runner, daemon=True)
+    worker.start()
+
+    start_time = time.perf_counter()
+    timeout = sum(float(traj.time_from_start[-1]) for traj in trajectories) + timeout_margin
+
+    while worker.is_alive():
+        elapsed = time.perf_counter() - start_time
+        if elapsed > timeout:
+            break
+
+        ee_poses.append(robot.end_effector_pose.copy())
+        ee_forces.append(robot.end_effector_wrench.copy())
+        ts.append(elapsed)
+        time.sleep(STATE_SAMPLE_PERIOD)
+
+    worker.join(timeout=0.1)
+    if error:
+        raise error[0]
+
+    return ts, ee_poses, ee_forces
+
+
 def main() -> None:
     repo_root = Path(__file__).resolve().parents[1]
     acoustic_root = repo_root / "src" / "acoustic_sensing" / "scripts"
@@ -326,15 +373,13 @@ def main() -> None:
                 [PLUNGE_DURATION, RETRACT_DURATION],
                 show_progress=True,
             )
-            probe_traj = merge_trajectories([plunge_traj, retract_traj])
-
             print("\tStarting RF stream...")
             rf_frames, stop_event, rf_thread = rf_stream_start(ser)
 
-            print("\tExecuting planned probe trajectory...")
-            ts, ee_poses, ee_forces = execute_trajectory_and_record(
+            print("\tExecuting planned probe sequence...")
+            ts, ee_poses, ee_forces = execute_sequence_and_record(
                 robot,
-                probe_traj,
+                [plunge_traj, retract_traj],
                 timeout_margin=PROBE_TIMEOUT_MARGIN,
             )
 
