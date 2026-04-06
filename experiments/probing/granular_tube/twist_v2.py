@@ -5,37 +5,69 @@ from pathlib import Path
 import pickle
 import serial
 
-# Notes
-"""
-- Integrate serial acquisition.
-"""
-
 # Configuration
 SETTLE_SEC = 2.00  # wait time after moves (s)
 DELAY_SEC = 1.00 # delay between forward and reverse motion (s)
+SERIAL_PORT = "/dev/ttyACM0" 
+BAUD_RATE = 3000000
 
 # File paths
 PROJECT_ROOT = Path(__file__).resolve().parent
 PARAMETERS_FILE = PROJECT_ROOT / "results" / "grids" / "rotation_params.pkl"
 RESULTS_FILE = PROJECT_ROOT / "results" / "RANDOM_TWIST.pkl"
 
+
+def trigger_teensy_sampling(ser: serial.Serial):
+    """Sends the command to start analog recording."""
+    ser.reset_input_buffer()
+    ser.write(b'1')
+
+
+def dump_teensy_data(ser: serial.Serial):
+    """
+    Sends the dump command, parses the serial buffer, and extracts
+    the alternating sensor data alongside the execution time.
+    """
+    ser.write(b'2')
+
+    # Wait for the start marker 'S'
+    while True:
+        line = ser.readline().decode('ascii', errors='ignore').strip()
+        if line == 'S':
+            break
+
+    data = []
+    dt_micros = 0
+
+    # Read until the time marker 'T:' is found
+    while True:
+        line = ser.readline().decode('ascii', errors='ignore').strip()
+        if line.startswith("T:"):
+            dt_micros = int(line[2:])
+            break
+        elif line:
+            try:
+                data.append(int(line))
+            except ValueError:
+                pass # Ignore any corrupted serial lines
+
+    # Buffer1 and Buffer2 are printed sequentially per index, so they alternate
+    # buffer1 = even indices, buffer2 = odd indices
+    p1 = np.array(data[0::2], dtype=np.uint16)
+    p2 = np.array(data[1::2], dtype=np.uint16)
+
+    return {
+        "sensor1": p1,
+        "sensor2": p2,
+        "dt_micros": dt_micros
+    }
+
+
 def execute_wrist_rotation_pair(
-    robot: Robot, target_angle_rad: float, speed_rad_s: float
+    robot: Robot, target_angle_rad: float, speed_rad_s: float, ser: serial.Serial
 ):
     """
     Execute a forward rotation of the wrist (joint 7) followed by reverse rotation.
-
-    Each rotation is done via joint-space control at constant speed.
-
-    Args:
-        robot: Robot instance
-        target_angle_rad: Target rotation angle in radians (forward direction)
-        speed_rad_s: Rotation speed in radians/second
-
-    Returns:
-        tuple: (ts_fwd, angles_fwd, torques_fwd, ts_rev, angles_rev, torques_rev)
-               where angles are absolute joint 7 angles in radians
-               and torques are 3-element torque vectors
     """
     # Initialize joint 7 to 45 degrees before every rotation
     q_init = robot.q.copy()
@@ -64,7 +96,9 @@ def execute_wrist_rotation_pair(
     ts_fwd = []
     angles_fwd = []
     torques_fwd = []
-    pressures_fwd = [] # (n-samples x 2 sensors)
+
+    # --- Trigger Teensy sampling (FORWARD) ---
+    trigger_teensy_sampling(ser)
 
     t0_fwd = time.perf_counter()
     robot.joint_trajectory_controller_client.send_joint_config(
@@ -73,9 +107,6 @@ def execute_wrist_rotation_pair(
         time_to_goal=duration_per_direction,
         blocking=False
     )
-
-    # Trigger Teensy sampling
-    # ...
 
     while (time.perf_counter() - t0_fwd) < duration_per_direction + DELAY_SEC: # record data during delay
         elapsed = time.perf_counter() - t0_fwd
@@ -89,8 +120,9 @@ def execute_wrist_rotation_pair(
 
         time.sleep(0.01)
 
-    # Trigger serial dump
-    # ...
+    # --- Trigger serial dump (FORWARD) ---
+    print("\t\tDumping forward pressure data...")
+    pressures_fwd = dump_teensy_data(ser)
 
     # Reverse direction
     q_target_reverse = start_q.copy()
@@ -99,7 +131,9 @@ def execute_wrist_rotation_pair(
     ts_rev = []
     angles_rev = []
     torques_rev = []
-    pressures_rev = [] # (n-samples x 2 sensors)
+
+    # --- Trigger Teensy sampling (REVERSE) ---
+    trigger_teensy_sampling(ser)
 
     t0_rev = time.perf_counter()
     robot.joint_trajectory_controller_client.send_joint_config(
@@ -108,9 +142,6 @@ def execute_wrist_rotation_pair(
         time_to_goal=duration_per_direction,
         blocking=False
     )
-
-    # Trigger Teensy sampling
-    # ...
 
     while (time.perf_counter() - t0_rev) < duration_per_direction:
         elapsed = time.perf_counter() - t0_rev
@@ -123,10 +154,10 @@ def execute_wrist_rotation_pair(
         torques_rev.append(ee_wrench["torque"].copy())
 
         time.sleep(0.01)
-    
-    # Trigger serial dump
-    # ...
 
+    # --- Trigger serial dump (REVERSE) ---
+    print("\t\tDumping reverse pressure data...")
+    pressures_rev = dump_teensy_data(ser)
 
     time.sleep(SETTLE_SEC)
 
@@ -137,11 +168,21 @@ def main():
     """
     Main function to execute wrist rotations using joint-space control.
     Each rotation consists of forward + reverse motion, all recorded.
-
-    Requires pre-generated parameters file. Generate with:
-        python generate_rotation_parameters.py
     """
-    # Setup
+    # Setup Teensy Serial Connection
+    print(f"Connecting to Teensy on {SERIAL_PORT}...")
+    try:
+        # Include a read timeout so the script doesn't hang forever on missed markers
+        ser = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=10)
+        time.sleep(1.0) # Allow time for microcontroller to reset on connection
+        ser.reset_input_buffer()
+        print("Teensy connected successfully.")
+    except Exception as e:
+        print(f"ERROR: Could not connect to serial port {SERIAL_PORT}.")
+        print(e)
+        return
+
+    # Setup Robot
     robot = Robot(namespace="fr3")
     robot.wait_until_ready()
 
@@ -163,9 +204,8 @@ def main():
     # Load parameters
     if not PARAMETERS_FILE.exists():
         print(f"ERROR: Parameters file not found: {PARAMETERS_FILE}")
-        print("Generate parameters first with:")
-        print("  python generate_rotation_parameters.py")
         robot.shutdown()
+        ser.close()
         return
 
     with open(PARAMETERS_FILE, "rb") as f:
@@ -181,22 +221,21 @@ def main():
 
     start_idx = 0
     if RESULTS_FILE.exists():
-        # Load existing results to resume
         with open(RESULTS_FILE, "rb") as f:
             exp_dict = pickle.load(f)
-            # Calculate how many rotations have been completed
             start_idx = len(exp_dict["target_angles"])
             print(f"Loaded existing results file: {RESULTS_FILE}")
             print(f"Already completed {start_idx} rotation pairs")
     else:
-        # Create new results file
         exp_dict = {
             "ts_forward": [],
             "joint7_angles_forward": [],
             "torques_forward": [],
+            "pressures_forward": [],
             "ts_reverse": [],
             "joint7_angles_reverse": [],
             "torques_reverse": [],
+            "pressures_reverse": [],
             "target_angles": [],
             "target_speeds": [],
         }
@@ -207,6 +246,7 @@ def main():
     if start_idx >= num_points:
         print(f"All {num_points} rotation pairs have already been collected.")
         robot.shutdown()
+        ser.close()
         return
 
     print(f"Resuming from rotation pair {start_idx + 1} / {num_points}")
@@ -216,29 +256,32 @@ def main():
         angle = planned_angles[i]
         speed = planned_speeds[i]
 
-        angle_deg = np.degrees(angle) # for print-out only
-        speed_deg_s = np.degrees(speed) # for print-out only
+        angle_deg = np.degrees(angle)
+        speed_deg_s = np.degrees(speed)
 
         print(
             f"\nRotation Pair {i + 1} / {num_points} | Target Angle: {angle_deg:.3g} deg., Speed: {speed_deg_s:.3g} deg./s"
         )
 
         try:
-            # Perform Forward and Reverse Rotation
             print("\tExecuting forward + reverse rotation...")
-            (ts_fwd, angles_fwd, torques_fwd,
-             ts_rev, angles_rev, torques_rev) = execute_wrist_rotation_pair(
-                robot=robot, target_angle_rad=angle, speed_rad_s=speed
+
+            # NOTE: Unpacking all 8 returned variables (including pressures)
+            (ts_fwd, angles_fwd, torques_fwd, pressures_fwd,
+             ts_rev, angles_rev, torques_rev, pressures_rev) = execute_wrist_rotation_pair(
+                robot=robot, target_angle_rad=angle, speed_rad_s=speed, ser=ser
             )
 
             # Store results
             exp_dict["ts_forward"].append(ts_fwd)
             exp_dict["joint7_angles_forward"].append(angles_fwd)
             exp_dict["torques_forward"].append(torques_fwd)
+            exp_dict["pressures_forward"].append(pressures_fwd)
 
             exp_dict["ts_reverse"].append(ts_rev)
             exp_dict["joint7_angles_reverse"].append(angles_rev)
             exp_dict["torques_reverse"].append(torques_rev)
+            exp_dict["pressures_reverse"].append(pressures_rev)
 
             exp_dict["target_angles"].append(angle)
             exp_dict["target_speeds"].append(speed)
@@ -254,8 +297,8 @@ def main():
             continue
 
     robot.shutdown()
+    ser.close()
     print("\nDone.")
-
 
 if __name__ == "__main__":
     main()

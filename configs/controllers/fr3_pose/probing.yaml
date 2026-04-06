@@ -1,5 +1,5 @@
-motion.max_linear_velocity: 0.05  # Maximum linear velocity for trajectory generation (m/s) [0.0, 3.0]
-motion.max_angular_velocity: 0.10  # Maximum angular velocity for trajectory generation (rad/s) [0.0, 2.5]
+motion.max_linear_velocity: 0.10  # Maximum linear velocity for trajectory generation (m/s) [0.0, 3.0]
+motion.max_angular_velocity: 0.80  # Maximum angular velocity for trajectory generation (rad/s) [0.0, 2.5]
 
 filter.target_pose: 0.80  # Smoothing for single-pose inputs using EMA (0.0: Max filtering, 1.0: No filtering)
 

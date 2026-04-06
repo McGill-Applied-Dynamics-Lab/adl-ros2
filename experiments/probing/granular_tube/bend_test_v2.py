@@ -90,8 +90,8 @@ def execute_circular_arc(
         s = min(t / duration, 1.0)
 
         # Reverse the interpolation: go from polar_angle down to 0
-        current_angle = (1.0 - s) * polar_angle 
-        
+        current_angle = (1.0 - s) * polar_angle
+
         rot_axis = np.array([-np.sin(azimuthal_angle), np.cos(azimuthal_angle), 0.0])
 
         # Create a rotation vector and apply it to the base orientation
