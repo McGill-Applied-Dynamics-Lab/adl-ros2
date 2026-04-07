@@ -11,6 +11,7 @@
 - Added a `TEST` / `TESTEND` mode to `10RC_finish.ino` for continuous RF frame streaming without changing the normal `67` fixed-burst / `69` finish behavior.
 - Added `src/acoustic_sensing/teensy_firmware/live_plot_teensy_qt.py`, a Qt/pyqtgraph live plotter that sends `TEST`, plots `S0` to `S3` frames, and sends `TESTEND` on close.
 - Documented that test mode can be stopped by closing the Qt plotter or manually sending ASCII `TESTEND` over serial.
+- Confirmed the fixed-burst firmware test-mode workflow and documented it as the recommended check before robot motion.
 - Updated the Teensy firmware documentation to match the active firmware pin mapping and current file layout.
 - Corrected the 4RF Teensy firmware pin definitions and kept the README aligned with the active `.ino` source.
 - Updated the waveguide gripper probing work for the 180-degree end-effector orientation.

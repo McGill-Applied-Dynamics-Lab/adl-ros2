@@ -124,6 +124,8 @@ python3 src/acoustic_sensing/teensy_firmware/live_plot_teensy_qt.py
 
 The plotter sends `TEST`, parses the same `S0` to `S3` frame format, and sends `TESTEND` when the window closes.
 
+This test-mode workflow has been exercised after flashing the fixed-burst firmware and is the recommended first check before running robot motion.
+
 To stop test mode manually, send ASCII `TESTEND` over serial:
 
 ```python
