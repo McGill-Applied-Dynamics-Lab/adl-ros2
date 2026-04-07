@@ -162,11 +162,11 @@ def test_compute_model_matrices(franka_model_node, q, dq):
     # Set needed values
     node.v_ee = np.array([0.0, 0.0, 0.0])  # Dummy end-effector velocity
 
-    node._update_model(q, dq)
+    node._update_model()
 
     M = node.M
     c = node.c
-    tau = node.tau
+    tau = node.tau_meas
     Ai = node.Ai
     Ai_dot = node.Ai_dot
     Ai_dot_q_dot = node.Ai_dot_q_dot
@@ -206,6 +206,14 @@ def test_compute_contact_forces(franka_model_node):
 
 
 #! Franka Model Tests
+
+
+def test_franka_model_node_initialization(franka_model_node):
+    node = franka_model_node
+    assert node is not None
+    assert isinstance(node, FrankaModelNode)
+    assert node.get_name() == "franka_model_node"
+    assert node._robot_model is not None, "Robot model should be loaded"
 
 
 def test_pinocchio_model_loads(urdf_path):

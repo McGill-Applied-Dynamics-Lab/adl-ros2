@@ -3,6 +3,14 @@
   ros__parameters:
     use_sim_time: false
 
+# I3 Node Parameters
+inverse3_node:
+  ros__parameters:
+    frequency: 1000.0
+    scale: 1.0  # scale between i3 position and published position 
+    disable_forces: false
+    force_cap: 5.0  # N
+
 # I3 Sim Node Parameters
 i3_sim_node:
   ros__parameters:
@@ -12,6 +20,36 @@ i3_sim_node:
     n_cycles: 3
     use_start_srv: false
     start_time: 2.0
+
+i3_teleop:
+  ros__parameters:
+    i3_pose_topic_name: /i3/pose
+    i3_twist_topic_name: /i3/twist
+    i3_wrench_topic_name: /i3/wrench
+    target_pose_topic_name: /fr3/target_pose
+    target_twist_topic_name: /fr3/target_twist
+    interface_force_topic_name: /fr3/interface_force
+    frequency: 100.0
+    force_scale: 0.1
+    position_scale: 1.0
+    pos_radius: 0.060
+    active_axis: "z"
+
+# --- Network Delays ---
+rim_msg_delay:
+  ros__parameters:
+    input_topic: "/fr3_rim"
+    output_topic: "/fr3_rim_delayed" 
+    delay: 0
+    message_type: "arm_interfaces/msg/FrankaRIM"
+
+ee_cmd_delay:
+  ros__parameters:
+    input_topic: "/osc_pd_controller/goal_pre_delay"
+    output_topic: "/osc_pd_controller/goal"
+    delay: 0
+    message_type: "geometry_msgs/msg/PointStamped"
+
 
 # Visualization Node Parameters
 rim_vis_node:

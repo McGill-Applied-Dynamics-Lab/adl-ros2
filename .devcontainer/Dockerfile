@@ -110,6 +110,7 @@ RUN apt-get update && \
     ros-${ROS_DISTRO}-joy \
     ros-${ROS_DISTRO}-foxglove-bridge \
     ros-${ROS_DISTRO}-rqt-graph \
+    ros-${ROS_DISTRO}-rviz2 \
     && rm -rf /var/lib/apt/lists/*
 
 # Symlink python3 to python
@@ -117,7 +118,6 @@ RUN ln -s /usr/bin/python3 /usr/bin/python
 
 USER $USERNAME
 
-RUN mkdir -p /home/ros/ros2_ws/src
 RUN mkdir -p /home/ros/ros2_ws/src
 
 #! Python deps
@@ -148,23 +148,25 @@ ENV PATH=$PATH \
     WS_FOLDER=${WS_FOLDER}
 
 
-FROM base AS franka
+# FROM base AS franka
 USER $USERNAME
 WORKDIR /home/ros/ros2_ws
 
 # === FRANKA ROS2 ===
 # Install and build franka_ros2 packages
-# RUN git clone https://github.com/frankarobotics/franka_ros2.git src/franka_ros2 \
-#     && cd src/franka_ros2 \
-#     && git checkout v2.0.2 \
-#     && cd /home/ros/ros2_ws \
-#     && source /opt/ros/${ROS_DISTRO}/setup.bash \
-#     && sudo apt-get update \
-#     && vcs import src < src/franka_ros2/franka.repos --recursive --skip-existing \
-#     && rosdep update \
-#     && rosdep install --from-paths src --ignore-src --rosdistro $ROS_DISTRO -y \
-#     && colcon build --symlink-install --cmake-args -DCMAKE_BUILD_TYPE=Release \
-#     && touch src/franka_ros2/COLCON_IGNORE src/libfranka/COLCON_IGNORE src/franka_description/COLCON_IGNORE
+RUN git clone https://github.com/frankarobotics/franka_ros2.git src/franka_ros2 \
+    && cd src/franka_ros2 \
+    && git checkout v2.0.2 \
+    && cd /home/ros/ros2_ws \
+    && source /opt/ros/${ROS_DISTRO}/setup.bash \
+    && sudo apt-get update \
+    && vcs import src < src/franka_ros2/franka.repos --recursive --skip-existing \
+    # && rosdep update \
+    # && rosdep install --from-paths src --ignore-src --rosdistro $ROS_DISTRO -y 
+    # && colcon build --symlink-install --cmake-args -DCMAKE_BUILD_TYPE=Release \
+    && touch src/franka_ros2/COLCON_IGNORE src/libfranka/COLCON_IGNORE \
+    # && touch src/franka_description/COLCON_IGNORE \
+    && echo "franka_ros2 packages done"
 
 # # Copy and set up entrypoint
 # COPY --chown=$USER_UID:$USER_GID .devcontainer/entrypoint.sh /usr/local/bin/entrypoint.sh

@@ -26,13 +26,12 @@ setup(
     maintainer_email="charles.sirois@mail.mcgill.ca",
     description="TODO: Package description",
     license="Apache-2.0",
-    tests_require=["pytest"],
     entry_points={
         "console_scripts": [
             "joy_teleop = teleop.joy_teleop:main",
-            "i3_teleop = teleop.i3_teleop:main",
+            "i3_teleop_old = teleop.i3_teleop_old:main",
             "i3_teleop_position = teleop.i3_teleop_position:main",
-            "i3_teleop_virtual_coupling = teleop.i3_teleop_virtual_coupling:main",
+            "i3_teleop = teleop.i3_teleop:main",
         ],
     },
 )

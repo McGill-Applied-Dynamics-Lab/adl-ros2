@@ -16,7 +16,7 @@ from rclpy.node import Node
 from rclpy.publisher import Publisher
 from rclpy.subscription import Subscription
 
-from arm_interfaces.msg import FrankaRIM, Teleop
+from arm_interfaces.msg import FrankaRIM
 from geometry_msgs.msg import WrenchStamped
 import std_msgs.msg
 

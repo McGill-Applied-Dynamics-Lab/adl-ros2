@@ -39,17 +39,33 @@ class RobotConfig:
 
     target_pose_topic: str = "target_pose"
     target_joint_topic: str = "target_joint"
+    target_trajectory_topic: str = "target_trajectory"
 
     current_pose_topic: str = "current_pose"
     current_joint_topic: str = "joint_states"
 
-    current_wrench_topic: str = "/fr3/franka_robot_state_broadcaster/external_wrench_in_base_frame"  # added current wrench topic
+    current_wrench_topic: str = (
+        "/fr3/franka_robot_state_broadcaster/external_wrench_in_base_frame"  # added current wrench topic
+    )
 
     publish_frequency: float = 50.0
     time_to_home: float = 5.0
 
     max_pose_delay: float = 1.0
     max_joint_delay: float = 1.0
+
+    ik_target_link_name: str = "fr3_hand_tcp"
+    ik_default_num_points: int = 20
+    ik_position_weight: float = 100.0
+    ik_orientation_weight: float = 50.0
+    ik_similarity_weight: float = 0.001
+
+    ik_max_joint_velocity: float = 2.0
+    ik_max_joint_acceleration: float = 5.0
+
+    # Settle time encoded inside each sent joint trajectory message.
+    # Robot will hold at start and end by duplicating first/last points.
+    trajectory_settle_time: float = 0.5
 
     def num_joints(self) -> int:
         """Returns the number of joints in the robot."""

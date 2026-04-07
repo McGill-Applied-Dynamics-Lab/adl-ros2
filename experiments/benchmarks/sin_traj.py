@@ -1,4 +1,7 @@
-# %%
+"""
+Script to follow a sinusoidal trajectory in the Z-axis using a robotic arm. For trajectory controllers, the full trajectory to follow.
+"""
+
 import matplotlib.pyplot as plt
 import numpy as np
 import sys
@@ -7,6 +10,7 @@ from datetime import datetime
 from pathlib import Path
 from dataclasses import dataclass, asdict
 from typing import Dict, List, Any, Optional
+from scipy.spatial.transform import Rotation as R
 
 # ========================================
 # EXPERIMENT PARAMETERS - MODIFY HERE
@@ -14,17 +18,20 @@ from typing import Dict, List, Any, Optional
 
 # Trajectory Parameters
 START_POSITION = [0.4, 0.0, 0.4]  # [x, y, z] in meters
+START_ROT = R.from_euler("xyz", [-180, 0, 0], degrees=True)  # base orientation ([roll, pitch, yaw], degrees)
+
 FREQUENCY = 50.0  # Execution frequency in Hz
 SIN_FREQ = 0.2  # Sinusoidal frequency in Hz
 AMPLITUDE = 0.1  # Trajectory amplitude in meters
-DURATION = 5.0  # Experiment duration in seconds
+DURATION = 10.0  # Experiment duration in seconds
 
 # Robot Configuration
 ROBOT_NAMESPACE = "fr3"  # Robot namespace
-CONTROLLER = "haptic_controller"  # "haptic_controller" or "cartesian_impedance_controller"
+CONTROLLER = "osc_pd_controller"  # "osc_pd_controller" or "cartesian_impedance_controller"
 CONTROLLER_CONFIG = None  # Path to custom config file (None for default)
 CONNECTION_TIMEOUT = 2.0  # Robot connection timeout in seconds
-HOME_ROBOT = True  # Whether to home robot before experiment
+HOME_ROBOT = False  # Whether to home robot before experiment
+SAVE_RESULTS = False
 
 # Experiment Settings
 EXPERIMENT_NAME = None  # Custom name (None for auto-generated)
@@ -74,7 +81,7 @@ check_dependencies()
 import pandas as pd
 import yaml
 
-from arm_client.robot import Robot
+from arm_client.robot import Robot, Pose
 from arm_client import CONFIG_DIR
 
 
@@ -182,9 +189,11 @@ class ExperimentManager:
         """Collect experiment metadata including controller parameters."""
         try:
             # Get controller parameters
-            ctrl_params = robot.haptic_controller_parameters_client.list_parameters()
-            params_values = robot.haptic_controller_parameters_client.get_parameters(ctrl_params)
+            ctrl_params = robot.osc_pd_controller_parameters_client.list_parameters()
+            params_values = robot.osc_pd_controller_parameters_client.get_parameters(ctrl_params)
             controller_parameters = dict(zip(ctrl_params, params_values))
+            controller_parameters.pop("robot_description", None)  # Remove large entry
+
         except Exception as e:
             print(f"Warning: Could not retrieve controller parameters: {e}")
             controller_parameters = {}
@@ -415,27 +424,28 @@ print(robot.q)
 # %%
 # Home robot if requested
 if HOME_ROBOT:
-    print("🏠 Homing robot...")
+    print("Homing robot...")
     robot.home()
 else:
-    print("⏭️  Skipping robot homing...")
+    print("Skipping robot homing...")
 
 # %%
 # Controller setup
 controller_config_map = {
-    "haptic_controller": "haptic_controller.yaml",
-    "cartesian_impedance_controller": "default_cartesian_impedance.yaml",
+    "osc_pd_controller": "osc_pd/default.yaml",
+    "cartesian_impedance_controller": "crips/default_cartesian_impedance.yaml",
 }
 
-config_file = CONTROLLER_CONFIG or controller_config_map.get(CONTROLLER, "haptic_controller.yaml")
+config_file = CONTROLLER_CONFIG or controller_config_map.get(CONTROLLER, "osc_pd/default.yaml")
 config_path = CONFIG_DIR / "controllers" / config_file
 
-print(f"🎮 Switching to controller: {CONTROLLER}")
+print(f"Switching to controller: {CONTROLLER}")
 robot.controller_switcher_client.switch_controller(CONTROLLER)
 
-if CONTROLLER == "haptic_controller":
-    robot.haptic_controller_parameters_client.load_param_config(file_path=config_path)
+if CONTROLLER == "osc_pd_controller":
+    robot.osc_pd_controller_parameters_client.load_param_config(file_path=config_path)
     metadata = experiment.collect_controller_metadata(robot, trajectory_params)
+
 elif CONTROLLER == "cartesian_impedance_controller":
     robot.cartesian_controller_parameters_client.load_param_config(file_path=config_path)
     # For cartesian controller, we need to adapt the metadata collection
@@ -469,7 +479,8 @@ print(f"   Trajectory: {metadata.trajectory_type}")
 # %%
 # The move_to function will publish a pose to /target_pose while interpolation linearly
 print(f"📍 Moving to start position: [{start_position[0]:.3f}, {start_position[1]:.3f}, {start_position[2]:.3f}]...")
-robot.move_to(position=start_position, speed=0.15)
+start_pose = Pose(position=start_position, orientation=START_ROT)
+robot.move_to(pose=start_pose, speed=0.15)
 
 # %%
 # Enhanced trajectory execution with comprehensive data collection
@@ -510,11 +521,11 @@ while t < max_time:
     # Collect comprehensive data point
     experiment.collect_data_point(robot, target_pose, t)
 
-    # Print progress every 0.5 seconds
-    if count % int(traj_freq / 2) == 0:
-        elapsed_time = time.perf_counter() - start_time
-        expected_time = count * dt
-        print(f"Time: {elapsed_time:.2f}s, Points: {count}, Target Z: {z:.3f}m")
+    # # Print progress every 0.5 seconds
+    # if count % int(traj_freq / 2) == 0:
+    #     elapsed_time = time.perf_counter() - start_time
+    #     expected_time = count * dt
+    #     print(f"Time: {elapsed_time:.2f}s, Points: {count}, Target Z: {z:.3f}m")
 
     count += 1
 
@@ -538,16 +549,18 @@ print(f"Data points collected: {len(experiment.data.timestamps)}")
 
 # %%
 # Save all experiment data and generate results
-print("\nSaving experiment results...")
-experiment.save_results()
+if SAVE_RESULTS:
+    print("\nSaving experiment results...")
+    experiment.save_results()
+    print(f"Results saved to: {experiment.results_dir}")
 
 print("\nExperiment completed successfully!")
-print(f"Results saved to: {experiment.results_dir}")
 
 # Display quick summary
 if experiment.data.timestamps:
     metrics = experiment.calculate_metrics()
     print(f"\n=== Quick Summary ===")
+    print(f"Mean Z error: {metrics['tracking_errors']['mean_error_z_mm']:.2f} mm")
     print(f"Mean 3D tracking error: {metrics['tracking_errors']['mean_error_3d_mm']:.2f} mm")
     print(f"Max 3D tracking error: {metrics['tracking_errors']['max_error_3d_mm']:.2f} mm")
     print(f"RMS 3D tracking error: {metrics['tracking_errors']['rms_error_3d_mm']:.2f} mm")

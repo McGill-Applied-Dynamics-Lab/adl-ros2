@@ -1,7 +1,6 @@
 import rclpy
 from rclpy.node import Node
 from arm_interfaces.msg import FrankaRIM
-from teleop_interfaces.msg import Inverse3State
 from geometry_msgs.msg import WrenchStamped
 from visualization_msgs.msg import Marker, MarkerArray
 from std_msgs.msg import ColorRGBA
