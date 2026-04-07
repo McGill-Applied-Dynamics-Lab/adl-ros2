@@ -13,6 +13,7 @@ from common import (
     build_lifted_transition_waypoints,
     generate_smooth_linear_waypoints,
     get_adaptive_waypoint_count,
+    get_probe_surface_z,
     load_grid_and_landmarks,
     PROBE_DEPTH,
     PROBE_STEP_SIZE,
@@ -128,8 +129,8 @@ def main() -> None:
         print(f"Invalid selection. Using default: {set_name}")
 
     landmarks, grid_xy_world, grid_xy_gripper = load_grid_and_landmarks(set_name)
-    z_surface = landmarks["z"] + Z_OFFSET
-    probe_geometries = precompute_probe_geometry(grid_xy_world, grid_xy_gripper, z_surface)
+    probe_surface_z = get_probe_surface_z(landmarks)
+    probe_geometries = precompute_probe_geometry(grid_xy_world, grid_xy_gripper, probe_surface_z)
     if len(probe_geometries) == 0:
         raise RuntimeError(f"No probe points found for grid set: {set_name}")
 

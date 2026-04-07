@@ -12,7 +12,7 @@
 - Split the 4RF probing workflow into an offline precompute phase and a runtime execution phase.
 - Added a dedicated experiment-configuration area for precomputed probing workflows.
 - Moved the older ad hoc probing scripts under `src/acoustic_sensing/scripts/testing`.
-- Switched experiment-config grids/landmarks/results to live entirely under `src/acoustic_sensing/scripts/experiment configuration/results`.
+- Switched experiment-config grids/landmarks/results to live entirely under `src/acoustic_sensing/scripts/experiment_configuration/results`.
 - Added a live grid runner and expanded the precomputed runner options for approach-only vs full probe motion.
 - Added a lifted-landmark startup model for the precomputed waypoint planner and explicit startup descent to the landmark home pose.
 - Changed the first move of the precomputed plan to be the only protected `up -> across -> down` travel; later inter-location moves remain direct.
@@ -23,6 +23,7 @@
 - Added total wall-clock timing output to the precompute script after the artifact is saved.
 - Simplified `examples/00_home.py` so it only homes the robot, sets the `(180, 0, 0)` end-effector orientation, and stops.
 - Added startup diagnostics to precompute and the precomputed runners so the saved lifted-start pose, landmark home pose, and startup transition indices are printed explicitly.
+- Separated landmark touch height from actuator probing height with a shared actuator-surface Z offset in experiment-config workflows.
 
 ## Implemented Decisions
 
@@ -38,7 +39,7 @@
   - runtime execution with a single startup bridge from the actual robot state to the assumed precomputed start state
 - Added a dedicated experiment-configuration folder with separate scripts for precompute and runtime execution.
 - Changed the experiment-config precompute start state to the landmark-based home pose with `robot.config.home_config`.
-- Centralized shared probe settings in `src/acoustic_sensing/scripts/experiment configuration/common.py`.
+- Centralized shared probe settings in `src/acoustic_sensing/scripts/experiment_configuration/common.py`.
 - Added an optional precompute mode that includes plunge/retract probe motion and saves a separate artifact.
 - Updated the waypoint-only runner so it can either:
   - execute a fully precomputed approach+probe artifact
@@ -52,6 +53,7 @@
   - optional transition to the next approach pose
 - Updated both precomputed runners so they explicitly execute the stored startup descent segment before beginning location 1.
 - Updated the no-RF waypoint runner so its background planner uses a planner-only CPU JAX path and execution waits until each location block is ready.
+- Updated experiment-config precompute and live runners so landmark touch uses the landmark home Z while actual actuator probing uses the actuator-surface Z offset.
 
 ## Final Structure
 
@@ -60,9 +62,9 @@
 - `src/acoustic_sensing/scripts/testing/waveguide_gripper_grid_generator.py`
 - `src/acoustic_sensing/scripts/testing/probing_waveguide_gripper_4rf_6769.py`
 - `examples/12_probe_sequence_180.py`
-- `src/acoustic_sensing/scripts/experiment configuration/precompute_probe_sequence_4rf_teensy_sync.py`
-- `src/acoustic_sensing/scripts/experiment configuration/run_precomputed_probe_sequence_4rf_teensy_sync.py`
-- `src/acoustic_sensing/scripts/experiment configuration/run_precomputed_waypoints_only.py`
-- `src/acoustic_sensing/scripts/experiment configuration/run_live_grid_probe_waypoints_only.py`
-- `src/acoustic_sensing/scripts/experiment configuration/common.py`
-- `src/acoustic_sensing/scripts/experiment configuration/README.md`
+- `src/acoustic_sensing/scripts/experiment_configuration/precompute_probe_sequence_4rf_teensy_sync.py`
+- `src/acoustic_sensing/scripts/experiment_configuration/run_precomputed_probe_sequence_4rf_teensy_sync.py`
+- `src/acoustic_sensing/scripts/experiment_configuration/run_precomputed_waypoints_only.py`
+- `src/acoustic_sensing/scripts/experiment_configuration/run_live_grid_probe_waypoints_only.py`
+- `src/acoustic_sensing/scripts/experiment_configuration/common.py`
+- `src/acoustic_sensing/scripts/experiment_configuration/README.md`

@@ -4,7 +4,7 @@ motion.max_angular_velocity: 0.50  # Maximum angular velocity for trajectory gen
 filter.target_pose: 1.0  # Smoothing for single-pose inputs using EMA (0.0: Max filtering, 1.0: No filtering)
 
 log.enabled: true
-log.robot_state: false  #  ee position, velocity, joint states, ...
-log.targets: false  # target pose
+log.robot_state: true  #  ee position, velocity, joint states, ...
+log.targets: true  # target pose
 log.timing: true
 

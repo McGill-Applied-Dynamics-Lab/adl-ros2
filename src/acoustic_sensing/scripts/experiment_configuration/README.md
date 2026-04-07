@@ -46,6 +46,7 @@ This folder contains the current self-contained 4RF waveguide probing workflow.
     - `PROBE_DEPTH`
     - `PROBE_STEP_SIZE`
     - `APPROACH_LIFT_HEIGHT`
+    - `ACTUATOR_SURFACE_Z_OFFSET`
     - durations
     - orientation
     - artifacts/results paths
@@ -63,6 +64,7 @@ This folder contains the current self-contained 4RF waveguide probing workflow.
 1. Populate `results/grids/landmarks.txt` in this folder.
 2. Run `waveguide_gripper_grid_generator.py`.
 3. Set `PROBE_DEPTH` / `PROBE_STEP_SIZE` in `common.py`.
+   - If the actuator surface sits below the landmark contact height, set `ACTUATOR_SURFACE_Z_OFFSET` in `common.py`.
 4. Run `precompute_probe_sequence_4rf_teensy_sync.py`.
    - The script saves `_new.pkl` artifacts for comparison with older artifacts.
    - The script prints the saved lifted startup pose, landmark home pose, startup descent distance, and startup transition indices.
@@ -83,6 +85,9 @@ This folder contains the current self-contained 4RF waveguide probing workflow.
 - The precompute script asks for `train/test`.
 - If you choose to precompute plunge/retract too, it asks for confirmation of the current `PROBE_DEPTH` and `PROBE_STEP_SIZE` from `common.py`.
 - Vertical motions use the finer `PROBE_STEP_SIZE` spacing, including probe plunge/retract and the startup lift/lower around the landmark home pose.
+- Landmark contact and actuator probing are separated:
+  - landmark touch uses `landmarks["z"] + Z_OFFSET`
+  - actuator probing uses `landmarks["z"] + Z_OFFSET + ACTUATOR_SURFACE_Z_OFFSET`
 - The precomputed runners expect regenerated `_new` artifacts if you want the explicit startup descent to the landmark home pose.
-- The experiment-config workflow no longer uses `src/acoustic_sensing/scripts/results`; it uses `src/acoustic_sensing/scripts/experiment configuration/results`.
+- The experiment-config workflow no longer uses `src/acoustic_sensing/scripts/results`; it uses `src/acoustic_sensing/scripts/experiment_configuration/results`.
 - Older exploratory scripts remain under `src/acoustic_sensing/scripts/testing`.

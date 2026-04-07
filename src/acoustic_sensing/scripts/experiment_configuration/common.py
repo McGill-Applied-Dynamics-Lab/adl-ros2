@@ -23,9 +23,10 @@ PROBE_STEP_SIZE = 0.0005
 STATE_SAMPLE_PERIOD = 0.01
 PROBE_TIMEOUT_MARGIN = 1.0
 PREPLAN_WORKERS = 12
-APPROACH_LIFT_HEIGHT = 0.010
+APPROACH_LIFT_HEIGHT = 0.015
 
-Z_OFFSET = 0.0250
+Z_OFFSET = 0.0
+ACTUATOR_SURFACE_Z_OFFSET = -0.002
 BASE_ORI = Rotation.from_euler("xyz", [180.0, 0.0, 0.0], degrees=True)
 
 APPROACH_DURATION = 4.0
@@ -59,6 +60,19 @@ def results_root() -> Path:
     return config_root() / "results"
 
 
+def resolve_landmark_file() -> Path:
+    root = results_root() / "grids"
+    preferred = root / "landmarks.txt"
+    fallback = root / "landmarks2.txt"
+    if preferred.exists():
+        return preferred
+    if fallback.exists():
+        return fallback
+    raise FileNotFoundError(
+        f"Landmark file not found. Expected one of: {preferred}, {fallback}"
+    )
+
+
 def print_progress(prefix: str, current: int, total: int) -> None:
     width = 30
     filled = int(width * current / max(total, 1))
@@ -83,14 +97,13 @@ def fetch_landmarks(landmark_file: Path, to_fetch: list[str]) -> dict[str, float
 
 def load_grid_and_landmarks(set_name: str) -> tuple[dict[str, float], np.ndarray, np.ndarray]:
     root = results_root()
-    landmark_file = root / "grids" / "landmarks.txt"
+    landmark_file = resolve_landmark_file()
     grid_file = root / "grids" / "grids.pkl"
 
-    if not landmark_file.exists():
-        raise FileNotFoundError(f"Landmark file not found: {landmark_file}")
     if not grid_file.exists():
         raise FileNotFoundError(f"Grid file not found: {grid_file}")
 
+    print(f"Using landmark file: {landmark_file}")
     landmarks = fetch_landmarks(landmark_file, ["x", "y", "z"])
     with open(grid_file, "rb") as f:
         grids = pickle.load(f)
@@ -100,6 +113,14 @@ def load_grid_and_landmarks(set_name: str) -> tuple[dict[str, float], np.ndarray
         np.asarray(grids["WORLD_FRAME"][set_name], dtype=float),
         np.asarray(grids["GRIPPER_FRAME"][set_name], dtype=float),
     )
+
+
+def get_landmark_home_z(landmarks: dict[str, float]) -> float:
+    return float(landmarks["z"]) + Z_OFFSET
+
+
+def get_probe_surface_z(landmarks: dict[str, float]) -> float:
+    return get_landmark_home_z(landmarks) + ACTUATOR_SURFACE_Z_OFFSET
 
 
 def generate_smooth_linear_waypoints(

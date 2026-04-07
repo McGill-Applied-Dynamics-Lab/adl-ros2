@@ -17,6 +17,7 @@ from common import (
     BRIDGE_JOINT_THRESHOLD,
     get_adaptive_waypoint_count,
     get_approach_indices,
+    get_landmark_home_z,
     get_return_home_indices,
     get_startup_transition_indices,
     PROBE_DEPTH,
@@ -61,7 +62,7 @@ def main() -> None:
         [
             payload["landmarks"]["x"],
             payload["landmarks"]["y"],
-            payload["landmarks"]["z"] + payload["z_offset"],
+            get_landmark_home_z(payload["landmarks"]),
         ],
         dtype=float,
     )

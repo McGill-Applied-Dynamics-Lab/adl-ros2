@@ -19,6 +19,8 @@ from common import (
     build_lifted_transition_waypoints,
     generate_smooth_linear_waypoints,
     get_adaptive_waypoint_count,
+    get_landmark_home_z,
+    get_probe_surface_z,
     load_grid_and_landmarks,
     plan_sequence_with_progress,
     PROBE_DEPTH,
@@ -179,7 +181,8 @@ def main() -> None:
             return
 
     landmarks, grid_xy_world, grid_xy_gripper = load_grid_and_landmarks(set_name)
-    z_surface = landmarks["z"] + Z_OFFSET
+    landmark_home_z = get_landmark_home_z(landmarks)
+    probe_surface_z = get_probe_surface_z(landmarks)
     stage += 1
     print_progress("Precompute stages", stage, total_stages)
 
@@ -188,15 +191,15 @@ def main() -> None:
         probe_geometries = precompute_probe_geometry(
             grid_xy_world,
             grid_xy_gripper,
-            z_surface,
+            probe_surface_z,
         )
         stage += 1
         print_progress("Precompute stages", stage, total_stages)
 
-        home_position = np.array([landmarks["x"], landmarks["y"], z_surface], dtype=float)
+        home_position = np.array([landmarks["x"], landmarks["y"], landmark_home_z], dtype=float)
         home_pose = Pose(home_position, BASE_ORI)
         startup_position = np.array(
-            [landmarks["x"], landmarks["y"], z_surface + APPROACH_LIFT_HEIGHT],
+            [landmarks["x"], landmarks["y"], landmark_home_z + APPROACH_LIFT_HEIGHT],
             dtype=float,
         )
         assumed_start_pose = Pose(startup_position, BASE_ORI)
@@ -283,6 +286,7 @@ def main() -> None:
         "set_name": set_name,
         "landmarks": landmarks,
         "z_offset": Z_OFFSET,
+        "actuator_surface_z_offset": get_probe_surface_z(landmarks) - get_landmark_home_z(landmarks),
         "includes_probe_motion": include_probe_motion,
         "probe_depths": PROBE_DEPTH if include_probe_motion else [],
         "assumed_start_pose": {
@@ -303,6 +307,7 @@ def main() -> None:
     print(f"Saved assumed_start_pose: {assumed_start_pose.position.tolist()}")
     print(f"Saved landmark_home_pose: {home_pose.position.tolist()}")
     print(f"Saved startup_transition_indices: {startup_transition_indices}")
+    print(f"Using actuator probe surface z: {probe_surface_z:.6f}")
     elapsed = time.perf_counter() - start_time
     print(f"Total precompute time: {elapsed:.2f} s ({elapsed / 60.0:.2f} min)")
 

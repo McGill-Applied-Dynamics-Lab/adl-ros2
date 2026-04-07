@@ -21,6 +21,8 @@ from common import (
     generate_smooth_linear_waypoints,
     get_adaptive_waypoint_count,
     get_approach_indices,
+    get_landmark_home_z,
+    get_probe_surface_z,
     get_return_home_indices,
     get_startup_transition_indices,
     load_grid_and_landmarks,
@@ -73,7 +75,7 @@ def _backfill_approach_pose_metadata(probe_steps: list[dict], payload: dict) -> 
         return probe_steps
 
     _, grid_xy_world, grid_xy_gripper = load_grid_and_landmarks(payload["set_name"])
-    z_surface = float(payload["landmarks"]["z"]) + float(payload["z_offset"])
+    z_surface = get_probe_surface_z(payload["landmarks"])
     probe_geometries = precompute_probe_geometry(
         grid_xy_world,
         grid_xy_gripper,
@@ -387,7 +389,7 @@ def main() -> None:
         [
             payload["landmarks"]["x"],
             payload["landmarks"]["y"],
-            payload["landmarks"]["z"] + payload["z_offset"],
+            get_landmark_home_z(payload["landmarks"]),
         ],
         dtype=float,
     )

@@ -56,12 +56,24 @@ def fetch_landmarks(landmark_file: str | Path, to_fetch: list[str]):
     return values
 
 
+def resolve_landmark_file(results_root: Path) -> Path:
+    preferred = results_root / "landmarks.txt"
+    fallback = results_root / "landmarks2.txt"
+    if preferred.exists():
+        return preferred
+    if fallback.exists():
+        return fallback
+    raise FileNotFoundError(
+        f"Landmark file not found. Expected one of: {preferred}, {fallback}"
+    )
+
+
 if __name__ == "__main__":
     project_root = Path(__file__).resolve().parent
     results_root = project_root / "results" / "grids"
     results_root.mkdir(parents=True, exist_ok=True)
 
-    landmark_file = results_root / "landmarks.txt"
+    landmark_file = resolve_landmark_file(results_root)
     gripper_width = 0.0320
     gripper_length = 0.1250
     x_shift = 0.0
