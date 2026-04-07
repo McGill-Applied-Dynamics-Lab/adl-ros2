@@ -6,7 +6,10 @@ import time
 import numpy as np
 
 from arm_client.robot import Pose, Robot
-from arm_client.planning.waypoints import generate_linear_waypoints, generate_spherical_waypoints
+from arm_client.planning.waypoints import (
+    generate_linear_waypoints,
+    generate_spherical_waypoints,
+)
 
 
 def main():

@@ -16,8 +16,7 @@
         "${workspaceFolder}/src/teleop",
         "${workspaceFolder}/src/adg_ros2_utils",
         "${workspaceFolder}/build_humble/**",
-        "${workspaceFolder}/install_humble/**"
-    ],
+        "${workspaceFolder}/install_humble/**",
         // "/opt/openrobots/lib/python3.10/site-packages",
         "/usr/local/lib/python3.10/site-packages"
     ],
@@ -155,5 +154,7 @@
         "**/build/**/*.py": true,
         "**/install/**/*.py": true
     },
-    "ROS2.distro": "humble"
+    "ROS2.distro": "humble",
+    "python-envs.defaultEnvManager": "ms-python.python:system",
+    "python-envs.pythonProjects": []
 }
