@@ -18,7 +18,7 @@ SETTLE_SEC = 2.0
 LINEAR_WAYPOINTS = 12
 LINEAR_STEP_SIZE = 0.01
 PROBE_WAYPOINTS = 21
-PROBE_DEPTH = [0.0020]
+PROBE_DEPTH = [0.0030]
 PROBE_STEP_SIZE = 0.0005
 STATE_SAMPLE_PERIOD = 0.01
 PROBE_TIMEOUT_MARGIN = 1.0
@@ -429,34 +429,29 @@ def deserialize_trajectory(data: dict) -> PlannedJointTrajectory:
     )
 
 
-def acquire_rf_burst(ser: serial.Serial) -> list:
+RF_BURST_TIMEOUT_SEC = 30.0
+
+
+def acquire_rf_burst(ser: serial.Serial, debug: bool = False) -> list:
     """Send 67, read frames until Teensy returns 69, then return collected frames."""
     frames: list = []
     current_channel = None
     current_samples: list[int] = []
     current_frame: dict[str, list[int]] = {}
+    saw_frame_data = False
+    line_buffer = bytearray()
 
-    ser.reset_input_buffer()
-    ser.write(CMD_START)
+    def handle_line(raw_line: bytes) -> None:
+        nonlocal current_channel, current_samples, current_frame, saw_frame_data
 
-    while True:
-        try:
-            raw = ser.readline()
-        except serial.SerialException as exc:
-            raise RuntimeError("Serial connection to Teensy failed during RF acquisition") from exc
-
-        if raw == b"":
-            continue
-
-        line = raw.decode("ascii", errors="ignore").strip()
-
-        # Firmware returns one byte 0x45 ('E', 69) after the fixed burst completes.
-        if raw == bytes([0x45]) or line == "E":
-            if len(current_frame) == len(CHANNEL_MARKERS):
-                frames.append([current_frame[m] for m in CHANNEL_MARKERS])
-            break
+        line = raw_line.decode("ascii", errors="ignore").strip()
+        if not line:
+            return
 
         if line in CHANNEL_MARKERS:
+            if debug and not saw_frame_data:
+                print(f"\t\tRF frame data started at marker {line}", flush=True)
+            saw_frame_data = True
             current_channel = line
             current_samples = []
         elif line == "T":
@@ -465,12 +460,71 @@ def acquire_rf_burst(ser: serial.Serial) -> list:
                 current_channel = None
                 if len(current_frame) == len(CHANNEL_MARKERS):
                     frames.append([current_frame[m] for m in CHANNEL_MARKERS])
+                    if debug:
+                        print(f"\t\tRF frame {len(frames)} complete", flush=True)
                     current_frame = {}
         else:
             try:
                 current_samples.append(int(line))
             except ValueError:
                 pass
+
+    def handle_chunk(chunk: bytes) -> None:
+        line_buffer.extend(chunk)
+        while True:
+            try:
+                newline_idx = line_buffer.index(ord("\n"))
+            except ValueError:
+                break
+            raw_line = bytes(line_buffer[:newline_idx])
+            del line_buffer[: newline_idx + 1]
+            handle_line(raw_line)
+
+    ser.reset_input_buffer()
+    if debug:
+        print("\t\tRF input buffer cleared; sending 67 / 0x43", flush=True)
+    ser.write(CMD_START)
+    ser.flush()
+    if debug:
+        print("\t\tRF start command sent; waiting for frames", flush=True)
+
+    original_timeout = ser.timeout
+    ser.timeout = 0.05
+    deadline = time.monotonic() + RF_BURST_TIMEOUT_SEC
+    try:
+        while True:
+            try:
+                raw = ser.read(min(max(ser.in_waiting, 1), 4096))
+            except serial.SerialException as exc:
+                raise RuntimeError("Serial connection to Teensy failed during RF acquisition") from exc
+
+            if raw == b"":
+                if time.monotonic() > deadline:
+                    raise RuntimeError(
+                        f"RF burst timed out after {RF_BURST_TIMEOUT_SEC:.0f} s - "
+                        "Teensy never sent end-of-burst signal."
+                    )
+                continue
+
+            if saw_frame_data:
+                finish_idx = raw.find(bytes([0x45]))
+                if finish_idx >= 0:
+                    handle_chunk(raw[:finish_idx])
+                    if len(current_frame) == len(CHANNEL_MARKERS):
+                        frames.append([current_frame[m] for m in CHANNEL_MARKERS])
+                        if debug:
+                            print(f"\t\tRF frame {len(frames)} complete", flush=True)
+                    if debug:
+                        print("\t\tRF received 69 / 0x45 finish byte", flush=True)
+                    break
+            else:
+                raw = raw.replace(bytes([0x45]), b"")
+                if raw == b"":
+                    continue
+
+            handle_chunk(raw)
+    finally:
+        ser.timeout = original_timeout
 
     return frames
 

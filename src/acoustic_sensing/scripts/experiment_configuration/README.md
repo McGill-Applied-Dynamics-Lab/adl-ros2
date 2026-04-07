@@ -40,6 +40,15 @@ This folder contains the current self-contained 4RF waveguide probing workflow.
   - Builds one continuous live sequence directly from the grid.
   - No precomputed artifact and no Teensy wait.
 
+- `run_grid_probe_no_preplan.py`
+  - Live grid probe runner with no full-sequence preplanning.
+  - Switches to `fr3_pose_controller` and refuses to continue if that controller is not active.
+  - Opens the Teensy serial port and calls `common.acquire_rf_burst()` at each probe depth.
+  - Captures robot end-effector pose/orientation/force samples during each plunge.
+  - Saves results incrementally after each successful location to `results/`.
+  - Prints per-burst RF debug progress plus a short SHA-256 fingerprint so repeated/stale RF data can be detected.
+  - Skips a location if the Teensy burst times out instead of blocking the entire run.
+
 - `common.py`
   - Shared geometry/planning utilities and shared settings.
   - Source of truth for:
@@ -50,10 +59,18 @@ This folder contains the current self-contained 4RF waveguide probing workflow.
     - durations
     - orientation
     - artifacts/results paths
+  - Implements the fixed-burst Teensy reader:
+    - clears stale serial input
+    - sends `67` / `0x43`
+    - parses newline-delimited `S0` to `S3` RF frames
+    - treats a raw `69` / `0x45` byte received after frame data starts as end-of-burst
+    - ignores stale repeated `69` bytes before frame data starts
 
 - `waveguide_gripper_grid_generator.py`
   - Local grid generator for this workflow only.
   - Reads/writes `results/grids/` inside this folder.
+  - Stores reproducibility metadata in `grids.pkl` under `_metadata`.
+  - Prints and stores `_metadata["sha256"]` and `_metadata["sha256_short"]` for the generated grid and grid parameters.
 
 ## Workflow
 
@@ -70,8 +87,63 @@ This folder contains the current self-contained 4RF waveguide probing workflow.
    - The script prints the saved lifted startup pose, landmark home pose, startup descent distance, and startup transition indices.
 5. Choose one runner:
    - `run_precomputed_probe_sequence_4rf_teensy_sync.py` for Teensy-synced probing
+   - `run_grid_probe_no_preplan.py` for live pose-controller probing with RF capture and no full-sequence preplanning
    - `run_precomputed_waypoints_only.py` for no-RF testing
    - `run_live_grid_probe_waypoints_only.py` for full live planning
+
+## Teensy Fixed-Burst Handshake
+
+The current fixed-burst experiment path expects the Teensy sketch `10RC_finish.ino`.
+
+- Host sends `67` / `0x43` / `'C'` to start one RF burst.
+- Teensy streams 10 frames.
+- Each frame contains `S0`, `S1`, `S2`, and `S3` channel blocks terminated by `T`.
+- Teensy sends raw `69` / `0x45` / `'E'` after the 10th frame.
+- Teensy continues sending `69` while waiting for the next `67`.
+- `common.acquire_rf_burst()` detects the raw byte directly, so `69` does not need a newline.
+
+To verify the firmware without moving the robot:
+
+```bash
+python3 src/acoustic_sensing/teensy_firmware/debug_teensy_serial.py --burst-test
+```
+
+Expected output includes:
+
+```text
+TX dec=67 hex=0x43 ascii='C'
+RX frame data started
+RX received end byte 69 / 0x45 / 'E'
+```
+
+To inspect continuous live RF frames without moving the robot:
+
+```bash
+python3 src/acoustic_sensing/teensy_firmware/live_plot_teensy_qt.py
+```
+
+The plotter sends `TEST`, parses the same `S0` to `S3` frame format, and sends `TESTEND` when the window closes.
+
+To stop test mode manually, send ASCII `TESTEND` over serial:
+
+```python
+ser.write(b"TESTEND")
+ser.flush()
+```
+
+## Debugging And Reproducibility
+
+- Use the per-burst SHA line from `run_grid_probe_no_preplan.py` to check whether RF data is changing:
+  - Different SHA values mean the returned RF data is not exactly identical.
+  - Repeated SHA values across different locations are a strong signal to inspect Teensy triggering, sensor conditions, or parser state.
+- Use the grid SHA from `waveguide_gripper_grid_generator.py` to confirm that a `grids.pkl` file came from the expected landmarks and grid parameters.
+- The debug serial tool can also show raw idle `69` traffic:
+
+```bash
+python3 src/acoustic_sensing/teensy_firmware/debug_teensy_serial.py
+```
+
+If the Teensy is between bursts, repeated lines like `dec=[69] hex=[45] ascii='E'` indicate that it is waiting for the next `67`.
 
 ## Artifacts
 
@@ -79,6 +151,11 @@ This folder contains the current self-contained 4RF waveguide probing workflow.
   - `artifacts/precomputed_<SET>_4RF_joint_sequence_new.pkl`
 - Approach+probe precompute:
   - `artifacts/precomputed_<SET>_4RF_joint_sequence_with_probe_new.pkl`
+- Live no-preplan RF results:
+  - `results/<N>_grid_<SET>_RF_<NN>.pkl`
+- Generated grid file:
+  - `results/grids/grids.pkl`
+  - Contains `GRIPPER_FRAME`, `WORLD_FRAME`, and `_metadata` with `sha256` fields.
 
 ## Notes
 

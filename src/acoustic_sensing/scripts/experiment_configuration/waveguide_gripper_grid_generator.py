@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+import hashlib
+import json
 import pickle
 from pathlib import Path
 
@@ -68,6 +70,26 @@ def resolve_landmark_file(results_root: Path) -> Path:
     )
 
 
+def grid_sha256(payload: dict) -> str:
+    digest = hashlib.sha256()
+
+    for section in ["GRIPPER_FRAME", "WORLD_FRAME"]:
+        digest.update(section.encode("utf-8"))
+        for split in ["train", "test"]:
+            arr = np.asarray(payload[section][split], dtype=np.float64)
+            digest.update(split.encode("utf-8"))
+            digest.update(str(arr.shape).encode("ascii"))
+            digest.update(arr.tobytes())
+
+    metadata = {
+        key: value
+        for key, value in payload.get("_metadata", {}).items()
+        if key not in ["sha256", "sha256_short"]
+    }
+    digest.update(json.dumps(metadata, sort_keys=True).encode("utf-8"))
+    return digest.hexdigest()
+
+
 if __name__ == "__main__":
     project_root = Path(__file__).resolve().parent
     results_root = project_root / "results" / "grids"
@@ -119,12 +141,30 @@ if __name__ == "__main__":
     test_world[:, 1] += landmarks["y"]
 
     grids["WORLD_FRAME"] = {"train": train_world, "test": test_world}
+    grids["_metadata"] = {
+        "landmark_file": str(landmark_file),
+        "landmarks": landmarks,
+        "gripper_width": gripper_width,
+        "gripper_length": gripper_length,
+        "x_shift": x_shift,
+        "y_shift": y_shift,
+        "first_point_xy": first_point_xy.tolist(),
+        "x_column_spacing": x_column_spacing,
+        "y_point_spacing": y_point_spacing,
+        "num_columns": num_columns,
+        "dl": dl,
+        "nx": nx,
+        "ny": ny,
+    }
+    grids["_metadata"]["sha256"] = grid_sha256(grids)
+    grids["_metadata"]["sha256_short"] = grids["_metadata"]["sha256"][:16]
 
     grid_file = results_root / "grids.pkl"
     with open(grid_file, "wb") as f:
         pickle.dump(grids, f)
 
     print(f"Grid saved to: {grid_file}")
+    print(f"Grid SHA-256: {grids['_metadata']['sha256']}")
     plt.title(f"Train points: {len(train_world)}, Test points: {len(test)}")
     plt.scatter(-train_world[:, 0], -train_world[:, 1], color="b", label="Train (World Frame)")
     plt.scatter(-test_world[:, 0], -test_world[:, 1], color="g", label="Test (World Frame)")

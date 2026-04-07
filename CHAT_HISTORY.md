@@ -2,6 +2,15 @@
 
 ## Global Changes
 
+- Updated the fixed-burst Teensy acquisition workflow so `10RC_finish.ino` starts a 10-frame RF burst on host byte `67`, then sends and repeats finish byte `69` after the burst while waiting for the next `67`.
+- Added `src/acoustic_sensing/teensy_firmware/debug_teensy_serial.py` to inspect raw Teensy serial bytes and run a `--burst-test` handshake check.
+- Reworked `common.acquire_rf_burst()` in the experiment-configuration workflow to read raw byte chunks, ignore stale pre-frame `69` bytes, parse `S0` to `S3` frame text, and end a burst when raw `69` is received after frame data starts.
+- Added RF acquisition debug prints and short per-burst SHA-256 fingerprints to `run_grid_probe_no_preplan.py` to detect repeated or stale RF data.
+- Added grid reproducibility metadata and SHA-256 fields to `waveguide_gripper_grid_generator.py` output under `grids.pkl["_metadata"]`.
+- Updated experiment-configuration and Teensy firmware READMEs to document the fixed-burst handshake, debug workflow, RF SHA checks, and grid SHA metadata.
+- Added a `TEST` / `TESTEND` mode to `10RC_finish.ino` for continuous RF frame streaming without changing the normal `67` fixed-burst / `69` finish behavior.
+- Added `src/acoustic_sensing/teensy_firmware/live_plot_teensy_qt.py`, a Qt/pyqtgraph live plotter that sends `TEST`, plots `S0` to `S3` frames, and sends `TESTEND` on close.
+- Documented that test mode can be stopped by closing the Qt plotter or manually sending ASCII `TESTEND` over serial.
 - Updated the Teensy firmware documentation to match the active firmware pin mapping and current file layout.
 - Corrected the 4RF Teensy firmware pin definitions and kept the README aligned with the active `.ino` source.
 - Updated the waveguide gripper probing work for the 180-degree end-effector orientation.
@@ -27,6 +36,11 @@
 
 ## Implemented Decisions
 
+- Fixed-burst RF acquisition now uses the protocol: host sends `67`; Teensy streams 10 RF frames; Teensy waits briefly, sends `69`, and continues sending `69` until the next `67`.
+- Host-side RF parsing treats raw `69` as the end marker only after frame data starts, so idle repeated `69` bytes do not terminate a new acquisition before it begins.
+- `run_grid_probe_no_preplan.py` records live pose-controller probe data without full-sequence preplanning and logs RF frame counts plus SHA summaries for each burst.
+- `waveguide_gripper_grid_generator.py` stores a deterministic grid SHA to make generated grid files traceable to their landmarks and generator parameters.
+- Firmware test mode is explicitly separate from experiment acquisition: `TEST` starts continuous plotting/debug streaming, `TESTEND` stops it, and normal acquisition continues to use `67` and `69`.
 - Updated the 4RF probing work to use a 180-degree end-effector orientation.
 - Kept the world-frame probing direction as vertical up/down motion.
 - Adjusted the waveguide grid generation to reflect the current physical orientation updates during iteration.
@@ -58,6 +72,8 @@
 ## Final Structure
 
 - `src/acoustic_sensing/teensy_firmware/README.md`
+- `src/acoustic_sensing/teensy_firmware/debug_teensy_serial.py`
+- `src/acoustic_sensing/teensy_firmware/live_plot_teensy_qt.py`
 - `src/acoustic_sensing/teensy_firmware/10RC_finish/10RC_finish.ino`
 - `src/acoustic_sensing/scripts/testing/waveguide_gripper_grid_generator.py`
 - `src/acoustic_sensing/scripts/testing/probing_waveguide_gripper_4rf_6769.py`
@@ -66,5 +82,7 @@
 - `src/acoustic_sensing/scripts/experiment_configuration/run_precomputed_probe_sequence_4rf_teensy_sync.py`
 - `src/acoustic_sensing/scripts/experiment_configuration/run_precomputed_waypoints_only.py`
 - `src/acoustic_sensing/scripts/experiment_configuration/run_live_grid_probe_waypoints_only.py`
+- `src/acoustic_sensing/scripts/experiment_configuration/run_grid_probe_no_preplan.py`
+- `src/acoustic_sensing/scripts/experiment_configuration/waveguide_gripper_grid_generator.py`
 - `src/acoustic_sensing/scripts/experiment_configuration/common.py`
 - `src/acoustic_sensing/scripts/experiment_configuration/README.md`

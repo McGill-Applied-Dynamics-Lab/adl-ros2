@@ -109,6 +109,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/noarch/pluggy-1.6.0-pyhf9edf01_1.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/pygments-2.20.0-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/pyparsing-3.3.2-pyhcf101f3_0.conda
+      - conda: https://conda.anaconda.org/conda-forge/noarch/pyqtgraph-0.14.0-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/pyserial-3.5-pyhcf101f3_2.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/pytest-9.0.2-pyhcf101f3_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/pytest-cov-7.1.0-pyhcf101f3_0.conda
@@ -564,6 +565,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/linux-64/pyqt-5.15.11-py312h82c0db2_2.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/pyqt-builder-1.18.2-pyhd8ed1ab_1.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/pyqt5-sip-12.17.0-py312h1289d80_2.conda
+      - conda: https://conda.anaconda.org/conda-forge/noarch/pyqtgraph-0.14.0-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/pyserial-3.5-pyhcf101f3_2.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/pytest-9.0.2-pyhcf101f3_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/pytest-cov-7.1.0-pyhcf101f3_0.conda
@@ -7111,6 +7113,22 @@ packages:
   - pkg:pypi/pyqt5-sip?source=hash-mapping
   size: 85800
   timestamp: 1759495565076
+- conda: https://conda.anaconda.org/conda-forge/noarch/pyqtgraph-0.14.0-pyhd8ed1ab_0.conda
+  sha256: f1bc737d8c525a6aeaa687fd4e6ab9d07871be089ec1824349c9dd598e0420ea
+  md5: 1a9d422262ef2e0928a90dde1da5b33a
+  depends:
+  - colorama
+  - numpy >=1.25
+  - python >=3.10
+  constrains:
+  - pyqt >=5.15
+  - pyside2 >=5.15
+  license: MIT
+  license_family: MIT
+  purls:
+  - pkg:pypi/pyqtgraph?source=hash-mapping
+  size: 1436545
+  timestamp: 1763549841016
 - pypi: git+https://github.com/chungmin99/pyroki.git#59aa21ffc766533c66d22ff38dd6717e176f19c8
   name: pyroki
   version: 0.0.0

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import hashlib
 import time
 import threading
 import numpy as np
@@ -32,6 +33,24 @@ CHANNEL_MARKERS = ("S0", "S1", "S2", "S3")
 
 
 # ── RF helper functions ──────────────────────────────────────────────────────
+
+def _rf_burst_summary(rf_frames: list) -> str:
+    digest = hashlib.sha256()
+    frame_shapes = []
+    for frame in rf_frames:
+        frame_shapes.append(tuple(len(channel) for channel in frame))
+        for channel in frame:
+            for sample in channel:
+                digest.update(str(sample).encode("ascii"))
+                digest.update(b",")
+            digest.update(b"|")
+        digest.update(b";")
+    shape_text = ", ".join(str(s) for s in frame_shapes[:3])
+    if len(frame_shapes) > 3:
+        shape_text += ", ..."
+    return f"sha256={digest.hexdigest()[:16]} frame_shapes=[{shape_text}]"
+
+
 
 def read_line_or_raise(ser: serial.Serial) -> str:
     raw = ser.readline()
@@ -264,6 +283,7 @@ def main():
             # RF: send 'E' (0x45), wait for reader thread to finish
             rf_stream_stop(ser, stop_event, rf_thread)
             print(f"\tRF stream stopped — {len(rf_frames)} frames collected.")
+            print(f"\tRF burst summary: {_rf_burst_summary(rf_frames)}")
 
             ee_positions = [pose.position for pose in ee_poses]
             ee_orientations = [pose.orientation.as_quat() for pose in ee_poses]
