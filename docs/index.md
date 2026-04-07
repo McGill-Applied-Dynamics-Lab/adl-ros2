@@ -10,7 +10,7 @@ particularly focusing on controlling the Franka Research 3.
 
 ## Franka Controller
 Main packages to control and develop with the Franka. 
-The controller is dividied in two:
+The controller is divided in two:
 
 1. **[Franka Server](franka-server/index.md)**: Low level interface with the arm. Runs on the mini-pc
 2. **[Franka Client](franka-client/index.md)**: Higher level interface. Runs on the user's workstation. 
