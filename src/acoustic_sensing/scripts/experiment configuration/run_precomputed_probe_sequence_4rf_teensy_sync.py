@@ -56,6 +56,15 @@ def main() -> None:
         if len(planned_segments) > 0
         else assumed_start_joint_config
     )
+    saved_start_pose = np.asarray(payload["assumed_start_pose"]["position"], dtype=float)
+    saved_landmark_home_pose = np.array(
+        [
+            payload["landmarks"]["x"],
+            payload["landmarks"]["y"],
+            payload["landmarks"]["z"] + payload["z_offset"],
+        ],
+        dtype=float,
+    )
 
     exp_dict = {
         "ts": [],
@@ -95,6 +104,10 @@ def main() -> None:
             time.sleep(SETTLE_SEC)
         else:
             print("Startup joint move skipped; already close to precomputed sequence start.")
+
+        print(f"Saved startup pose: {saved_start_pose.tolist()}")
+        print(f"Saved landmark home pose: {saved_landmark_home_pose.tolist()}")
+        print(f"Startup transition indices: {startup_transition_indices}")
 
         input("Press Enter to start probing...")
         if startup_transition_indices:

@@ -2,11 +2,10 @@
 
 import time
 
-import numpy as np
-from scipy.spatial.transform import Rotation, Slerp
+from scipy.spatial.transform import Rotation
 
 from arm_client import CONFIG_DIR
-from arm_client.robot import Pose, Robot, Twist
+from arm_client.robot import Pose, Robot
 
 
 robot = Robot(namespace="fr3")
@@ -28,31 +27,8 @@ target_orientation = Rotation.from_euler("xyz", [180.0, 0.0, 0.0], degrees=True)
 target_pose = Pose(position=current_pose.position, orientation=target_orientation)
 
 print("Moving to target orientation (roll, pitch, yaw) = (180, 0, 0) deg...")
-duration = 2.0
-n_points = 21
-waypoints = []
-time_from_start = []
-
-slerp = Slerp(
-    [0.0, duration],
-    Rotation.from_quat(
-        [current_pose.orientation.as_quat(), target_pose.orientation.as_quat()]
-    ),
-)
-
-for t in np.linspace(0.0, duration, n_points):
-    waypoint_pose = Pose(
-        position=current_pose.position.copy(),
-        orientation=slerp([t])[0],
-    )
-    waypoint_twist = Twist(np.zeros(3), np.zeros(3))
-    waypoints.append((waypoint_pose, waypoint_twist))
-    time_from_start.append(float(t))
-
-robot.execute_trajectory(waypoints, time_from_start)
-while robot.wait_for_trajectory_completion(duration, timeout_margin=1.0):
-    time.sleep(0.01)
-
+robot.move_to(pose=target_pose, time_to_move=2.0)
+time.sleep(0.1)
 
 print("Done")
 robot.shutdown()

@@ -18,6 +18,11 @@
 - Changed the first move of the precomputed plan to be the only protected `up -> across -> down` travel; later inter-location moves remain direct.
 - Tightened vertical waypoint spacing for probe up/down and startup lift/lower to `0.5 mm` step size.
 - Switched the non-Teensy waypoint runner back to background probe planning using a planner-only IK path instead of a second ROS `Robot` publisher.
+- Added explicit execution of the saved startup descent in the precomputed runners so the tool touches the landmark home pose before location 1.
+- Forced the background probe planner to use the CPU JAX path to avoid concurrent GPU/cuSolver failures.
+- Added total wall-clock timing output to the precompute script after the artifact is saved.
+- Simplified `examples/00_home.py` so it only homes the robot, sets the `(180, 0, 0)` end-effector orientation, and stops.
+- Added startup diagnostics to precompute and the precomputed runners so the saved lifted-start pose, landmark home pose, and startup transition indices are printed explicitly.
 
 ## Implemented Decisions
 
@@ -45,6 +50,8 @@
   - precomputed approach segment(s), if needed
   - live-planned plunge/retract
   - optional transition to the next approach pose
+- Updated both precomputed runners so they explicitly execute the stored startup descent segment before beginning location 1.
+- Updated the no-RF waypoint runner so its background planner uses a planner-only CPU JAX path and execution waits until each location block is ready.
 
 ## Final Structure
 

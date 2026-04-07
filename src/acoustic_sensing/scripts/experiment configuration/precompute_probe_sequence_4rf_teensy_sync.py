@@ -234,6 +234,17 @@ def main() -> None:
             initial_descent_waypoint_count,
         )
         startup_transition_indices = [0]
+        startup_descent_distance = float(np.linalg.norm(home_pose.position - assumed_start_pose.position))
+        if startup_descent_distance <= 1e-9:
+            raise ValueError(
+                "Startup descent is zero-length. "
+                "The assumed lifted startup pose is identical to the landmark home pose."
+            )
+        print(
+            "Startup descent to landmark home pose: "
+            f"{startup_descent_distance * 1000.0:.2f} mm "
+            f"(from {assumed_start_pose.position.tolist()} to {home_pose.position.tolist()})"
+        )
         waypoints_list.insert(0, initial_descent_waypoints)
         durations.insert(0, APPROACH_DURATION)
         for probe_step in probe_steps:
@@ -289,6 +300,9 @@ def main() -> None:
         pickle.dump(payload, f)
 
     print(f"Saved precomputed sequence to: {output_path}")
+    print(f"Saved assumed_start_pose: {assumed_start_pose.position.tolist()}")
+    print(f"Saved landmark_home_pose: {home_pose.position.tolist()}")
+    print(f"Saved startup_transition_indices: {startup_transition_indices}")
     elapsed = time.perf_counter() - start_time
     print(f"Total precompute time: {elapsed:.2f} s ({elapsed / 60.0:.2f} min)")
 
