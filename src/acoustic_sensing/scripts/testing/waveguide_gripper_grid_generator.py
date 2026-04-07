@@ -99,11 +99,11 @@ if __name__ == "__main__":
 
     # Plot grids
     plt.title(f"Train points: {len(train)}, Test points: {len(test)}")
-    plt.scatter(train[:, 0], train[:, 1], color="b", label="Train (World Frame)")
-    plt.scatter(test[:, 0], test[:, 1], color="g", label="Test (World Frame)")
-    plt.scatter(landmarks["x"], landmarks["y"], marker="x", color="r", s=100, label="Landmark")
+    plt.scatter(-train[:, 0], -train[:, 1], color="b", label="Train (World Frame)")
+    plt.scatter(-test[:, 0], -test[:, 1], color="g", label="Test (World Frame)")
+    plt.scatter(-landmarks["x"], -landmarks["y"], marker="x", color="r", s=100, label="Landmark")
     plt.axis("equal")
-    plt.xlabel("X (m)")
-    plt.ylabel("Y (m)")
+    plt.xlabel("-X (m)")
+    plt.ylabel("-Y (m)")
     plt.legend()
     plt.show()

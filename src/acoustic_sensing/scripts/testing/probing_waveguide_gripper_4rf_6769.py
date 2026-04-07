@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """180-degree waveguide probing with full 4RF capture using planned joint trajectories.
 
-This mirrors the behavior of `src/acoustic_sensing/scripts/probing_waveguide_gripper_4rf_6769.py`,
+This mirrors the behavior of `src/acoustic_sensing/scripts/testing/probing_waveguide_gripper_4rf_6769.py`,
 but it avoids `fr3_pose_controller`. All robot motion is planned ahead in joint space and
 executed through `joint_trajectory_controller`.
 """
@@ -37,7 +37,6 @@ APPROACH_DURATION = 4.0
 PLUNGE_DURATION = 2.0
 RETRACT_DURATION = 2.0
 RETURN_HOME_DURATION = 4.0
-PROBE_CYCLE_DURATION = PLUNGE_DURATION + RETRACT_DURATION
 
 SERIAL_PORT = "/dev/ttyACM0"
 BAUD_RATE = 3000000
@@ -157,62 +156,6 @@ def generate_smooth_linear_waypoints(
     return waypoints
 
 
-def generate_probe_cycle_waypoints(
-    approach_pose: Pose,
-    depth: float,
-    num_waypoints: int,
-) -> list[CartesianWaypoint]:
-    """Generate one continuous down-and-up probe motion with a smooth turnaround."""
-    if num_waypoints < 3:
-        raise ValueError("num_waypoints must be >= 3")
-
-    waypoints: list[CartesianWaypoint] = []
-    base_position = np.array(approach_pose.position, dtype=float)
-    orientation = approach_pose.orientation
-
-    for i in range(num_waypoints):
-        s = i / (num_waypoints - 1)
-        alpha = 0.5 - 0.5 * np.cos(2.0 * np.pi * s)
-        position = base_position.copy()
-        position[2] = base_position[2] - depth * alpha
-        waypoints.append(
-            CartesianWaypoint(
-                position=position,
-                orientation=orientation,
-                s=float(s),
-            )
-        )
-
-    return waypoints
-
-
-def merge_trajectories(trajectories: list[PlannedJointTrajectory]) -> PlannedJointTrajectory:
-    """Concatenate planned joint trajectories into one continuous trajectory."""
-    if len(trajectories) == 0:
-        raise ValueError("At least one trajectory is required")
-
-    joint_names = trajectories[0].joint_names
-    all_times: list[float] = []
-    all_positions: list[np.ndarray] = []
-    time_offset = 0.0
-
-    for i, trajectory in enumerate(trajectories):
-        if trajectory.joint_names != joint_names:
-            raise ValueError("All trajectories must use the same joint names")
-        for j, (t, q) in enumerate(zip(trajectory.time_from_start, trajectory.joint_positions)):
-            if i > 0 and j == 0:
-                continue
-            all_times.append(float(t) + time_offset)
-            all_positions.append(np.array(q, dtype=float))
-        time_offset += float(trajectory.time_from_start[-1])
-
-    return PlannedJointTrajectory(
-        joint_names=joint_names,
-        time_from_start=all_times,
-        joint_positions=np.array(all_positions, dtype=float),
-    )
-
-
 def plan_linear_trajectory(
     robot: Robot,
     start_pose: Pose,
@@ -229,24 +172,36 @@ def plan_linear_trajectory(
     )
 
 
-def execute_trajectory_and_record(
+def execute_sequence_and_record(
     robot: Robot,
-    trajectory: PlannedJointTrajectory,
+    trajectories: list[PlannedJointTrajectory],
     timeout_margin: float,
 ) -> tuple[list[float], list[Pose], list[dict]]:
-    """Execute a joint trajectory non-blocking while sampling robot state."""
-    if len(trajectory.time_from_start) == 0:
-        raise ValueError("Trajectory is empty")
+    """Execute a trajectory sequence while sampling robot state."""
+    if len(trajectories) == 0:
+        raise ValueError("Trajectory sequence is empty")
 
     ts: list[float] = []
     ee_poses: list[Pose] = []
     ee_forces: list[dict] = []
+    error: list[Exception] = []
 
-    robot.follow_joint_trajectory(trajectory, blocking=False)
+    def _runner():
+        try:
+            robot.execute_sequence(
+                trajectories,
+                visualize_before_execution=False,
+                settle_time_between_trajectories=0.0,
+            )
+        except Exception as exc:
+            error.append(exc)
+
+    worker = threading.Thread(target=_runner, daemon=True)
+    worker.start()
 
     start_time = time.perf_counter()
-    timeout = float(trajectory.time_from_start[-1]) + timeout_margin
-    while True:
+    timeout = sum(float(traj.time_from_start[-1]) for traj in trajectories) + timeout_margin
+    while worker.is_alive():
         elapsed = time.perf_counter() - start_time
         if elapsed > timeout:
             break
@@ -255,6 +210,10 @@ def execute_trajectory_and_record(
         ee_forces.append(robot.end_effector_wrench.copy())
         ts.append(elapsed)
         time.sleep(STATE_SAMPLE_PERIOD)
+
+    worker.join(timeout=0.1)
+    if error:
+        raise error[0]
 
     return ts, ee_poses, ee_forces
 
@@ -266,15 +225,32 @@ def _build_probe_geometry(
 ) -> dict:
     approach_position = np.array([world_xy[0], world_xy[1], z_surface], dtype=float)
     approach_pose = Pose(approach_position, BASE_ORI)
-    probe_waypoints = generate_probe_cycle_waypoints(
+    plunge_pose = Pose(
+        np.array(
+            [
+                approach_position[0],
+                approach_position[1],
+                approach_position[2] - (Z_OFFSET + PROBE_DEPTH),
+            ],
+            dtype=float,
+        ),
+        BASE_ORI,
+    )
+    plunge_waypoints = generate_smooth_linear_waypoints(
         approach_pose,
-        Z_OFFSET + PROBE_DEPTH,
+        plunge_pose,
+        PROBE_WAYPOINTS,
+    )
+    retract_waypoints = generate_smooth_linear_waypoints(
+        plunge_pose,
+        approach_pose,
         PROBE_WAYPOINTS,
     )
     return {
         "gripper_xy": np.array(gripper_xy, dtype=float),
         "approach_pose": approach_pose,
-        "probe_waypoints": probe_waypoints,
+        "plunge_waypoints": plunge_waypoints,
+        "retract_waypoints": retract_waypoints,
     }
 
 
@@ -301,49 +277,78 @@ def precompute_probe_geometry(
     return [result for result in results if result is not None]
 
 
-def plan_probe_trajectories(
-    robot: Robot,
+def build_sequence_waypoints(
     probe_geometries: list[dict],
     start_pose: Pose,
-) -> tuple[list[dict], PlannedJointTrajectory]:
-    """Plan all per-probe trajectories from the measured startup pose."""
-    cached_plans: list[dict] = []
+) -> tuple[list[list[CartesianWaypoint]], list[float], list[dict], list[CartesianWaypoint]]:
+    """Build the full chained waypoint sequence for the whole run."""
+    waypoints_list: list[list[CartesianWaypoint]] = []
+    durations: list[float] = []
+    probe_steps: list[dict] = []
     nominal_pose = start_pose.copy()
-    total = len(probe_geometries)
 
-    for i, geometry in enumerate(probe_geometries):
-        approach_traj = plan_linear_trajectory(
-            robot,
+    for geometry in probe_geometries:
+        approach_waypoints = generate_smooth_linear_waypoints(
             nominal_pose,
             geometry["approach_pose"],
-            APPROACH_DURATION,
             LINEAR_WAYPOINTS,
         )
-        probe_traj = robot.plan_joint_trajectory(
-            waypoints=geometry["probe_waypoints"],
-            duration=PROBE_CYCLE_DURATION,
-            visualize=False,
-            show_progress=False,
-        )
+        approach_idx = len(waypoints_list)
+        plunge_idx = approach_idx + 1
+        retract_idx = approach_idx + 2
 
-        cached_plans.append(
+        waypoints_list.extend(
+            [
+                approach_waypoints,
+                geometry["plunge_waypoints"],
+                geometry["retract_waypoints"],
+            ]
+        )
+        durations.extend([APPROACH_DURATION, PLUNGE_DURATION, RETRACT_DURATION])
+        probe_steps.append(
             {
                 "gripper_xy": geometry["gripper_xy"],
-                "approach_traj": approach_traj,
-                "probe_traj": probe_traj,
+                "approach_idx": approach_idx,
+                "plunge_idx": plunge_idx,
+                "retract_idx": retract_idx,
             }
         )
         nominal_pose = geometry["approach_pose"]
-        print_progress("Trajectory planning", i + 1, total)
 
-    return_home_traj = plan_linear_trajectory(
-        robot,
+    return_home_waypoints = generate_smooth_linear_waypoints(
         nominal_pose,
         start_pose,
-        RETURN_HOME_DURATION,
         LINEAR_WAYPOINTS,
     )
-    return cached_plans, return_home_traj
+    return waypoints_list, durations, probe_steps, return_home_waypoints
+
+
+def plan_sequence_with_progress(
+    robot: Robot,
+    waypoints_list: list[list[CartesianWaypoint]],
+    durations: list[float],
+) -> list[PlannedJointTrajectory]:
+    """Plan a chained sequence segment-by-segment with live progress updates."""
+    if len(waypoints_list) != len(durations):
+        raise ValueError("waypoints_list and durations must have the same length")
+
+    planned_segments: list[PlannedJointTrajectory] = []
+    seed = robot.q
+    total = len(waypoints_list)
+
+    for i, (waypoints, duration) in enumerate(zip(waypoints_list, durations)):
+        traj = robot.plan_joint_trajectory(
+            waypoints=waypoints,
+            duration=duration,
+            visualize=False,
+            show_progress=False,
+            initial_joint_config=seed,
+        )
+        planned_segments.append(traj)
+        seed = traj.joint_positions[-1]
+        print_progress("Trajectory planning", i + 1, total)
+
+    return planned_segments
 
 
 def main() -> None:
@@ -408,31 +413,47 @@ def main() -> None:
             z_surface,
         )
 
-        print(f"Planning {len(grid_xy_world)} probe trajectories from startup pose...")
-        cached_plans, return_home_traj = plan_probe_trajectories(
-            robot,
+        print("Building full waypoint sequence...")
+        waypoints_list, durations, probe_steps, return_home_waypoints = build_sequence_waypoints(
             probe_geometries,
             start_pose,
         )
+        waypoints_list.append(return_home_waypoints)
+        durations.append(RETURN_HOME_DURATION)
+
+        print(f"Planning full sequence with {len(waypoints_list)} segments...")
+        planned_segments = plan_sequence_with_progress(
+            robot,
+            waypoints_list,
+            durations,
+        )
+
+        return_home_traj = planned_segments[-1]
 
         input("Press Enter to start probing...")
-        for i, plan in enumerate(cached_plans):
-            print(f"\nProbe {i + 1}/{len(cached_plans)}")
+        for i, probe_step in enumerate(probe_steps):
+            print(f"\nProbe {i + 1}/{len(probe_steps)}")
             exp_dict["grid_positions"].append(
-                [float(plan["gripper_xy"][0]), float(plan["gripper_xy"][1])]
+                [float(probe_step["gripper_xy"][0]), float(probe_step["gripper_xy"][1])]
             )
 
             print("\tExecuting move to approach pose...")
-            robot.follow_joint_trajectory(plan["approach_traj"], blocking=True)
-            time.sleep(SETTLE_SEC)
+            robot.execute_sequence(
+                [planned_segments[probe_step["approach_idx"]]],
+                visualize_before_execution=False,
+                settle_time_between_trajectories=0.0,
+            )
 
             print("\tStarting RF stream...")
             rf_frames, stop_event, rf_thread = rf_stream_start(ser)
 
-            print("\tExecuting planned probe trajectory...")
-            ts, ee_poses, ee_forces = execute_trajectory_and_record(
+            print("\tExecuting planned probe sequence...")
+            ts, ee_poses, ee_forces = execute_sequence_and_record(
                 robot,
-                plan["probe_traj"],
+                [
+                    planned_segments[probe_step["plunge_idx"]],
+                    planned_segments[probe_step["retract_idx"]],
+                ],
                 timeout_margin=PROBE_TIMEOUT_MARGIN,
             )
 
@@ -454,8 +475,11 @@ def main() -> None:
             print("\tProbe complete.")
 
         print("\nReturning home...")
-        robot.follow_joint_trajectory(return_home_traj, blocking=True)
-        time.sleep(SETTLE_SEC)
+        robot.execute_sequence(
+            [return_home_traj],
+            visualize_before_execution=False,
+            settle_time_between_trajectories=0.0,
+        )
 
     finally:
         ser.close()

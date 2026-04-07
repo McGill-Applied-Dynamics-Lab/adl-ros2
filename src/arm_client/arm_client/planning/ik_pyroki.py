@@ -1,5 +1,6 @@
 """PyRoki-based inverse kinematics planning helpers (FR3-focused)."""
 
+from contextlib import nullcontext
 import logging
 import os
 import sys
@@ -106,6 +107,7 @@ def plan_fr3_joint_trajectory(
     ori_weight: float = 50.0,
     similarity_weight: float = 0.001,
     show_progress: bool = True,
+    use_cpu: bool = False,
 ) -> PlannedJointTrajectory:
     """Plan a dense joint-space trajectory by sequential warm-started IK."""
     if len(waypoints) < 2:
@@ -181,14 +183,22 @@ def plan_fr3_joint_trajectory(
     if show_progress:
         _print_progress(0, n_points)
 
+    device_ctx = nullcontext()
+    if use_cpu:
+        cpu_devices = jax.devices("cpu")
+        if len(cpu_devices) == 0:
+            raise RuntimeError("No JAX CPU device available for CPU-only planning.")
+        device_ctx = jax.default_device(cpu_devices[0])
+
     for i in range(n_points):
-        q_jax = jnp.array(q_current)
-        q_sol = solve_ik_single(
-            jnp.array(interp_quat_wxyz[i]),
-            jnp.array(interp_pos[i]),
-            q_jax,
-            q_jax,
-        )
+        with device_ctx:
+            q_jax = jnp.array(q_current)
+            q_sol = solve_ik_single(
+                jnp.array(interp_quat_wxyz[i]),
+                jnp.array(interp_pos[i]),
+                q_jax,
+                q_jax,
+            )
         q_sol.block_until_ready()
         q_current = np.array(q_sol)
         all_joint_configs[i] = q_current

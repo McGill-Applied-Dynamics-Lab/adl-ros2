@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """180-degree waveguide probing with full 4RF capture using planned joint trajectories.
 
-This mirrors the behavior of `src/acoustic_sensing/scripts/probing_waveguide_gripper_4rf_6769.py`,
+This mirrors the behavior of `src/acoustic_sensing/scripts/testing/probing_waveguide_gripper_4rf_6769.py`,
 but it avoids `fr3_pose_controller`. All robot motion is planned ahead in joint space and
 executed through `joint_trajectory_controller`.
 """
