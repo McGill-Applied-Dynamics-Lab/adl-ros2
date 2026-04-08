@@ -1,95 +1,21 @@
 # Documentation Setup
-This directory contains the MkDocs-based documentation for the ADL ROS2 project.
+This directory contains the [Zensical](https://zensical.org/docs/get-started/)-based documentation for the ADL ROS2 project.
 
-## Features
-- **Static Site Generation**: Uses MkDocs with Material theme
-- **API Documentation**: Automatically generates documentation from Python docstrings
-
-## To Add
+**Doc To Add**
 Robot Setup:
 - [ ] Franka Desk logins
 - [ ] SSH Instructions
 - [ ] FCI screenshots
 
 
-## Quick Start
-### Prerequisites
-```bash
-# Install documentation dependencies
-pip install -r docs-requirements.txt
-```
-
 ### Build Documentation
+
 ```bash
-# Build static site
-mkdocs build
-
-# Serve locally for development
-mkdocs serve
+zensical serve
 ```
 
-The documentation will be available at `http://localhost:8000`.
+The documentation will be available at `http://localhost:8000`. The documentation auto-reloads when you make changes.
 
-### Live Development
-When running `mkdocs serve`, the documentation auto-reloads when you make changes to:
-- Markdown files in `docs/`
-- Configuration in `mkdocs.yml`
-- Python docstrings in the source code
-
-## Documentation Structure
-
-```
-docs/
-├── index.md                    # Homepage
-├── user-guide/                 # User documentation
-│   ├── getting-started.md
-│   ├── installation.md
-│   └── quick-start.md
-├── packages/                   # Package-specific docs
-│   ├── index.md
-│   ├── adg-ros2-utils.md
-│   ├── robot-arm.md
-│   ├── robot-tasks.md
-│   └── teleop.md
-├── reference/                  # API reference
-│   └── index.md
-├── developer-guide/            # Developer documentation
-│   ├── contributing.md
-│   ├── architecture.md
-│   └── testing.md
-└── tutorials/                  # Step-by-step guides
-    └── index.md
-```
-
-## Configuration
-
-### MkDocs Configuration (`mkdocs.yml`)
-Key configuration sections:
-
-```yaml
-# Theme and appearance
-theme:
-  name: material
-  features:
-    - navigation.tabs
-    - search.suggest
-    - content.code.copy
-
-# Plugins for functionality
-plugins:
-  - search              # Site-wide search
-  - mkdocstrings:       # API doc generation
-      handlers:
-        python:
-          options:
-            docstring_style: google
-
-# Markdown extensions for enhanced formatting
-markdown_extensions:
-  - pymdownx.highlight  # Code syntax highlighting
-  - pymdownx.superfences # Advanced code blocks
-  - admonition          # Note/warning boxes
-```
 
 ## Deployment
 
@@ -126,7 +52,7 @@ mkdocs build
 # Upload contents of site/ directory to your web server
 ```
 
-## Writing Good Documentation
+## Tips for Writing Good Documentation
 ### Generating API Documentation from Docstrings
 MkDocs can generate documentation from Python docstrings. This setup uses:
 
@@ -208,30 +134,6 @@ This will automatically:
 
 3. **Use type hints**: They automatically appear in the generated documentation
 
-### For Markdown Files
-
-1. **Use clear headings** for navigation
-2. **Include code examples** with syntax highlighting
-3. **Add diagrams** using Mermaid syntax:
-   ```markdown
-   ```mermaid
-   graph TD
-       A[Start] --> B[Process]
-       B --> C[End]
-   ```
-
-4. **Cross-reference** other sections:
-   ```markdown
-   See the [API Reference](../reference/index.md) for details.
-   ```
-
-## Tips and Tricks
-
-### Organizing Large Projects
-- Use the `nav:` section in `mkdocs.yml` to control page order
-- Group related content in subdirectories
-- Use `index.md` files for section overviews
-- Include a site-wide search
 
 ### Including Code from Source Files
 ```markdown
@@ -240,27 +142,7 @@ This will automatically:
 
 This includes lines 10-20 from the specified file.
 
-## Troubleshooting
 
-### Common Issues
-
-**"Module not found" when generating API docs**
-- Ensure Python modules are in the correct path
-- Check that `__init__.py` files exist
-- Verify module imports work independently
-
-**Styling issues**
-- Check that all markdown extensions are installed
-- Verify theme configuration in `mkdocs.yml`
-- Clear the `site/` directory and rebuild
-
-**Navigation problems**
-- Check file paths in `nav:` configuration
-- Ensure all referenced files exist
-- Use relative paths consistently
-
-### Getting Help
-- [MkDocs Documentation](https://www.mkdocs.org/)
-- [Material Theme Docs](https://squidfunk.github.io/mkdocs-material/)
-- [mkdocstrings Documentation](https://mkdocstrings.github.io/)
+## Getting Help
+- [Zensical Documentation](https://zensical.org/docs)
 

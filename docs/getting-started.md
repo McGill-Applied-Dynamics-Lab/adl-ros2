@@ -1,6 +1,6 @@
 # Getting Started
 
-This guide will help you get up and running with the ADG ROS2 packages and basic functionalities of the Franka Arm. 
+This guide will help you get up and running with the project and basic functionalities of the Franka Arm. 
 
 > TIP: **Glossary**
 >
