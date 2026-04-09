@@ -56,9 +56,7 @@ def fetch_teensy_dump(ser):
     return np.column_stack((buf1, buf2))
 
 
-def generate_plot(
-    run_idx, angle, speed, ts_fwd, angles_fwd, ts_rev, angles_rev, press_full
-):
+def generate_plot(run_idx, angle, speed, ts_fwd, angles_fwd, ts_rev, angles_rev, press_full):
     """Generates and saves a dual-axis plot of pressures and robot angle."""
     fig, ax1 = plt.subplots(figsize=(10, 6))
 
@@ -84,9 +82,7 @@ def generate_plot(
     t_start_rev = t_robot_fwd[-1] if len(t_robot_fwd) > 0 else 0
     t_robot_rev = np.array(ts_rev) + t_start_rev
 
-    ax2.plot(
-        t_robot_fwd, angles_fwd_deg, color=color3, linewidth=2.5, label="Angle (Fwd)"
-    )
+    ax2.plot(t_robot_fwd, angles_fwd_deg, color=color3, linewidth=2.5, label="Angle (Fwd)")
     ax2.plot(
         t_robot_rev,
         angles_rev_deg,
@@ -103,9 +99,7 @@ def generate_plot(
 
     angle_deg = np.degrees(angle)
     speed_deg = np.degrees(speed)
-    plt.title(
-        f"Run {run_idx}: Target Angle = {angle_deg:.1f}°, Speed = {speed_deg:.1f}°/s"
-    )
+    plt.title(f"Run {run_idx}: Target Angle = {angle_deg:.1f}°, Speed = {speed_deg:.1f}°/s")
     plt.tight_layout()
 
     filepath = PLOTS_DIR / f"run_{run_idx:03d}.png"
@@ -113,9 +107,7 @@ def generate_plot(
     plt.close(fig)
 
 
-def execute_wrist_rotation_pair(
-    robot: Robot, target_angle_rad: float, speed_rad_s: float, ser: serial.Serial
-):
+def execute_wrist_rotation_pair(robot: Robot, target_angle_rad: float, speed_rad_s: float, ser: serial.Serial):
     q_init = robot.q.copy()
     q_init[6] = np.radians(45.0)
     robot.joint_trajectory_controller_client.send_joint_config(
@@ -231,6 +223,11 @@ def main():
     robot.wait_until_ready(timeout=2.0)
     robot.controller_switcher_client.switch_controller("joint_trajectory_controller")
 
+    cfg_dir = Path(__file__).parent.parent.parent.parent / "config"
+    robot.osc_pd_controller_parameters_client.load_param_config(
+        file_path=cfg_dir / "controllers" / "joint_space" / "high_gains.yaml"
+    )
+
     print("Initializing joint 7 to 45 degrees...")
     q_init = robot.q.copy()
     q_init[6] = np.radians(45.0)
@@ -286,9 +283,7 @@ def main():
         speed_deg_s = np.degrees(speed)
 
         print("\n" + "=" * 60)
-        print(
-            f"RUN {i + 1} / {num_points}  |  TARGET ANGLE: {angle_deg:.2f}°  |  SPEED: {speed_deg_s:.2f}°/s"
-        )
+        print(f"RUN {i + 1} / {num_points}  |  TARGET ANGLE: {angle_deg:.2f}°  |  SPEED: {speed_deg_s:.2f}°/s")
         print("=" * 60)
 
         try:
@@ -300,9 +295,7 @@ def main():
                 angles_rev,
                 torques_rev,
                 press_full,
-            ) = execute_wrist_rotation_pair(
-                robot=robot, target_angle_rad=angle, speed_rad_s=speed, ser=ser
-            )
+            ) = execute_wrist_rotation_pair(robot=robot, target_angle_rad=angle, speed_rad_s=speed, ser=ser)
 
             exp_dict["ts_forward"].append(ts_fwd)
             exp_dict["joint7_angles_forward"].append(angles_fwd)
@@ -320,9 +313,7 @@ def main():
             with open(RESULTS_FILE, "wb") as f:
                 pickle.dump(exp_dict, f)
 
-            generate_plot(
-                i + 1, angle, speed, ts_fwd, angles_fwd, ts_rev, angles_rev, press_full
-            )
+            generate_plot(i + 1, angle, speed, ts_fwd, angles_fwd, ts_rev, angles_rev, press_full)
             print(f"\t-> Saved data and plot for Run {i + 1} successfully.")
 
         except Exception as e:
