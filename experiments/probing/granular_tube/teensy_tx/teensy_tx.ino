@@ -1,77 +1,77 @@
 #define RES 12
-#define AVG 7
+#define AVG 8
 
-constexpr int BUFFER_SIZE = 1e5;   //How large the buffer needs to be
+constexpr uint32_t BUFFER_SIZE = 100000; // 100,000 samples (10 seconds at 10 kHz)
 
-//Pin being used for analog read: A0
-
-/*
-* Sample Rates given AVG and RES
-* NOTE THAT THESE CHANGING DEPENGING ON WHAT ELSE THE TEENSY IS DOING; CHECK WITH PRODUCTION CODE
-*
-* AVG   RES   SAMPLE RATE 
-* 1     12    178814
-* 2     12    178814    **** SELECTED *****
-* 4     12    48561
-* 1     10    208664
-* 2     10    208664
-* 1     8     313245
-* 2     8     313245adc teensy
-*/
+uint16_t buffer1[BUFFER_SIZE];
+uint16_t buffer2[BUFFER_SIZE];
 
 void setup() {
-  // put your setup code here, to run once:
   Serial.begin(3000000);
   analogReadResolution(RES);
   analogReadAveraging(AVG);
   analogReference(0);
   Serial.println("Ready");
-
 }
 
-uint16_t buffer1[BUFFER_SIZE];
-uint16_t buffer2[BUFFER_SIZE];
-uint32_t t = 0;
-
 void loop() {
-  // put your main code here, to run repeatedly:
-  int incoming = Serial.read();
-  // Wait for the start reccording signal - byte ==1 
-  if (incoming == 49 ) { 
-     t = micros();
-    for (int i = 0; i < BUFFER_SIZE; i++){
-      buffer1[i] = analogRead(A7);
-      buffer2[i] = analogRead(A5);
+  if (Serial.available() > 0) {
+    int incoming = Serial.read();
+    
+    // START RECORDING SIGNAL
+    if (incoming == 49) { // ASCII '1'
+      uint32_t t = micros();
+      uint32_t count = 0;
+      bool stop_received = false;
 
+      // Recording loop
+      while (count < BUFFER_SIZE) {
+        uint32_t sample_start = micros();
+        
+        buffer1[count] = analogRead(A7);
+        buffer2[count] = analogRead(A5);
+        count++;
+
+        // INTERRUPT CHECK: Did Python send the stop signal ('2')?
+        if (Serial.available() > 0) {
+          int check = Serial.read();
+          if (check == 50) { // ASCII '2'
+            stop_received = true;
+            break; 
+          }
+        }
+
+        // 10 kHz Precision Timer
+        while (micros() - sample_start < 100) {
+        }
+      }
+      t = micros() - t;
+
+      if (!stop_received) {
+        while (true) {
+          if (Serial.available() > 0) {
+            if (Serial.read() == 50) { 
+              break;
+            }
+          }
+        }
+      }
+
+      // ================= RAW BINARY DATA DUMP =================
+      Serial.write('S'); // Start marker
+      
+      // 1. Send the number of samples recorded (4 bytes)
+      Serial.write((uint8_t*)&count, sizeof(uint32_t));
+      
+      // 2. Blast the raw memory bytes for buffer 1
+      Serial.write((uint8_t*)buffer1, count * sizeof(uint16_t));
+      
+      // 3. Blast the raw memory bytes for buffer 2
+      Serial.write((uint8_t*)buffer2, count * sizeof(uint16_t));
+      
+      // 4. Send the time taken
+      Serial.print("T:"); 
+      Serial.println(t);
     }
-  t = micros() - t;
-  Serial.println("Data Read");
   }
- 
-
-  //For plotting==============================================
-  if (incoming ==50) {
-    Serial.println('S');    //Start signal
-    for (int i = 0; i < BUFFER_SIZE; i++){
-      Serial.println(buffer1[i]);
-      Serial.println(buffer2[i]);
-    }
-    Serial.print("T:");    //Stop signal
-    Serial.println(t); // Time difference 
-  }
-
-  // =========================================================
-
-  // Printing the sample rate =================================
-  //float sample_rate = (float) BUFFER_SIZE / t * 1000000.0;
-  //Serial.print("ADC sampling rate: ");
-  //Serial.print(sample_rate);
-  //Serial.println(" Hz");
-  //Serial.print("Buffer size: ");
-  //Serial.println(BUFFER_SIZE);
-  // ==========================================================
-
-  delay(100); //Wait for 1s
-
-
 }

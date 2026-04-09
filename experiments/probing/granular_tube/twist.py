@@ -3,21 +3,16 @@ import numpy as np
 from arm_client.robot import Robot
 from pathlib import Path
 import pickle
-import serial
-
-# Notes
-"""
-- Integrate serial acquisition.
-"""
 
 # Configuration
-SETTLE_SEC = 2.00  # wait time after moves (s)
-DELAY_SEC = 1.00 # delay between forward and reverse motion (s)
+SETTLE_SEC = 1.00  # wait time after moves (s)
+DELAY_SEC = 1.00  # delay between forward and reverse motion (s)
 
 # File paths
 PROJECT_ROOT = Path(__file__).resolve().parent
 PARAMETERS_FILE = PROJECT_ROOT / "results" / "grids" / "rotation_params.pkl"
-RESULTS_FILE = PROJECT_ROOT / "results" / "RANDOM_TWIST.pkl"
+RESULTS_FILE = PROJECT_ROOT / "results" / "TEST.pkl"
+
 
 def execute_wrist_rotation_pair(
     robot: Robot, target_angle_rad: float, speed_rad_s: float
@@ -39,12 +34,12 @@ def execute_wrist_rotation_pair(
     """
     # Initialize joint 7 to 45 degrees before every rotation
     q_init = robot.q.copy()
-    q_init[6] = np.radians(45.0)
+    q_init[6] = np.radians(55.0)
     robot.joint_trajectory_controller_client.send_joint_config(
         joint_names=robot.config.joint_names,
         joint_config=q_init.tolist(),
         time_to_goal=2.0,
-        blocking=True
+        blocking=True,
     )
     time.sleep(SETTLE_SEC)  # wait for arm to settle
 
@@ -64,20 +59,22 @@ def execute_wrist_rotation_pair(
     ts_fwd = []
     angles_fwd = []
     torques_fwd = []
-    pressures_fwd = [] # (n-samples x 2 sensors)
+    pressures_fwd = []  # (n-samples x 2 sensors)
 
     t0_fwd = time.perf_counter()
     robot.joint_trajectory_controller_client.send_joint_config(
         joint_names=robot.config.joint_names,
         joint_config=q_target_forward.tolist(),
         time_to_goal=duration_per_direction,
-        blocking=False
+        blocking=False,
     )
 
     # Trigger Teensy sampling
     # ...
 
-    while (time.perf_counter() - t0_fwd) < duration_per_direction + DELAY_SEC: # record data during delay
+    while (
+        time.perf_counter() - t0_fwd
+    ) < duration_per_direction + DELAY_SEC:  # record data during delay
         elapsed = time.perf_counter() - t0_fwd
         current_q = robot.q.copy()
         current_j7 = current_q[6]
@@ -99,14 +96,14 @@ def execute_wrist_rotation_pair(
     ts_rev = []
     angles_rev = []
     torques_rev = []
-    pressures_rev = [] # (n-samples x 2 sensors)
+    pressures_rev = []  # (n-samples x 2 sensors)
 
     t0_rev = time.perf_counter()
     robot.joint_trajectory_controller_client.send_joint_config(
         joint_names=robot.config.joint_names,
         joint_config=q_target_reverse.tolist(),
         time_to_goal=duration_per_direction,
-        blocking=False
+        blocking=False,
     )
 
     # Trigger Teensy sampling
@@ -123,14 +120,22 @@ def execute_wrist_rotation_pair(
         torques_rev.append(ee_wrench["torque"].copy())
 
         time.sleep(0.01)
-    
+
     # Trigger serial dump
     # ...
 
-
     time.sleep(SETTLE_SEC)
 
-    return ts_fwd, angles_fwd, torques_fwd, pressures_fwd, ts_rev, angles_rev, torques_rev, pressures_rev
+    return (
+        ts_fwd,
+        angles_fwd,
+        torques_fwd,
+        pressures_fwd,
+        ts_rev,
+        angles_rev,
+        torques_rev,
+        pressures_rev,
+    )
 
 
 def main():
@@ -143,7 +148,10 @@ def main():
     """
     # Setup
     robot = Robot(namespace="fr3")
-    robot.wait_until_ready()
+    robot.wait_until_ready(timeout=2.0)
+
+    # Switch to joint trajectory controller for smooth joint-space motion
+    robot.controller_switcher_client.switch_controller("joint_trajectory_controller")
 
     # Initialize joint 7 to 45 degrees
     print("Initializing joint 7 to 45 degrees...")
@@ -153,12 +161,9 @@ def main():
         joint_names=robot.config.joint_names,
         joint_config=q_init.tolist(),
         time_to_goal=3.0,
-        blocking=True
+        blocking=True,
     )
     print(f"Joint 7 initialized to 45°")
-
-    # Switch to joint trajectory controller for smooth joint-space motion
-    robot.controller_switcher_client.switch_controller("joint_trajectory_controller")
 
     # Load parameters
     if not PARAMETERS_FILE.exists():
@@ -216,8 +221,8 @@ def main():
         angle = planned_angles[i]
         speed = planned_speeds[i]
 
-        angle_deg = np.degrees(angle) # for print-out only
-        speed_deg_s = np.degrees(speed) # for print-out only
+        angle_deg = np.degrees(angle)  # for print-out only
+        speed_deg_s = np.degrees(speed)  # for print-out only
 
         print(
             f"\nRotation Pair {i + 1} / {num_points} | Target Angle: {angle_deg:.3g} deg., Speed: {speed_deg_s:.3g} deg./s"
@@ -226,9 +231,10 @@ def main():
         try:
             # Perform Forward and Reverse Rotation
             print("\tExecuting forward + reverse rotation...")
-            (ts_fwd, angles_fwd, torques_fwd,
-             ts_rev, angles_rev, torques_rev) = execute_wrist_rotation_pair(
-                robot=robot, target_angle_rad=angle, speed_rad_s=speed
+            (ts_fwd, angles_fwd, torques_fwd, ts_rev, angles_rev, torques_rev) = (
+                execute_wrist_rotation_pair(
+                    robot=robot, target_angle_rad=angle, speed_rad_s=speed
+                )
             )
 
             # Store results

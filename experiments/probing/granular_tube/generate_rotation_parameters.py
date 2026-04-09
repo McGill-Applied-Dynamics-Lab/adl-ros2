@@ -17,9 +17,14 @@ from pathlib import Path
 
 # ===== CONFIGURATION =====
 NUM_POINTS = 10  # Number of rotation pairs to generate
-ANGLE_RANGE = (0.0, np.deg2rad(125))  # Min and max rotation angle in radians (±28.6°)
-SPEED_RANGE = (0.10, 0.40)  # Min and max rotation speed in radians/second
-RANDOM_SEED = None  # Use None for random, or set to integer (e.g., 42) for reproducibility
+ANGLE_RANGE = (
+    np.radians(15.0),
+    np.deg2rad(110.0),
+)  # Min and max rotation angle in radians
+SPEED_RANGE = (0.20, 0.50)  # Min and max rotation speed in radians/second
+RANDOM_SEED = (
+    None  # Use None for random, or set to integer (e.g., 42) for reproducibility
+)
 
 OUTPUT_FILE = Path(__file__).parent / "results" / "grids" / "rotation_params.pkl"
 # ========================
@@ -30,7 +35,7 @@ def generate_rotation_parameters(
     angle_range: tuple = ANGLE_RANGE,
     speed_range: tuple = SPEED_RANGE,
     seed: int = RANDOM_SEED,
-    output_file: Path = OUTPUT_FILE
+    output_file: Path = OUTPUT_FILE,
 ):
     """
     Generate random wrist rotation parameters.
@@ -66,8 +71,12 @@ def generate_rotation_parameters(
         pickle.dump(params_dict, f)
 
     print(f"✓ Generated {num_points} rotation parameters")
-    print(f"  Angle range: {np.degrees(angle_range[0]):.2f}° to {np.degrees(angle_range[1]):.2f}°")
-    print(f"  Speed range: {np.degrees(speed_range[0]):.2f}°/s to {np.degrees(speed_range[1]):.2f}°/s")
+    print(
+        f"  Angle range: {np.degrees(angle_range[0]):.2f}° to {np.degrees(angle_range[1]):.2f}°"
+    )
+    print(
+        f"  Speed range: {np.degrees(speed_range[0]):.2f}°/s to {np.degrees(speed_range[1]):.2f}°/s"
+    )
     print(f"  Seed: {seed if seed is not None else 'random'}")
     print(f"  Saved to: {output_file}")
 
