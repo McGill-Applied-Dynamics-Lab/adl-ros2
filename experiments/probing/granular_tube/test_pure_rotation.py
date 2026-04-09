@@ -1,160 +1,73 @@
 #!/usr/bin/env python3
-"""
-Test pure end-effector rotation about Z-axis using trajectory planning.
-
-This script demonstrates how to rotate the end-effector without moving
-its position in space, using Cartesian waypoint interpolation.
-"""
+"""Example showing how to use `Robot.execute_sequence()` with IK-planned trajectories."""
 
 import time
+
 import numpy as np
-from scipy.spatial.transform import Rotation as R
 
-from arm_client.robot import Robot
-from arm_client.planning import generate_linear_waypoints
-
-
-def rotate_end_effector_z(
-    robot: Robot,
-    rotation_degrees: float,
-    num_waypoints: int = 20,
-    execution_time: float = 2.0,
-    visualize: bool = True,
-) -> bool:
-    """
-    Rotate the end-effector about the Z-axis by a specified angle.
-
-    Args:
-        robot: Robot client instance
-        rotation_degrees: Rotation angle in degrees (positive = counterclockwise)
-        num_waypoints: Number of interpolation waypoints
-        execution_time: Time in seconds to complete the rotation
-        visualize: Whether to visualize trajectory before execution
-
-    Returns:
-        True if successful, False otherwise
-    """
-    try:
-        print(f"\n{'='*60}")
-        print(f"Rotating end-effector {rotation_degrees}° about Z-axis")
-        print(f"{'='*60}")
-
-        # Get current pose
-        current_pose = robot.end_effector_pose
-        print(f"Current position: {current_pose.position}")
-        print(f"Current orientation (quat): {current_pose.orientation.as_quat()}")
-
-        # Create rotation: positive angle = counterclockwise about Z
-        rotation_about_z = R.from_euler("z", rotation_degrees, degrees=True)
-
-        # Target orientation = current orientation + rotation
-        target_orientation = rotation_about_z * current_pose.orientation
-        print(f"Target orientation (quat): {target_orientation.as_quat()}")
-
-        # Generate waypoints: same position, interpolated orientation
-        print(f"Generating {num_waypoints} waypoints...")
-        waypoints = generate_linear_waypoints(
-            start_position=current_pose.position,
-            start_orientation=current_pose.orientation,
-            end_position=current_pose.position,  # Keep position fixed
-            end_orientation=target_orientation,
-            num_waypoints=num_waypoints,
-        )
-        print(f"✓ Generated {len(waypoints)} waypoints")
-
-        # Plan trajectory
-        print(f"Planning trajectory ({execution_time}s duration)...")
-        trajectory = robot.plan_joint_trajectory_from_cartesian(
-            waypoints,
-            execution_time=execution_time,
-        )
-        print(
-            f"✓ Planned trajectory with {len(trajectory.joint_trajectory.points)} points"
-        )
-
-        # Visualize if requested
-        if visualize:
-            print("Visualizing trajectory...")
-            robot.visualize_cartesian_trajectory(
-                waypoints,
-                trajectory.joint_trajectory,
-                title=f"Pure Z-axis Rotation ({rotation_degrees}°)",
-            )
-
-        # Execute trajectory
-        print(f"Executing rotation...")
-        start_time = time.perf_counter()
-        robot.execute_trajectory(trajectory)
-        elapsed = time.perf_counter() - start_time
-        print(f"✓ Rotation completed in {elapsed:.2f}s")
-
-        # Verify final pose
-        final_pose = robot.end_effector_pose
-        print(f"\nFinal position: {final_pose.position}")
-        print(f"Final orientation (quat): {final_pose.orientation.as_quat()}")
-
-        # Check that position didn't change significantly
-        pos_error = np.linalg.norm(final_pose.position - current_pose.position)
-        print(f"Position error: {pos_error*1000:.2f} mm")
-
-        if pos_error > 0.01:  # 1cm threshold
-            print(f"⚠ Warning: Position drifted {pos_error*1000:.2f}mm during rotation")
-
-        return True
-
-    except Exception as e:
-        print(f"✗ Error during rotation: {e}")
-        import traceback
-
-        traceback.print_exc()
-        return False
+from arm_client.robot import Pose, Robot
+from arm_client.planning.waypoints import (
+    generate_linear_waypoints,
+    generate_spherical_waypoints,
+)
 
 
 def main():
-    """Main test routine."""
-    print("=" * 60)
-    print("Pure End-Effector Z-axis Rotation Test")
-    print("=" * 60)
-
-    # Initialize robot
-    print("\nInitializing robot...")
     robot = Robot(namespace="fr3")
-    robot.wait_until_ready(timeout=5.0)
-    print("✓ Robot ready")
+    robot.wait_until_ready()
 
-    # Switch to Cartesian controller
-    print("\nSwitching to Cartesian controller...")
-    robot.controller_switcher_client.switch_controller("osc_pd_controller")
-    print("✓ Switched to osc_pd_controller")
+    print("Switching to joint trajectory controller...")
+    robot.controller_switcher_client.switch_controller("joint_trajectory_controller")
 
-    # Get current pose
-    current_pose = robot.end_effector_pose
-    print(f"\nCurrent end-effector pose:")
-    print(f"  Position: {current_pose.position}")
-    print(f"  Orientation: {current_pose.orientation.as_rotvec()} (rotvec)")
+    start_pose = robot.end_effector_pose.copy()
 
-    # Test sequence
-    rotations = [0, 90, -45]  # degrees
 
-    for rotation in rotations:
-        success = rotate_end_effector_z(
-            robot,
-            rotation_degrees=rotation,
-            num_waypoints=20,
-            execution_time=2.0,
-            visualize=False,  # Set to True to visualize each rotation
-        )
+    waypoints_2 = generate_linear_waypoints(
+        start_position=start_pose.position,
+        start_orientation=end_pose_1.orientation,
+        end_position=start.position + np.array([0.1, 0.0, 0.0]),
+        end_orientation=end_pose_1.orientation,
+        num_waypoints=8,
+    )
+    end_pose_2 = Pose(
+        position=waypoints_2[-1].position,
+        orientation=waypoints_2[-1].orientation,
+    )
 
-        if not success:
-            print(f"✗ Failed to execute rotation")
-            break
+    waypoints_3 = generate_spherical_waypoints(
+        start_position=end_pose_2.position,
+        start_orientation=end_pose_2.orientation,
+        radius=0.1,
+        theta_deg=-70.0,
+        phi_deg=0.0,
+        num_waypoints=10,
+    )
 
-        time.sleep(1.0)  # Pause between rotations
+    # 3) Plan trajectories with chained IK seeds for joint continuity.
+    traj1, traj2, traj3 = robot.plan_joint_trajectory_sequence(
+        [waypoints_1, waypoints_2, waypoints_3],
+        [4.0, 3.0, 4.0],
+    )
 
-    print("\n" + "=" * 60)
-    print("Test complete")
-    print("=" * 60)
+    # 4) Execute as a sequence.
+    # Replace `between_steps_action` with a real gripper call if desired.
+    def between_steps_action():
+        print("Mid-sequence action (example placeholder, e.g., gripper close)")
+        time.sleep(0.5)
 
+    robot.execute_sequence(
+        [
+            traj1,
+            # between_steps_action,
+            traj2,
+            # between_steps_action,
+            traj3,
+        ],
+        visualize_before_execution=True,
+        settle_time_between_trajectories=1.0,
+    )
+
+    print("Sequence execution complete.")
     robot.shutdown()
 
 
