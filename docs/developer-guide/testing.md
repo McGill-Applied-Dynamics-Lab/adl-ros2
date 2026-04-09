@@ -709,3 +709,88 @@ open htmlcov/index.html
 4. **Quality Gates**: Set quality thresholds for merge approval
 
 This comprehensive testing strategy ensures the reliability, performance, and maintainability of the ADG ROS2 system.
+
+
+
+Old testing instructions, to update
+
+### Commit Message Format
+
+Use conventional commit format:
+
+```
+type(scope): short description
+
+Longer description if needed.
+
+- List specific changes
+- Reference issues: Fixes #123
+- Co-authored-by: Name <email>
+```
+
+Types: `feat`, `fix`, `docs`, `style`, `refactor`, `test`, `chore`
+
+Examples:
+```
+feat(robot_arm): add trajectory smoothing filter
+
+fix(teleop): resolve joystick connection timeout
+
+docs(tutorials): add RL integration example
+```
+
+
+### Unit Tests
+
+Write comprehensive unit tests:
+
+```python
+# Python tests using pytest
+import pytest
+from robot_arm_interface.controller import RobotController
+
+class TestRobotController:
+    @pytest.fixture
+    def controller(self):
+        return RobotController(['joint_1', 'joint_2'])
+    
+    def test_joint_validation(self, controller):
+        """Test that invalid joint positions are rejected."""
+        invalid_positions = [10.0, 5.0]  # Outside limits
+        assert not controller.validate_joint_positions(invalid_positions)
+    
+    def test_trajectory_execution(self, controller):
+        """Test trajectory execution with valid inputs."""
+        trajectory = create_test_trajectory()
+        assert controller.execute_trajectory(trajectory)
+```
+
+```cpp
+// C++ tests using gtest
+#include <gtest/gtest.h>
+#include "robot_arm_interface/controller.hpp"
+
+class ControllerTest : public ::testing::Test {
+protected:
+  void SetUp() override {
+    controller_ = std::make_unique<RobotController>(joint_names_);
+  }
+  
+  std::vector<std::string> joint_names_{"joint_1", "joint_2"};
+  std::unique_ptr<RobotController> controller_;
+};
+
+TEST_F(ControllerTest, ValidateJointLimits) {
+  std::vector<double> invalid_positions{10.0, 5.0};
+  EXPECT_FALSE(controller_->validate_joint_positions(invalid_positions));
+}
+```
+
+### Integration Tests
+
+Test package interactions:
+
+```bash
+# Launch test for integration testing
+ros2 launch robot_arm_testing integration_test.launch.py
+```

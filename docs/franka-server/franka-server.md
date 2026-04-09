@@ -2,11 +2,11 @@
 The *Franka Server* consists of group of ROS2 nodes sending the low level torque commands to the *Franka Controller*. 
 The main component is the ros2 controller.
 
-> HINT: **Resources.**
->
-> - [franka-server: GitHub Repo](https://github.com/McGill-Applied-Dynamics-Group/franka-server)
-> - [IsaacSim Documentation](https://docs.isaacsim.omniverse.nvidia.com/4.5.0/index.html)
-> - [IsaacSim API](https://docs.isaacsim.omniverse.nvidia.com/4.5.0/py/index.html)
+!!! hint "Resources"
+
+    - [franka-server: GitHub Repo](https://github.com/McGill-Applied-Dynamics-Group/franka-server)
+    - [IsaacSim Documentation](https://docs.isaacsim.omniverse.nvidia.com/4.5.0/index.html)
+    - [IsaacSim API](https://docs.isaacsim.omniverse.nvidia.com/4.5.0/py/index.html)
 
 See also:
 
@@ -39,9 +39,9 @@ This starts the ros2 controller (*osc_pd_controller* by default) and the franka_
     ros2 topic echo /f3/...
     ```
 
-    > WARNING: **Communication Constraints**
-    >
-    > When too many packets to the controller are dropped, the server is shut down.. just restart it!
+    !!! warning "Communication Constraints"
+    
+        When too many packets to the controller are dropped, the server is shut down.. just restart it!
 
 4. You can directly send position commands with:
 
@@ -49,8 +49,9 @@ This starts the ros2 controller (*osc_pd_controller* by default) and the franka_
     ros2 topic pub --once /osc_pd_controller/goal geometry_msgs/msg/PointStamped "{position: {x: 0.3085, y: 0.0, z: 0.4854}}"
     ```
 
-    > TIP: Big position steps
-    > Watch out sending big position steps, the gains are set pretty high. Safeties will shut it down though if the joint velocities/torques, end-effector position or even contact forces reach certain threshold
+    !!! TIP "Big position steps"
+    
+        Watch out sending big position steps, the gains are set pretty high. Safeties will shut it down though if the joint velocities/torques, end-effector position or even contact forces reach certain threshold
 
 
 5. We provide a few utilities scripts to move the robot

@@ -79,7 +79,7 @@ def test_environment():
         print("⚠️  Some checks failed:")
         for name in failed_names:
             print(f"   • {name}")
-        print("\nTip: make sure you ran `pixi run build` and `pixi run gen-vscode-env` first.")
+        print("\nTip: make sure you ran `pixi run -e humble build` and `pixi run gen-vscode-env` first.")
 
     return passed == total
 

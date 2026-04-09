@@ -3,12 +3,20 @@ This directory contains the [Zensical](https://zensical.org/docs/get-started/)-b
 
 **Doc To Add**
 Robot Setup:
+
 - [ ] Franka Desk logins
 - [ ] SSH Instructions
 - [ ] FCI screenshots
 
 
-### Build Documentation
+
+## Development
+- Description and example of how to use your package in `docs/packages/<your_pkg>.md`
+  - Auto-generated docs from docstring in `docs/reference/<your_pkg>.md`
+  - Add the new files to the nav tree in `zensical.toml:nav`
+
+
+### Build the Documentation
 
 ```bash
 zensical serve
@@ -61,27 +69,37 @@ MkDocs can generate documentation from Python docstrings. This setup uses:
 3. **Automatic discovery**: Finds and documents Python modules automatically
 
 #### Example Docstring
+All Python code follows Google-style docstrings:
 
 ```python
-def wait_for_debugger(node_name, default_port=5678):
+def example_function(param1: str, param2: int = 0) -> bool:
     """
-    Wait for the debugger to attach.
+    Short description of the function.
     
-    Only wait if the node_name matches the environment variable DEBUG_NODE.
+    Longer description if needed. This can span multiple lines
+    and provide more detailed information about the function's
+    behavior and use cases.
     
     Args:
-        node_name: Name of the ROS2 node for debugging
-        default_port: Port to listen on for debugger connection
+        param1: Description of the first parameter
+        param2: Description of the second parameter with default value
+        
+    Returns:
+        Description of the return value
         
     Raises:
-        ValueError: If node_name is None
-        RuntimeError: If debugger fails to bind to port
+        ValueError: When param1 is empty
+        RuntimeError: When operation fails
         
     Example:
-        >>> wait_for_debugger("my_robot_node", 5678)
-        [my_robot_node] Waiting for debugger to attach on port 5678...
+        >>> result = example_function("hello", 42)
+        >>> print(result)
+        True
     """
-    # Implementation here
+    if not param1:
+        raise ValueError("param1 cannot be empty")
+    
+    return len(param1) > param2
 ```
 
 #### Including Docstrings in Documentation

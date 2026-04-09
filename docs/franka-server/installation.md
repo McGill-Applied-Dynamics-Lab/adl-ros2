@@ -1,10 +1,12 @@
-# Franka Server and Installation
-> TIP: **Glossary**
->
-> - **Franka Control** / **Controller**: Black Box on the table
-> - **Franka PC** / **Desktop**: Franka PC on the ground
-> - **Franka Desk**: Web app to control the robot
-> - **FR3-server**: Set of ros2 nodes to publish the robot states and send position commands. Running on the *Franka PC*.
+# Installation
+Page on how to install the libraries setup the network to run the franka server on the mini desktop.
+
+!!! tip "Glossary"
+  
+    - **Franka Control** / **Controller**: Black Box on the table
+    - **Franka PC** / **Desktop**: Franka PC on the ground
+    - **Franka Desk**: Web app to control the robot
+    - **FR3-server**: Set of ros2 nodes to publish the robot states and send position commands. Running on the *Franka PC*.
 
 ## Network Setup
 <figure markdown="span">
