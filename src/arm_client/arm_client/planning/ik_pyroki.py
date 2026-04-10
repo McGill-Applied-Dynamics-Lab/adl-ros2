@@ -170,6 +170,21 @@ def plan_fr3_joint_trajectory(
         if show_progress:
             _print_progress(i + 1, n_points)
 
+    # Fix endpoint glitchiness: Force the final trajectory point to exactly match
+    # the last waypoint by solving IK for the exact final Cartesian target.
+    # This avoids interpolation artifacts and ensures smooth endpoint behavior.
+    final_waypoint_quat_wxyz = waypoints[-1].orientation.as_quat()[[3, 0, 1, 2]]
+    final_waypoint_pos = waypoints[-1].position
+    
+    q_final = solve_ik_single(
+        jnp.array(final_waypoint_quat_wxyz),
+        jnp.array(final_waypoint_pos),
+        jnp.array(all_joint_configs[-1]),  # Use current last point as seed
+        jnp.array(all_joint_configs[-1]),
+    )
+    q_final.block_until_ready()
+    all_joint_configs[-1] = np.array(q_final)
+
     arm_joint_count = len(joint_names)
     arm_joint_positions = all_joint_configs[:, :arm_joint_count]
     time_from_start = (s_values * duration).tolist()

@@ -10,21 +10,24 @@ joints:
   - fr3_joint6
   - fr3_joint7
 
-pd_gains.kp: [700.0, 700.0, 700.0, 600.0, 200.0, 275.0, 50.0]
-# pd_gains.kd: [10.0, 10.0, 10.0, 10.0, 10.0, 10.0, 10.0]
-pd_gains.kd: [-1.0, -1.0, -1.0, -1.0, -1.0, 25.0, -1.0] # Use negative values for automatic damping calculation
 
+gains.fr3_joint1: { p: 600., d: 30., i: 0., i_clamp: 1. }
+# gains.fr3_joint1.d: 30.0 # Use negative value for automatic damping calculation
 
-ik.tolerance: 0.01 # Position tolerance for IK convergence
-ik.max_iterations: 1000 # Maximum number of IK iterations
-# ik.damping_factor: 0.000001 # Damping factor for IK solver (Levenberg-Marquardt)
+# gains.fr3_joint2.p: 700.0
+# gains.fr3_joint2.d: 30.0 # Use negative value for automatic damping calculation
 
-filter.joint_targets: 0.05 # Amount of smoothing for joint targets using EMA (0=no smoothing, 1=no filtering)
+# gains.fr3_joint3.p: 700.0
+# gains.fr3_joint3.d: 30.0 # Use negative value for automatic damping calculation
 
-log.enabled: true
-log.robot_state: true
-log.target_pose: true
-log.control_torques: true
-log.control_gains: true
-log.ik_convergence: true
-log.timing: true
+# gains.fr3_joint4.p: 600.0
+# gains.fr3_joint4.d: 30.0 # Use negative value for automatic damping calculation
+
+# gains.fr3_joint5.p: 250.0
+# gains.fr3_joint5.d: 10.0 # Use negative value for automatic damping calculation
+
+# gains.fr3_joint6.p: 275.0
+# gains.fr3_joint6.d: 10.0 # Use negative value for automatic damping calculation
+
+# gains.fr3_joint7.p: 50.0
+# gains.fr3_joint7.d: 5.0 # Use negative value for automatic damping calculation

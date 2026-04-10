@@ -1,15 +1,19 @@
 import time
+import threading
 import numpy as np
 import serial
-from arm_client.robot import Robot
-from pathlib import Path
 import pickle
 import matplotlib.pyplot as plt
+from pathlib import Path
+
+from scipy.spatial.transform import Rotation as R
+from arm_client.robot import Pose, Robot
+from arm_client.planning.waypoints import generate_linear_waypoints
 
 # Configuration
 SETTLE_SEC = 1.00
-# DELAY_SEC removed for continuous sweep
-TARGET_TOLERANCE_RAD = np.radians(1.0)  # Break loop when within 1 degree of target
+START_POSITION = np.array([0.45, -0.045, 0.40])
+START_ORIENTATION = R.from_euler("xyz", [-180, 0, 0], degrees=True)
 
 # Teensy Configuration
 SERIAL_PORT = "/dev/ttyACM0"  # <--- UPDATE THIS TO YOUR TEENSY PORT
@@ -18,7 +22,7 @@ BAUD_RATE = 3000000
 # File paths
 PROJECT_ROOT = Path(__file__).resolve().parent
 PARAMETERS_FILE = PROJECT_ROOT / "results" / "grids" / "rotation_params.pkl"
-RESULTS_FILE = PROJECT_ROOT / "results" / "TEST_V2.pkl"
+RESULTS_FILE = PROJECT_ROOT / "results" / "TEST.pkl"
 PLOTS_DIR = PROJECT_ROOT / "results" / "plots"
 
 
@@ -56,7 +60,9 @@ def fetch_teensy_dump(ser):
     return np.column_stack((buf1, buf2))
 
 
-def generate_plot(run_idx, angle, speed, ts_fwd, angles_fwd, ts_rev, angles_rev, press_full):
+def generate_plot(
+    run_idx, angle, speed, ts_fwd, angles_fwd, ts_rev, angles_rev, press_full
+):
     """Generates and saves a dual-axis plot of pressures and robot angle."""
     fig, ax1 = plt.subplots(figsize=(10, 6))
 
@@ -82,7 +88,9 @@ def generate_plot(run_idx, angle, speed, ts_fwd, angles_fwd, ts_rev, angles_rev,
     t_start_rev = t_robot_fwd[-1] if len(t_robot_fwd) > 0 else 0
     t_robot_rev = np.array(ts_rev) + t_start_rev
 
-    ax2.plot(t_robot_fwd, angles_fwd_deg, color=color3, linewidth=2.5, label="Angle (Fwd)")
+    ax2.plot(
+        t_robot_fwd, angles_fwd_deg, color=color3, linewidth=2.5, label="Angle (Fwd)"
+    )
     ax2.plot(
         t_robot_rev,
         angles_rev_deg,
@@ -98,8 +106,9 @@ def generate_plot(run_idx, angle, speed, ts_fwd, angles_fwd, ts_rev, angles_rev,
     ax1.legend(lines_1 + lines_2, labels_1 + labels_2, loc="upper left")
 
     angle_deg = np.degrees(angle)
-    speed_deg = np.degrees(speed)
-    plt.title(f"Run {run_idx}: Target Angle = {angle_deg:.1f}°, Speed = {speed_deg:.1f}°/s")
+    plt.title(
+        f"Run {run_idx}: Target Angle = {angle_deg:.1f}°, Speed Param = {speed:.3f}"
+    )
     plt.tight_layout()
 
     filepath = PLOTS_DIR / f"run_{run_idx:03d}.png"
@@ -107,91 +116,84 @@ def generate_plot(run_idx, angle, speed, ts_fwd, angles_fwd, ts_rev, angles_rev,
     plt.close(fig)
 
 
-def execute_wrist_rotation_pair(robot: Robot, target_angle_rad: float, speed_rad_s: float, ser: serial.Serial):
-    q_init = robot.q.copy()
-    q_init[6] = np.radians(45.0)
-    robot.joint_trajectory_controller_client.send_joint_config(
-        joint_names=robot.config.joint_names,
-        joint_config=q_init.tolist(),
-        time_to_goal=2.0,
-        blocking=True,
+def execute_wrist_rotation_pair(
+    robot: Robot, target_angle_rad: float, speed_val: float, ser: serial.Serial
+):
+    # ================= 1. TRAJECTORY PLANNING =================
+    # Start pose
+    start_pose = robot.end_effector_pose.copy()
+
+    rot_vec = np.array([0, 0, target_angle_rad])
+    rotation = R.from_rotvec(rot_vec)
+
+    waypoints_forward = generate_linear_waypoints(
+        start_position=start_pose.position,
+        start_orientation=start_pose.orientation,
+        end_position=start_pose.position,
+        end_orientation=rotation * start_pose.orientation,
+        num_waypoints=10,
     )
-    time.sleep(SETTLE_SEC)
 
-    start_q = robot.q.copy()
-    start_joint7 = start_q[6]
+    end_forward_pose = Pose(
+        position=waypoints_forward[-1].position,
+        orientation=waypoints_forward[-1].orientation,
+    )
 
-    speed_rad_s = abs(speed_rad_s)
-    duration_per_direction = abs(target_angle_rad / speed_rad_s)
+    waypoints_reverse = generate_linear_waypoints(
+        start_position=start_pose.position,
+        start_orientation=end_forward_pose.orientation,
+        end_position=start_pose.position,
+        end_orientation=start_pose.orientation,
+        num_waypoints=10,
+    )
 
-    # ================= START RECORDING =================
+    traj1, traj2 = robot.plan_joint_trajectory_sequence(
+        [waypoints_forward, waypoints_reverse],
+        [np.abs(target_angle_rad / speed_val), np.abs(target_angle_rad / speed_val)],
+    )
+
+    # ================= 2. START RECORDING =================
     ser.reset_input_buffer()
+    ser.reset_output_buffer()
     ser.write(b"1")
 
-    # ================= FORWARD ROTATION =================
-    target_joint7_forward = start_joint7 + target_angle_rad
-    q_target_forward = start_q.copy()
-    q_target_forward[6] = target_joint7_forward
+    # ================= 3. EXECUTE IN BACKGROUND =================
+    ts_all = []
+    angles_all = []
+    positions_all = []
+    orientations_all = []
+    forces_all = []
+    torques_all = []
 
-    ts_fwd = []
-    angles_fwd = []
-    torques_fwd = []
-
-    t0_fwd = time.perf_counter()
-    robot.joint_trajectory_controller_client.send_joint_config(
-        joint_names=robot.config.joint_names,
-        joint_config=q_target_forward.tolist(),
-        time_to_goal=duration_per_direction,
-        blocking=False,
+    exec_thread = threading.Thread(
+        target=robot.execute_sequence,
+        args=([traj1, traj2],),
+        kwargs={
+            "visualize_before_execution": False,
+            "settle_time_between_trajectories": 0.0,
+        },
     )
 
-    while (time.perf_counter() - t0_fwd) < duration_per_direction:
-        elapsed = time.perf_counter() - t0_fwd
-        current_q = robot.q.copy()
-        current_j7 = current_q[6]
+    t0 = time.perf_counter()
+    exec_thread.start()
 
-        ts_fwd.append(elapsed)
-        angles_fwd.append(current_j7)
-        torques_fwd.append(robot.end_effector_wrench["torque"].copy())
+    while exec_thread.is_alive():
+        try:
+            pose = robot.end_effector_pose
+            wrench = robot.end_effector_wrench
 
-        # SMART BREAK: If we reached the target early, stop waiting!
-        if abs(current_j7 - target_joint7_forward) <= TARGET_TOLERANCE_RAD:
-            break
+            ts_all.append(time.perf_counter() - t0)
+            angles_all.append(robot.q[6])
+            positions_all.append(pose.position.copy())
+            orientations_all.append(pose.orientation.as_quat())
+            forces_all.append(wrench["force"].copy())
+            torques_all.append(wrench["torque"].copy())
+        except Exception as e:
+            pass
 
         time.sleep(0.01)
 
-    # ================= REVERSE ROTATION =================
-    q_target_reverse = start_q.copy()
-    q_target_reverse[6] = start_joint7
-
-    ts_rev = []
-    angles_rev = []
-    torques_rev = []
-
-    t0_rev = time.perf_counter()
-    robot.joint_trajectory_controller_client.send_joint_config(
-        joint_names=robot.config.joint_names,
-        joint_config=q_target_reverse.tolist(),
-        time_to_goal=duration_per_direction,
-        blocking=False,
-    )
-
-    while (time.perf_counter() - t0_rev) < duration_per_direction:
-        elapsed = time.perf_counter() - t0_rev
-        current_q = robot.q.copy()
-        current_j7 = current_q[6]
-
-        ts_rev.append(elapsed)
-        angles_rev.append(current_j7)
-        torques_rev.append(robot.end_effector_wrench["torque"].copy())
-
-        # SMART BREAK: Stop waiting when we return home
-        if abs(current_j7 - start_joint7) <= TARGET_TOLERANCE_RAD:
-            break
-
-        time.sleep(0.01)
-
-    # ================= STOP RECORDING & FETCH BINARY =================
+    # ================= 4. STOP RECORDING & FETCH BINARY =================
     ser.write(b"2")
 
     print("\tFetching high-speed binary data...")
@@ -199,12 +201,56 @@ def execute_wrist_rotation_pair(robot: Robot, target_angle_rad: float, speed_rad
 
     time.sleep(SETTLE_SEC)
 
+    # ================= 5. SPLIT TELEMETRY AT PEAK ANGLE =================
+    if len(angles_all) > 0:
+        peak_idx = np.argmax(np.abs(np.array(angles_all) - angles_all[0]))
+
+        # Split Forward
+        ts_fwd = ts_all[: peak_idx + 1]
+        angles_fwd = angles_all[: peak_idx + 1]
+        positions_fwd = positions_all[: peak_idx + 1]
+        orientations_fwd = orientations_all[: peak_idx + 1]
+        forces_fwd = forces_all[: peak_idx + 1]
+        torques_fwd = torques_all[: peak_idx + 1]
+
+        # Split Reverse
+        ts_rev_raw = ts_all[peak_idx + 1 :]
+        ts_rev = [t - ts_rev_raw[0] for t in ts_rev_raw] if len(ts_rev_raw) > 0 else []
+        angles_rev = angles_all[peak_idx + 1 :]
+        positions_rev = positions_all[peak_idx + 1 :]
+        orientations_rev = orientations_all[peak_idx + 1 :]
+        forces_rev = forces_all[peak_idx + 1 :]
+        torques_rev = torques_all[peak_idx + 1 :]
+    else:
+        ts_fwd, angles_fwd, positions_fwd, orientations_fwd, forces_fwd, torques_fwd = (
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+        )
+        ts_rev, angles_rev, positions_rev, orientations_rev, forces_rev, torques_rev = (
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+        )
+
     return (
         ts_fwd,
         angles_fwd,
+        positions_fwd,
+        orientations_fwd,
+        forces_fwd,
         torques_fwd,
         ts_rev,
         angles_rev,
+        positions_rev,
+        orientations_rev,
+        forces_rev,
         torques_rev,
         pressures_full_cycle,
     )
@@ -214,6 +260,16 @@ def main():
     try:
         ser = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=2)
         time.sleep(2)
+
+        # --- NEW: SYNC & FLUSH TEENSY ---
+        # If the Teensy was stuck waiting for a stop signal from a previously crashed run,
+        # this dummy '2' breaks it out of the loop and clears the pipes.
+        ser.write(b"2")
+        time.sleep(0.5)
+        ser.reset_input_buffer()
+        ser.reset_output_buffer()
+        # --------------------------------
+
         print(f"Connected to Teensy on {SERIAL_PORT}")
     except Exception as e:
         print(f"Failed to connect to Teensy: {e}")
@@ -223,20 +279,16 @@ def main():
     robot.wait_until_ready(timeout=2.0)
     robot.controller_switcher_client.switch_controller("joint_trajectory_controller")
 
-    cfg_dir = Path(__file__).parent.parent.parent.parent / "config"
-    robot.osc_pd_controller_parameters_client.load_param_config(
-        file_path=cfg_dir / "controllers" / "joint_space" / "high_gains.yaml"
-    )
+    # --- NEW: CARTESIAN INITIALIZATION ---
+    print("Initializing arm to safe Cartesian starting pose...")
+    start_pose = robot.end_effector_pose.copy()
+    downward_orientation = R.from_euler("xyz", [-180, 0, 0], degrees=True)
+    start_pose.orientation = downward_orientation
 
-    print("Initializing joint 7 to 45 degrees...")
-    q_init = robot.q.copy()
-    q_init[6] = np.radians(45.0)
-    robot.joint_trajectory_controller_client.send_joint_config(
-        joint_names=robot.config.joint_names,
-        joint_config=q_init.tolist(),
-        time_to_goal=3.0,
-        blocking=True,
-    )
+    # Move via IK to ensure perfectly clean rotation vectors
+    robot.move_to(pose=start_pose, time_to_move=3.0)
+    time.sleep(SETTLE_SEC)
+    # -------------------------------------
 
     if not PARAMETERS_FILE.exists():
         print(f"ERROR: Parameters file not found")
@@ -261,9 +313,15 @@ def main():
         exp_dict = {
             "ts_forward": [],
             "joint7_angles_forward": [],
+            "positions_forward": [],
+            "orientations_forward": [],
+            "forces_forward": [],
             "torques_forward": [],
             "ts_reverse": [],
             "joint7_angles_reverse": [],
+            "positions_reverse": [],
+            "orientations_reverse": [],
+            "forces_reverse": [],
             "torques_reverse": [],
             "pressures_full_cycle": [],
             "target_angles": [],
@@ -280,40 +338,62 @@ def main():
         speed = planned_speeds[i]
 
         angle_deg = np.degrees(angle)
-        speed_deg_s = np.degrees(speed)
 
         print("\n" + "=" * 60)
-        print(f"RUN {i + 1} / {num_points}  |  TARGET ANGLE: {angle_deg:.2f}°  |  SPEED: {speed_deg_s:.2f}°/s")
+        print(
+            f"RUN {i + 1} / {num_points}  |  TARGET ANGLE: {angle_deg:.2f}°  |  SPEED PARAM: {speed:.3f}"
+        )
         print("=" * 60)
 
         try:
+            robot.move_to(
+                pose=Pose(position=START_POSITION, orientation=START_ORIENTATION),
+                time_to_move=1.0,
+            )
+            time.sleep(SETTLE_SEC)
+
             (
                 ts_fwd,
                 angles_fwd,
-                torques_fwd,
+                pos_fwd,
+                ori_fwd,
+                frc_fwd,
+                trq_fwd,
                 ts_rev,
                 angles_rev,
-                torques_rev,
+                pos_rev,
+                ori_rev,
+                frc_rev,
+                trq_rev,
                 press_full,
-            ) = execute_wrist_rotation_pair(robot=robot, target_angle_rad=angle, speed_rad_s=speed, ser=ser)
+            ) = execute_wrist_rotation_pair(
+                robot=robot, target_angle_rad=angle, speed_val=speed, ser=ser
+            )
 
             exp_dict["ts_forward"].append(ts_fwd)
             exp_dict["joint7_angles_forward"].append(angles_fwd)
-            exp_dict["torques_forward"].append(torques_fwd)
+            exp_dict["positions_forward"].append(pos_fwd)
+            exp_dict["orientations_forward"].append(ori_fwd)
+            exp_dict["forces_forward"].append(frc_fwd)
+            exp_dict["torques_forward"].append(trq_fwd)
 
             exp_dict["ts_reverse"].append(ts_rev)
             exp_dict["joint7_angles_reverse"].append(angles_rev)
-            exp_dict["torques_reverse"].append(torques_rev)
+            exp_dict["positions_reverse"].append(pos_rev)
+            exp_dict["orientations_reverse"].append(ori_rev)
+            exp_dict["forces_reverse"].append(frc_rev)
+            exp_dict["torques_reverse"].append(trq_rev)
 
             exp_dict["pressures_full_cycle"].append(press_full)
-
             exp_dict["target_angles"].append(angle)
             exp_dict["target_speeds"].append(speed)
 
             with open(RESULTS_FILE, "wb") as f:
                 pickle.dump(exp_dict, f)
 
-            generate_plot(i + 1, angle, speed, ts_fwd, angles_fwd, ts_rev, angles_rev, press_full)
+            generate_plot(
+                i + 1, angle, speed, ts_fwd, angles_fwd, ts_rev, angles_rev, press_full
+            )
             print(f"\t-> Saved data and plot for Run {i + 1} successfully.")
 
         except Exception as e:

@@ -17,11 +17,18 @@ from pathlib import Path
 
 # ===== CONFIGURATION =====
 NUM_POINTS = 10  # Number of rotation pairs to generate
-ANGLE_RANGE = (
-    np.radians(15.0),
-    np.deg2rad(110.0),
-)  # Min and max rotation angle in radians
-SPEED_RANGE = (0.20, 0.50)  # Min and max rotation speed in radians/second
+
+# List of (min, max) angle ranges in radians to allow for discontinuous sampling
+ANGLE_RANGES = [
+    (np.radians(-110.0), np.radians(-50.0)),
+    (np.radians(50.0), np.radians(110.0)),
+]
+
+SPEED_RANGE = (
+    np.radians(40.0),
+    np.radians(60.0),
+)  # Min and max rotation speed in radians/second
+
 RANDOM_SEED = (
     None  # Use None for random, or set to integer (e.g., 42) for reproducibility
 )
@@ -32,17 +39,17 @@ OUTPUT_FILE = Path(__file__).parent / "results" / "grids" / "rotation_params.pkl
 
 def generate_rotation_parameters(
     num_points: int = NUM_POINTS,
-    angle_range: tuple = ANGLE_RANGE,
+    angle_ranges: list = ANGLE_RANGES,
     speed_range: tuple = SPEED_RANGE,
     seed: int = RANDOM_SEED,
     output_file: Path = OUTPUT_FILE,
 ):
     """
-    Generate random wrist rotation parameters.
+    Generate random wrist rotation parameters across discontinuous ranges.
 
     Args:
         num_points: Number of rotation pairs to generate
-        angle_range: (min, max) rotation angle in radians
+        angle_ranges: List of (min, max) rotation angle tuples in radians
         speed_range: (min, max) rotation speed in radians/second
         seed: Random seed for reproducibility (None = random)
         output_file: Path to save parameters
@@ -53,15 +60,31 @@ def generate_rotation_parameters(
     # Ensure output directory exists
     output_file.parent.mkdir(parents=True, exist_ok=True)
 
-    # Generate random parameters
-    angles = np.random.uniform(angle_range[0], angle_range[1], num_points)
+    # Calculate probabilities for each range based on its width
+    # This ensures true uniform sampling across all valid domains
+    widths = [r[1] - r[0] for r in angle_ranges]
+    total_width = sum(widths)
+    probs = [w / total_width for w in widths]
+
+    # 1. Randomly pick which range each point belongs to based on width probability
+    chosen_range_indices = np.random.choice(len(angle_ranges), size=num_points, p=probs)
+
+    # 2. Sample uniformly within the chosen range
+    angles = np.array(
+        [
+            np.random.uniform(angle_ranges[idx][0], angle_ranges[idx][1])
+            for idx in chosen_range_indices
+        ]
+    )
+
+    # Generate speeds normally
     speeds = np.random.uniform(speed_range[0], speed_range[1], num_points)
 
     params_dict = {
         "angles": angles,
         "speeds": speeds,
         "num_points": num_points,
-        "angle_range": angle_range,
+        "angle_ranges": angle_ranges,
         "speed_range": speed_range,
         "seed": seed,
     }
@@ -71,9 +94,9 @@ def generate_rotation_parameters(
         pickle.dump(params_dict, f)
 
     print(f"✓ Generated {num_points} rotation parameters")
-    print(
-        f"  Angle range: {np.degrees(angle_range[0]):.2f}° to {np.degrees(angle_range[1]):.2f}°"
-    )
+    print("  Angle ranges:")
+    for r in angle_ranges:
+        print(f"    - {np.degrees(r[0]):.2f}° to {np.degrees(r[1]):.2f}°")
     print(
         f"  Speed range: {np.degrees(speed_range[0]):.2f}°/s to {np.degrees(speed_range[1]):.2f}°/s"
     )

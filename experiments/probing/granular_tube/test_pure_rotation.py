@@ -4,6 +4,7 @@
 import time
 
 import numpy as np
+from scipy.spatial.transform import Rotation as R
 
 from arm_client.robot import Pose, Robot
 from arm_client.planning.waypoints import (
@@ -20,51 +21,43 @@ def main():
     robot.controller_switcher_client.switch_controller("joint_trajectory_controller")
 
     start_pose = robot.end_effector_pose.copy()
+    start_orientation = R.from_euler("xyz", [-180, 0, 0], degrees=True)
+    rot_vec = np.array([0, 0, np.radians(45.0)])
+    rotation = R.from_rotvec(rot_vec)
 
-
-    waypoints_2 = generate_linear_waypoints(
+    waypoints_forward = generate_linear_waypoints(
         start_position=start_pose.position,
-        start_orientation=end_pose_1.orientation,
-        end_position=start.position + np.array([0.1, 0.0, 0.0]),
-        end_orientation=end_pose_1.orientation,
-        num_waypoints=8,
+        start_orientation=start_orientation,
+        end_position=start_pose.position,
+        end_orientation=rotation * start_orientation,
+        num_waypoints=10,
     )
-    end_pose_2 = Pose(
-        position=waypoints_2[-1].position,
-        orientation=waypoints_2[-1].orientation,
+    end_forward_pose = Pose(
+        position=waypoints_forward[-1].position,
+        orientation=waypoints_forward[-1].orientation,
     )
-
-    waypoints_3 = generate_spherical_waypoints(
-        start_position=end_pose_2.position,
-        start_orientation=end_pose_2.orientation,
-        radius=0.1,
-        theta_deg=-70.0,
-        phi_deg=0.0,
+    waypoints_reverse = generate_linear_waypoints(
+        start_position=start_pose.position,
+        start_orientation=end_forward_pose.orientation,
+        end_position=start_pose.position,
+        end_orientation=start_orientation,
         num_waypoints=10,
     )
 
-    # 3) Plan trajectories with chained IK seeds for joint continuity.
-    traj1, traj2, traj3 = robot.plan_joint_trajectory_sequence(
-        [waypoints_1, waypoints_2, waypoints_3],
-        [4.0, 3.0, 4.0],
+    traj1, traj2 = robot.plan_joint_trajectory_sequence(
+        [waypoints_forward, waypoints_reverse],
+        [0.1, 0.1],
     )
 
-    # 4) Execute as a sequence.
-    # Replace `between_steps_action` with a real gripper call if desired.
-    def between_steps_action():
-        print("Mid-sequence action (example placeholder, e.g., gripper close)")
-        time.sleep(0.5)
+    print("Starting execution.")
 
     robot.execute_sequence(
         [
             traj1,
-            # between_steps_action,
             traj2,
-            # between_steps_action,
-            traj3,
         ],
-        visualize_before_execution=True,
-        settle_time_between_trajectories=1.0,
+        visualize_before_execution=False,
+        settle_time_between_trajectories=0.0,  # minimal delay
     )
 
     print("Sequence execution complete.")
