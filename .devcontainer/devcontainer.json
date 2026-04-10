@@ -39,7 +39,7 @@
                 "xaver.clang-format",
                 "josetr.cmake-language-support-vscode",
                 "twxs.cmake",
-                "cheshirekow.cmake-format",
+                "cheshirekow.cmake-format"
             ]
         }
     },
@@ -53,11 +53,11 @@
         "source=/dev/dri,target=/dev/dri,type=bind,consistency=cached"
     ],
     "runArgs": [
-        "--device=/dev/input/js0", // Pass the joystick device
+        "--device=/dev/input/js0" // Pass the joystick device
         // "--runtime=nvidia",
         // "--gpus",
         // "all"
     ],
-    "postCreateCommand": "/bin/bash /home/ros/ros2_ws/src/adl-ros2/.devcontainer/post_create.sh",
-    "postStartCommand": "source /home/ros/ros2_ws/install/setup.bash 2>/dev/null || echo 'Workspace not built yet - run the colcon build task'"
+    "postCreateCommand": "bash /home/ros/ros2_ws/src/adl-ros2/.devcontainer/post_create.sh",
+    "postStartCommand": "source /home/ros/ros2_ws/install/setup.bash 2>/dev/null || true"
 }

@@ -10,7 +10,7 @@ ARG WS_FOLDER=/home/ros/ros2_ws
 #! Setup User
 # Create a non-root user
 ARG USERNAME=ros
-ARG USER_UID=1000
+ARG USER_UID=1001
 ARG USER_GID=$USER_UID
 ARG DEBIAN_FRONTEND=noninteractive
 
@@ -108,7 +108,6 @@ RUN apt-get update && \
     # ros-${ROS_DISTRO}-topic-based-ros2-control \
     ros-${ROS_DISTRO}-pinocchio \
     ros-${ROS_DISTRO}-joy \
-    ros-${ROS_DISTRO}-foxglove-bridge \
     ros-${ROS_DISTRO}-rqt-graph \
     ros-${ROS_DISTRO}-rviz2 \
     && rm -rf /var/lib/apt/lists/*
@@ -147,6 +146,9 @@ ENV PATH=$PATH \
     XDG_RUNTIME_DIR=/run/user/"${USER_UID}"  \
     WS_FOLDER=${WS_FOLDER}
 
+# Create runtime directory for the user
+USER root
+RUN mkdir -p /run/user/${USER_UID} && chown ${USER_UID}:${USER_GID} /run/user/${USER_UID}
 
 # FROM base AS franka
 USER $USERNAME

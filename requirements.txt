@@ -5,15 +5,15 @@ pandas<2.3.0
 # rclpy is provided by ROS2 system packages, not pip
 
 # Robotics and control
-HaplyHardwareAPI
-gymnasium
+# HaplyHardwareAPI
+# gymnasium
 
 # Machine learning
-torch
-torchvision
-torchaudio
-skrl[torch]
-robomimic
+# torch
+# torchvision
+# torchaudio
+# skrl[torch]
+# robomimic
 
 # Development tools
 debugpy
@@ -27,6 +27,8 @@ numpy>=1.21.0
 pyyaml>=6.0
 # rosbag2-py is provided by ROS2 system packages, not pip
 pyarrow
+# Serial communication
+pyserial
 
 # Documentation dependencies
 mkdocs>=1.6.0

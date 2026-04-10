@@ -6,6 +6,8 @@ x-base: &base
     target: base
     args:
       ROS_DISTRO: humble
+      USER_UID: 1001
+      USER_GID: 1001
 
   # --- Settings
   network_mode: "host"
@@ -31,7 +33,7 @@ x-base: &base
     PATH: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
     PKG_CONFIG_PATH: /usr/local/lib/pkgconfig:/usr/lib/pkgconfig
     LD_LIBRARY_PATH: /usr/local/lib:/usr/lib
-    PYTHONPATH: /usr/local/lib/python3.10/site-packages
+    PYTHONPATH: /home/ros/ros2_ws/src:/usr/local/lib/python3.10/site-packages
     CMAKE_PREFIX_PATH: /usr/local
 
   # user: "${UID:-1000}:${GID:-1000}"

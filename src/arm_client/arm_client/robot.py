@@ -246,6 +246,9 @@ class Robot:
             ReentrantCallbackGroup(),
         )
 
+        self._rate = self.node.create_rate(100)  # 100 Hz check rate for smooth data collection
+
+
         if spin_node:
             threading.Thread(target=self._spin_node, daemon=True).start()
 
@@ -1059,8 +1062,7 @@ class Robot:
             return False
 
         # Sleep briefly to control loop rate
-        rate = self.node.create_rate(100)  # 100 Hz check rate for smooth data collection
-        rate.sleep()
+        # self._rate.sleep()
         return True
 
     def home(self, home_config: list[float] | None = None, blocking: bool = True, time_to_home: float | None = None):
