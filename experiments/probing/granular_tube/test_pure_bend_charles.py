@@ -24,9 +24,14 @@ def main():
     print("Switching to joint trajectory controller...")
     robot.controller_switcher_client.switch_controller("joint_trajectory_controller")
 
+    robot.home()
+
     START_POSITION = np.array([0.45, -0.045, 0.40])
     START_ORIENTATION = R.from_euler("xyz", [-180, 0, 0], degrees=True)
-    start_pose = Pose(START_POSITION, START_ORIENTATION)
+
+    robot.end_effector_pose
+
+    start_pose = robot.end_effector_pose
 
     waypoints_1 = generate_spherical_waypoints(
         start_position=start_pose.position,
@@ -65,8 +70,8 @@ def main():
     #     settle_time_between_trajectories=0.0,
     # )
 
-    robot.follow_joint_trajectory(traj1)
-    robot.follow_joint_trajectory(traj2)
+    robot.follow_joint_trajectory(traj1, settle_time=0.0)
+    robot.follow_joint_trajectory(traj2, settle_time=0.0)
 
     print("Sequence execution complete.")
     robot.shutdown()

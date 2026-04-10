@@ -175,7 +175,7 @@ def plan_fr3_joint_trajectory(
     # This avoids interpolation artifacts and ensures smooth endpoint behavior.
     final_waypoint_quat_wxyz = waypoints[-1].orientation.as_quat()[[3, 0, 1, 2]]
     final_waypoint_pos = waypoints[-1].position
-    
+
     q_final = solve_ik_single(
         jnp.array(final_waypoint_quat_wxyz),
         jnp.array(final_waypoint_pos),
@@ -185,6 +185,22 @@ def plan_fr3_joint_trajectory(
     q_final.block_until_ready()
     all_joint_configs[-1] = np.array(q_final)
 
+    # Set boundary conditions
+    q_dot_start = np.zeros(len(joint_names))
+    q_dot_end = np.zeros(len(joint_names))
+
+    q_ddot_start = np.zeros(len(joint_names))
+    q_ddot_end = np.zeros(len(joint_names))
+
+    arm_joint_velocities = np.full((len(s_values), len(joint_names)), np.nan)
+    arm_joint_accels = np.full((len(s_values), len(joint_names)), np.nan)
+
+    arm_joint_velocities[0, :] = q_dot_start
+    arm_joint_velocities[-1, :] = q_dot_end
+
+    arm_joint_accels[0, :] = q_ddot_start
+    arm_joint_accels[-1, :] = q_ddot_end
+
     arm_joint_count = len(joint_names)
     arm_joint_positions = all_joint_configs[:, :arm_joint_count]
     time_from_start = (s_values * duration).tolist()
@@ -193,4 +209,6 @@ def plan_fr3_joint_trajectory(
         joint_names=joint_names,
         time_from_start=time_from_start,
         joint_positions=arm_joint_positions,
+        joint_velocities=arm_joint_velocities,
+        joint_accelerations=arm_joint_accels,
     )
