@@ -1054,6 +1054,8 @@ class Robot:
         if time_to_move is None:
             time_to_move = float(distance / speed)
 
+        print(f"[debug] Moving to target pose {desired_pose} with time_to_move: {time_to_move} sec")
+
         active_controller = self.controller_switcher_client.get_active_controller()
         if active_controller is not None and self._is_joint_controller(active_controller):
             waypoints = generate_linear_waypoints(

@@ -94,6 +94,7 @@ channels = ["https://prefix.dev/robostack-humble"]
 
 [feature.humble.dependencies]
 ros-humble-desktop = "*"
+ros-humble-franka-ros2 = "*"
 ros-humble-ament-cmake = "<4.0"
 ros-humble-control-toolbox = "*"
 ros-humble-controller-interface = "*"
