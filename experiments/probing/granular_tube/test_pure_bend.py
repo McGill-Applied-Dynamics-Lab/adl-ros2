@@ -14,7 +14,7 @@ from arm_client.planning.waypoints import (
 
 RADIUS = 0.200
 THETA = 35
-PHI = -110
+PHI = -45
 
 
 def main():

@@ -46,7 +46,7 @@ def main():
 
     traj1, traj2 = robot.plan_joint_trajectory_sequence(
         [waypoints_forward, waypoints_reverse],
-        [0.1, 0.1],
+        [1.0, 1.0],
     )
 
     print("Starting execution.")
