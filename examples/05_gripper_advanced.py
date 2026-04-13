@@ -4,6 +4,7 @@ import time
 from pathlib import Path
 
 from arm_client.gripper.franka_hand import Gripper, GripperConfig
+from arm_client import CONFIG_DIR
 
 # Option 1: Use default configuration
 print("=== Example 1: Using default configuration ===")
@@ -30,7 +31,7 @@ print(f"Custom min width: {gripper_custom.min_width} m")
 print("\n=== Example 3: Using YAML configuration ===")
 try:
     # Load configuration from the example YAML file
-    config_path = Path(__file__).parent.parent.parent / "configs" / "gripper" / "franka_gripper_example.yaml"
+    config_path = CONFIG_DIR / "gripper" / "franka_gripper_example.yaml"
     yaml_config = GripperConfig.from_yaml(config_path)
     gripper_yaml = Gripper(namespace="fr3", gripper_config=yaml_config)
 
@@ -55,22 +56,26 @@ try:
     print(f"Joint states: {gripper.joint_states}")
 
     # Demonstrate various operations
+
+    # --- Opening
     print("\nOpening gripper...")
     success = gripper.open(speed=0.05)  # Custom speed
     print(f"Open action {'succeeded' if success else 'failed'}")
 
     if success:
-        time.sleep(2)
+        time.sleep(0.5)
         print(f"Gripper width after opening: {gripper.value:.4f} m")
 
+    # --- Closing to 0.04
     print("\nSetting target width to 0.04 m...")
     success = gripper.set_target(0.04, speed=0.03)  # Custom speed
     print(f"Set target action {'succeeded' if success else 'failed'}")
 
     if success:
-        time.sleep(2)
+        time.sleep(0.5)
         print(f"Gripper width after set target: {gripper.value:.4f} m")
 
+    # --- Closing
     print("\nClosing gripper...")
     success = gripper.close(force=30.0, speed=0.02)  # Custom force and speed
     print(f"Close action {'succeeded' if success else 'failed'}")
@@ -79,6 +84,7 @@ try:
         time.sleep(2)
         print(f"Gripper width after closing: {gripper.value:.4f} m")
 
+    # --- Resetting
     print("\nResetting gripper...")
     success = gripper.reset()
     print(f"Reset action {'succeeded' if success else 'failed'}")
