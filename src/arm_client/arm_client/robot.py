@@ -246,6 +246,8 @@ class Robot:
             ReentrantCallbackGroup(),
         )
 
+        self._rate = self.node.create_rate(100)  # 100 Hz check rate for smooth data collection
+
         if spin_node:
             threading.Thread(target=self._spin_node, daemon=True).start()
 
@@ -257,6 +259,9 @@ class Robot:
         while rclpy.ok():
             executor.spin_once(timeout_sec=0.1)
 
+    # =======================
+    # MARK: Properties
+    # =======================
     @property
     def nq(self) -> int:
         """Get the number of joints in the robot.
@@ -383,6 +388,9 @@ class Robot:
             )
         return self._tau_target.copy()
 
+    # =======================
+    # MARK: General
+    # =======================
     def is_ready(self) -> bool:
         """Check if the robot is ready for operation.
 
@@ -453,6 +461,49 @@ class Robot:
         assert len(q) == self.nq, "Joint state must be of size nq."
         self._q_target = q
 
+    def set_target_wrench(self, force: List | NDArray | None = None, torque: List | NDArray | None = None):
+        """Set the target wrench (force/torque) to be applied by the robot.
+
+        Args:
+            force (list, optional): Force vector [fx, fy, fz] in N. If None, zeros are used.
+            torque (list, optional): Torque vector [tx, ty, tz] in Nm. If None, zeros are used.
+
+        Raises:
+            AssertionError: If force or torque vectors are not 3D vectors.
+        """
+        if force is None:
+            force = [0.0, 0.0, 0.0]
+        if torque is None:
+            torque = [0.0, 0.0, 0.0]
+
+        assert len(force) == 3, "Force must be a 3D vector"
+        assert len(torque) == 3, "Torque must be a 3D vector"
+
+        self._target_wrench = {"force": np.array(force), "torque": np.array(torque)}
+
+    def _is_joint_controller(self, controller_name: str) -> bool:
+        """Return True if the controller name corresponds to a joint-space controller."""
+        return any(keyword in controller_name for keyword in self._JOINT_CONTROLLER_KEYWORDS)
+
+    def is_homed(self) -> bool:
+        """Check if the robot is homed.
+
+        This method checks if the robot's current joint configuration matches the home configuration.
+
+        Returns:
+            bool: True if the robot is homed, False otherwise.
+        """
+        return np.allclose(self.q, self.config.home_config, atol=1e-1)
+
+    def shutdown(self):
+        """Shutdown the node."""
+        if rclpy.ok():
+            rclpy.shutdown()
+
+    # =======================
+    # MARK: Callbacks
+    # =======================
+
     def _callback_publish_target_pose(self):
         """Publish the current target pose if one exists.
 
@@ -495,59 +546,6 @@ class Robot:
         if self._target_twist is None or not rclpy.ok():
             return
         self._target_twist_publisher.publish(self._twist_to_twist_msg(self._target_twist))
-
-    def set_target_wrench(self, force: List | NDArray | None = None, torque: List | NDArray | None = None):
-        """Set the target wrench (force/torque) to be applied by the robot.
-
-        Args:
-            force (list, optional): Force vector [fx, fy, fz] in N. If None, zeros are used.
-            torque (list, optional): Torque vector [tx, ty, tz] in Nm. If None, zeros are used.
-
-        Raises:
-            AssertionError: If force or torque vectors are not 3D vectors.
-        """
-        if force is None:
-            force = [0.0, 0.0, 0.0]
-        if torque is None:
-            torque = [0.0, 0.0, 0.0]
-
-        assert len(force) == 3, "Force must be a 3D vector"
-        assert len(torque) == 3, "Torque must be a 3D vector"
-
-        self._target_wrench = {"force": np.array(force), "torque": np.array(torque)}
-
-    def _wrench_to_wrench_msg(self, wrench: dict) -> WrenchStamped:
-        """Convert a wrench dictionary to a ROS WrenchStamped message.
-
-        Args:
-            wrench (dict): Dictionary containing 'force' and 'torque' numpy arrays.
-
-        Returns:
-            WrenchStamped: ROS message containing the wrench data with proper header.
-        """
-        wrench_msg = WrenchStamped()
-        wrench_msg.header.frame_id = self.config.base_frame
-        wrench_msg.header.stamp = self.node.get_clock().now().to_msg()
-        wrench_msg.wrench.force.x = wrench["force"][0]
-        wrench_msg.wrench.force.y = wrench["force"][1]
-        wrench_msg.wrench.force.z = wrench["force"][2]
-        wrench_msg.wrench.torque.x = wrench["torque"][0]
-        wrench_msg.wrench.torque.y = wrench["torque"][1]
-        wrench_msg.wrench.torque.z = wrench["torque"][2]
-        return wrench_msg
-
-    def _wrench_msg_to_wrench(self, msg: WrenchStamped) -> dict:
-        """Convert a ROS WrenchStamped message to a wrench dictionary.
-
-        Args:
-            msg (WrenchStamped): ROS message containing the wrench data.
-
-        Returns:
-            dict: Dictionary containing 'force' and 'torque' numpy arrays.
-        """
-        force = np.array([msg.wrench.force.x, msg.wrench.force.y, msg.wrench.force.z])
-        torque = np.array([msg.wrench.torque.x, msg.wrench.torque.y, msg.wrench.torque.z])
-        return {"force": force, "torque": torque}
 
     def _callback_current_wrench(self, msg: WrenchStamped):
         """Update the current wrench from a ROS message.
@@ -614,65 +612,132 @@ class Robot:
         if self._tau_target is None:
             self._tau_target = self._tau_current.copy()
 
-    def move_to(
-        self,
-        position: List | NDArray | None = None,
-        pose: Pose | None = None,
-        speed: float = 0.05,
-        time_to_move: float | None = None,
-    ):
-        """Move the end-effector to a target pose.
+    # =======================
+    # MARK: Utilities
+    # =======================
 
-        Dispatches behavior based on the active controller:
-        - Joint controller: plan IK trajectory and execute through joint trajectory action.
-        - Other controllers: keep Cartesian interpolation/publishing behavior.
+    def _wrench_to_wrench_msg(self, wrench: dict) -> WrenchStamped:
+        """Convert a wrench dictionary to a ROS WrenchStamped message.
 
         Args:
-            position: Position to move to. If None, the pose is used.
-            pose: The pose to move to. If None, the position is used.
-            speed: The speed of the movement. [m/s]
+            wrench (dict): Dictionary containing 'force' and 'torque' numpy arrays.
+
+        Returns:
+            WrenchStamped: ROS message containing the wrench data with proper header.
         """
-        if self._current_pose is None:
-            raise RuntimeError(
-                "The robot has not received any poses yet. Run wait_until_ready() before running anything else."
-            )
-        desired_pose = self._parse_pose_or_position(position, pose)
-        start_pose = self._current_pose
-        distance = np.linalg.norm(desired_pose.position - start_pose.position)
+        wrench_msg = WrenchStamped()
+        wrench_msg.header.frame_id = self.config.base_frame
+        wrench_msg.header.stamp = self.node.get_clock().now().to_msg()
+        wrench_msg.wrench.force.x = wrench["force"][0]
+        wrench_msg.wrench.force.y = wrench["force"][1]
+        wrench_msg.wrench.force.z = wrench["force"][2]
+        wrench_msg.wrench.torque.x = wrench["torque"][0]
+        wrench_msg.wrench.torque.y = wrench["torque"][1]
+        wrench_msg.wrench.torque.z = wrench["torque"][2]
+        return wrench_msg
 
-        if time_to_move is None:
-            time_to_move = float(distance / speed)
+    def _wrench_msg_to_wrench(self, msg: WrenchStamped) -> dict:
+        """Convert a ROS WrenchStamped message to a wrench dictionary.
 
-        active_controller = self.controller_switcher_client.get_active_controller()
-        if active_controller is not None and self._is_joint_controller(active_controller):
-            waypoints = generate_linear_waypoints(
-                start_position=start_pose.position,
-                start_orientation=start_pose.orientation,
-                end_position=desired_pose.position,
-                end_orientation=desired_pose.orientation,
-                num_waypoints=2,
-            )
-            trajectory = self.plan_joint_trajectory(waypoints, duration=time_to_move, visualize=False)
-            self.follow_joint_trajectory(trajectory, blocking=True)
-            self._target_pose = desired_pose.copy()
-            return
+        Args:
+            msg (WrenchStamped): ROS message containing the wrench data.
 
-        N = int(time_to_move * self.config.publish_frequency)
+        Returns:
+            dict: Dictionary containing 'force' and 'torque' numpy arrays.
+        """
+        force = np.array([msg.wrench.force.x, msg.wrench.force.y, msg.wrench.force.z])
+        torque = np.array([msg.wrench.torque.x, msg.wrench.torque.y, msg.wrench.torque.z])
+        return {"force": force, "torque": torque}
 
-        rate = self.node.create_rate(self.config.publish_frequency)
+    def _pose_msg_to_pose(self, pose: PoseStamped) -> Pose:
+        """Convert a ROS2 pose msg to a pose."""
+        position = np.array([pose.pose.position.x, pose.pose.position.y, pose.pose.position.z])
+        orientation = Rotation.from_quat(
+            [
+                pose.pose.orientation.x,
+                pose.pose.orientation.y,
+                pose.pose.orientation.z,
+                pose.pose.orientation.w,
+            ]
+        )
+        return Pose(position, orientation)
 
-        slerp = Slerp(
-            [0, 1], Rotation.from_quat([start_pose.orientation.as_quat(), desired_pose.orientation.as_quat()])
+    def _pose_to_pose_msg(self, pose: Pose) -> PoseStamped:
+        """Convert a pose to a pose message."""
+        msg = PoseStamped()
+        msg.header.frame_id = self.config.base_frame
+        msg.header.stamp = self.node.get_clock().now().to_msg()
+        msg.pose.position.x, msg.pose.position.y, msg.pose.position.z = pose.position
+        q = pose.orientation.as_quat()
+        (
+            msg.pose.orientation.x,
+            msg.pose.orientation.y,
+            msg.pose.orientation.z,
+            msg.pose.orientation.w,
+        ) = q
+        return msg
+
+    def _joint_to_joint_msg(self, q: NDArray, dq: NDArray | None = None, tau: NDArray | None = None) -> JointState:
+        """Convert a pose to a pose message."""
+        joint_msg = JointState()
+        joint_msg.header.frame_id = self.config.base_frame
+        joint_msg.header.stamp = self.node.get_clock().now().to_msg()
+        joint_msg.name = [
+            joint_name for joint_name in self.config.joint_names
+        ]  # [self._prefix + joint_name for joint_name in self.config.joint_names]
+        joint_msg.position = q.tolist()
+        joint_msg.velocity = dq.tolist() if dq is not None else [0.0] * len(q)
+        joint_msg.effort = tau.tolist() if tau is not None else [0.0] * len(q)
+        return joint_msg
+
+    def _twist_to_twist_msg(self, twist: Twist) -> TwistStamped:
+        msg = TwistStamped()
+
+        msg.header.frame_id = self.config.base_frame
+        msg.header.stamp = self.node.get_clock().now().to_msg()
+        msg.twist.linear.x, msg.twist.linear.y, msg.twist.linear.z = twist.linear
+        msg.twist.angular.x, msg.twist.angular.y, msg.twist.angular.z = twist.angular
+
+        return msg
+
+    def _parse_pose_or_position(self, position: List | NDArray | None = None, pose: Pose | None = None) -> Pose:
+        """Parse a pose from a desired position or pose.
+
+        This function is a utility to create a pose object from either a position vector or a pose object.
+        """
+        assert position is not None or pose is not None, "Either position or pose must be provided."
+
+        desired_pose = pose.copy() if pose is not None else self.target_pose
+        if position is not None:
+            assert len(position) == 3, "Position must be a 3D vector."
+            desired_pose.position = np.array(position)
+
+        return desired_pose
+
+    # =======================
+    # MARK: Control
+    # =======================
+
+    # ---- Joint Level
+    def home(self, home_config: list[float] | None = None, blocking: bool = True, time_to_home: float | None = None):
+        """Home the robot."""
+        self.controller_switcher_client.switch_controller("joint_trajectory_controller")
+        self.joint_trajectory_controller_client.send_joint_config(
+            self.config.joint_names,
+            self.config.home_config if home_config is None else home_config,
+            self.config.time_to_home if time_to_home is None else time_to_home,
+            blocking=blocking,
         )
 
-        for t in np.linspace(0.0, 1.0, N):
-            pos = (1 - t) * start_pose.position + t * desired_pose.position
-            ori = slerp([t])[0]
-            next_pose = Pose(pos, ori)
-            self._target_pose = next_pose
-            rate.sleep()
+        # Set to none to avoid publishing the previous target pose after activating the next controller
+        self._target_pose = None
+        self._q_target = None
 
-        self._target_pose = desired_pose
+        if blocking:
+            self.wait_until_ready()
+
+        # if switch_to_default_controller:
+        #     self.controller_switcher_client.switch_controller(self.config.default_controller)
 
     def plan_joint_trajectory(
         self,
@@ -694,7 +759,7 @@ class Robot:
             initial_joint_config: Optional seed for the first IK point.
                 If None, uses the current measured robot joint state.
         """
-        trajectory = plan_fr3_joint_trajectory(
+        joint_traj = plan_fr3_joint_trajectory(
             waypoints=list(waypoints),
             duration=duration,
             joint_names=self.config.joint_names,
@@ -710,11 +775,11 @@ class Robot:
         )
 
         if visualize:
-            approved = visualize_planned_joint_trajectory(trajectory)
+            approved = visualize_planned_joint_trajectory(joint_traj)
             if not approved:
                 raise RuntimeError("Trajectory rejected by user.")
 
-        return trajectory
+        return joint_traj
 
     def plan_joint_trajectory_sequence(
         self,
@@ -723,10 +788,10 @@ class Robot:
         n_points: int | None = None,
         show_progress: bool = True,
     ) -> list[PlannedJointTrajectory]:
-        """Plan multiple trajectories with chained joint seeds for continuity.
+        """Plan multiple trajectories with continuous joints.
 
         Each segment uses the previous segment's final joint configuration as the
-        IK seed for the next one to prevent joint discontinuities.
+        IK initial config for the next one to prevent joint discontinuities.
         """
         if len(waypoints_list) != len(durations):
             raise ValueError("waypoints_list and durations must have the same length")
@@ -734,7 +799,7 @@ class Robot:
             return []
 
         trajectories: list[PlannedJointTrajectory] = []
-        seed = self.q
+        start_joint_cfg = self.q
 
         for waypoints, duration in zip(waypoints_list, durations):
             traj = self.plan_joint_trajectory(
@@ -743,10 +808,10 @@ class Robot:
                 visualize=False,
                 n_points=n_points,
                 show_progress=show_progress,
-                initial_joint_config=seed,
+                initial_joint_config=start_joint_cfg,
             )
             trajectories.append(traj)
-            seed = traj.joint_positions[-1]
+            start_joint_cfg = traj.joint_positions[-1]
 
         return trajectories
 
@@ -767,12 +832,10 @@ class Robot:
         if active_controller != "joint_trajectory_controller":
             self.controller_switcher_client.switch_controller("joint_trajectory_controller")
 
-        trajectory_to_send = self._with_settle_points(trajectory, settle_time) if settle_time > 0.0 else trajectory
+        trajectory_to_send = self._add_settle_time(trajectory, settle_time) if settle_time > 0.0 else trajectory
 
         self.joint_trajectory_controller_client.send_joint_trajectory(
-            joint_names=trajectory_to_send.joint_names,
-            joint_positions=trajectory_to_send.joint_positions.tolist(),
-            time_from_start=trajectory_to_send.time_from_start,
+            joint_trajectory=trajectory_to_send,
             blocking=blocking,
         )
 
@@ -856,7 +919,7 @@ class Robot:
                 if stop_on_error:
                     raise
 
-    def _with_settle_points(self, trajectory: PlannedJointTrajectory, settle_time: float) -> PlannedJointTrajectory:
+    def _add_settle_time(self, trajectory: PlannedJointTrajectory, settle_time: float) -> PlannedJointTrajectory:
         """Add start/end hold points directly in the trajectory message timing.
 
         This follows the sequence requested for each trajectory:
@@ -878,6 +941,10 @@ class Robot:
 
         first_q = np.array(trajectory.joint_positions[0], dtype=float)
         last_q = np.array(trajectory.joint_positions[-1], dtype=float)
+        first_dq = np.array(trajectory.joint_velocities[0], dtype=float)
+        last_dq = np.array(trajectory.joint_velocities[-1], dtype=float)
+        first_ddq = np.array(trajectory.joint_accelerations[0], dtype=float)
+        last_ddq = np.array(trajectory.joint_accelerations[-1], dtype=float)
 
         # Requested shape:
         #   - duplicate first point at t_settle
@@ -886,20 +953,30 @@ class Robot:
         # If original trajectory starts at t=0, the shifted first point equals t_settle.
         # To keep strictly increasing timestamps for ros2_control, drop that duplicated shifted point.
         eps = 1e-6
-        include_shifted_first = shifted_times[0] > (settle_time + eps)
+        # include_shifted_first = shifted_times[0] > (settle_time + eps)
 
-        new_times = [settle_time]
+        new_times = [original_times[0]]
         new_positions: list[np.ndarray] = [first_q]
+        new_vels: list[np.ndarray] = [np.zeros_like(first_dq)]
+        new_accels: list[np.ndarray] = [np.zeros_like(first_ddq)]
 
-        if include_shifted_first:
-            new_times.append(shifted_times[0])
-            new_positions.append(np.array(trajectory.joint_positions[0], dtype=float))
+        # if include_shifted_first:
+        #     new_times.append(shifted_times[0])
+        #     new_positions.append(np.array(trajectory.joint_positions[0], dtype=float))
+        #     new_vels.append(np.array(trajectory.joint_velocities[0], dtype=float))
+        #     new_accels.append(np.array(trajectory.joint_accelerations[0], dtype=float))
 
-        new_times.extend(shifted_times[1:])
-        new_positions.extend([np.array(q, dtype=float) for q in trajectory.joint_positions[1:]])
+        new_times.extend(shifted_times)
 
-        new_times.append(duration + 2.0 * settle_time)
+        new_positions.extend(trajectory.joint_positions)
+        new_vels.extend(trajectory.joint_velocities)
+        new_accels.extend(trajectory.joint_accelerations)
+
+        # Add last time
+        new_times.append(new_times[-1] + settle_time)
         new_positions.append(last_q)
+        new_vels.append(np.zeros_like(last_dq))
+        new_accels.append(np.zeros_like(last_ddq))
 
         # Final guard against floating-point equality at segment boundaries.
         for i in range(1, len(new_times)):
@@ -910,6 +987,8 @@ class Robot:
             joint_names=trajectory.joint_names,
             time_from_start=new_times,
             joint_positions=np.array(new_positions),
+            joint_velocities=np.array(new_vels),
+            joint_accelerations=np.array(new_accels),
         )
 
     def _build_full_sequence_trajectory(self, steps: Sequence[Any]) -> PlannedJointTrajectory:
@@ -945,11 +1024,68 @@ class Robot:
             joint_positions=np.array(all_positions),
         )
 
-    def _is_joint_controller(self, controller_name: str) -> bool:
-        """Return True if the controller name corresponds to a joint-space controller."""
-        return any(keyword in controller_name for keyword in self._JOINT_CONTROLLER_KEYWORDS)
+    # ----- Cartesian
+    def move_to(
+        self,
+        position: List | NDArray | None = None,
+        pose: Pose | None = None,
+        speed: float = 0.05,
+        time_to_move: float | None = None,
+    ):
+        """Move the end-effector to a target pose.
 
-    def execute_trajectory(
+        Dispatches behavior based on the active controller:
+        - Joint controller: plan IK trajectory and execute through joint trajectory action.
+        - Other controllers: keep Cartesian interpolation/publishing behavior.
+
+        Args:
+            position: Position to move to. If None, the pose is used.
+            pose: The pose to move to. If None, the position is used.
+            speed: The speed of the movement. [m/s]
+        """
+        if self._current_pose is None:
+            raise RuntimeError(
+                "The robot has not received any poses yet. Run wait_until_ready() before running anything else."
+            )
+        desired_pose = self._parse_pose_or_position(position, pose)
+        start_pose = self._current_pose
+        distance = np.linalg.norm(desired_pose.position - start_pose.position)
+
+        if time_to_move is None:
+            time_to_move = float(distance / speed)
+
+        active_controller = self.controller_switcher_client.get_active_controller()
+        if active_controller is not None and self._is_joint_controller(active_controller):
+            waypoints = generate_linear_waypoints(
+                start_position=start_pose.position,
+                start_orientation=start_pose.orientation,
+                end_position=desired_pose.position,
+                end_orientation=desired_pose.orientation,
+                num_waypoints=2,
+            )
+            trajectory = self.plan_joint_trajectory(waypoints, duration=time_to_move, visualize=False)
+            self.follow_joint_trajectory(trajectory, blocking=True)
+            self._target_pose = desired_pose.copy()
+            return
+
+        N = int(time_to_move * self.config.publish_frequency)
+
+        rate = self.node.create_rate(self.config.publish_frequency)
+
+        slerp = Slerp(
+            [0, 1], Rotation.from_quat([start_pose.orientation.as_quat(), desired_pose.orientation.as_quat()])
+        )
+
+        for t in np.linspace(0.0, 1.0, N):
+            pos = (1 - t) * start_pose.position + t * desired_pose.position
+            ori = slerp([t])[0]
+            next_pose = Pose(pos, ori)
+            self._target_pose = next_pose
+            rate.sleep()
+
+        self._target_pose = desired_pose
+
+    def execute_cartesian_traj(
         self,
         waypoints: List[tuple[Pose, Twist]],
         time_from_start: List[float],
@@ -1059,106 +1195,5 @@ class Robot:
             return False
 
         # Sleep briefly to control loop rate
-        rate = self.node.create_rate(100)  # 100 Hz check rate for smooth data collection
-        rate.sleep()
+        # self._rate.sleep()
         return True
-
-    def home(self, home_config: list[float] | None = None, blocking: bool = True, time_to_home: float | None = None):
-        """Home the robot."""
-        self.controller_switcher_client.switch_controller("joint_trajectory_controller")
-        self.joint_trajectory_controller_client.send_joint_config(
-            self.config.joint_names,
-            self.config.home_config if home_config is None else home_config,
-            self.config.time_to_home if time_to_home is None else time_to_home,
-            blocking=blocking,
-        )
-
-        # Set to none to avoid publishing the previous target pose after activating the next controller
-        self._target_pose = None
-        self._q_target = None
-
-        if blocking:
-            self.wait_until_ready()
-
-        # if switch_to_default_controller:
-        #     self.controller_switcher_client.switch_controller(self.config.default_controller)
-
-    def _pose_msg_to_pose(self, pose: PoseStamped) -> Pose:
-        """Convert a ROS2 pose msg to a pose."""
-        position = np.array([pose.pose.position.x, pose.pose.position.y, pose.pose.position.z])
-        orientation = Rotation.from_quat(
-            [
-                pose.pose.orientation.x,
-                pose.pose.orientation.y,
-                pose.pose.orientation.z,
-                pose.pose.orientation.w,
-            ]
-        )
-        return Pose(position, orientation)
-
-    def _pose_to_pose_msg(self, pose: Pose) -> PoseStamped:
-        """Convert a pose to a pose message."""
-        msg = PoseStamped()
-        msg.header.frame_id = self.config.base_frame
-        msg.header.stamp = self.node.get_clock().now().to_msg()
-        msg.pose.position.x, msg.pose.position.y, msg.pose.position.z = pose.position
-        q = pose.orientation.as_quat()
-        (
-            msg.pose.orientation.x,
-            msg.pose.orientation.y,
-            msg.pose.orientation.z,
-            msg.pose.orientation.w,
-        ) = q
-        return msg
-
-    def _joint_to_joint_msg(self, q: NDArray, dq: NDArray | None = None, tau: NDArray | None = None) -> JointState:
-        """Convert a pose to a pose message."""
-        joint_msg = JointState()
-        joint_msg.header.frame_id = self.config.base_frame
-        joint_msg.header.stamp = self.node.get_clock().now().to_msg()
-        joint_msg.name = [
-            joint_name for joint_name in self.config.joint_names
-        ]  # [self._prefix + joint_name for joint_name in self.config.joint_names]
-        joint_msg.position = q.tolist()
-        joint_msg.velocity = dq.tolist() if dq is not None else [0.0] * len(q)
-        joint_msg.effort = tau.tolist() if tau is not None else [0.0] * len(q)
-        return joint_msg
-
-    def _twist_to_twist_msg(self, twist: Twist) -> TwistStamped:
-        msg = TwistStamped()
-
-        msg.header.frame_id = self.config.base_frame
-        msg.header.stamp = self.node.get_clock().now().to_msg()
-        msg.twist.linear.x, msg.twist.linear.y, msg.twist.linear.z = twist.linear
-        msg.twist.angular.x, msg.twist.angular.y, msg.twist.angular.z = twist.angular
-
-        return msg
-
-    def _parse_pose_or_position(self, position: List | NDArray | None = None, pose: Pose | None = None) -> Pose:
-        """Parse a pose from a desired position or pose.
-
-        This function is a utility to create a pose object from either a position vector or a pose object.
-        """
-        assert position is not None or pose is not None, "Either position or pose must be provided."
-
-        desired_pose = pose.copy() if pose is not None else self.target_pose
-        if position is not None:
-            assert len(position) == 3, "Position must be a 3D vector."
-            desired_pose.position = np.array(position)
-
-        return desired_pose
-
-    def is_homed(self) -> bool:
-        """Check if the robot is homed.
-
-        This method checks if the robot's current joint configuration matches the home configuration.
-
-        Returns:
-            bool: True if the robot is homed, False otherwise.
-        """
-        return np.allclose(self.q, self.config.home_config, atol=1e-1)
-
-    def shutdown(self):
-        """Shutdown the node."""
-        if rclpy.ok():
-            rclpy.shutdown()
