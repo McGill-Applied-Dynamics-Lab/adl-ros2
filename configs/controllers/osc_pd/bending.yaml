@@ -1,0 +1,40 @@
+# controller: OSC PD Controller
+# Custom parameters for improved tracking accuracy during bending experiments
+# Higher gains and less filtering for better position/orientation tracking
+
+gains.k_pos_x: 2000.0
+gains.k_pos_y: 2000.0
+gains.k_pos_z: 2000.0
+
+gains.d_pos_x: 150.0
+gains.d_pos_y: 150.0
+gains.d_pos_z: 150.0
+
+gains.k_rot_x: 100.0
+gains.k_rot_y: 100.0
+gains.k_rot_z: 100.0
+
+gains.d_rot_x: 8.0
+gains.d_rot_y: 8.0
+gains.d_rot_z: 8.0
+
+# -- EMA Filters (0.0: Max filtering, 1.0: No filtering) --
+# Balanced filtering: more responsive to target orientation changes
+filter.target_pose: 0.5
+filter.target_twist: 0.5
+
+filter.joint_velocity: 1.0
+filter.output_torque: 0.8
+
+nullspace.damping: 0.0
+
+workspace.force_limit: 90.0
+workspace.torque_limit: 10.0
+
+tool.length: -0.06
+
+log.enabled: true
+log.timing: false
+log.robot_state: false
+log.targets: false
+log.virtual_coupling: false

@@ -71,6 +71,23 @@ class ControllerSwitcherClient:
 
         return response.controller
 
+    def get_active_controllers(self) -> list[str]:
+        """Get the names of all currently active controllers."""
+        controllers = self.get_controller_list()
+        return [controller.name for controller in controllers if controller.state == "active"]
+
+    def get_active_controller(self) -> str | None:
+        """Get the currently active non-broadcaster controller.
+
+        Returns:
+            str | None: Active controller name if available, otherwise None.
+        """
+        active_controllers = self.get_active_controllers()
+        for controller_name in active_controllers:
+            if not controller_name.endswith("broadcaster"):
+                return controller_name
+        return None
+
     def load_controller(self, controller_name: str) -> bool:
         """Load a controller using a service."""
         request = LoadController.Request()

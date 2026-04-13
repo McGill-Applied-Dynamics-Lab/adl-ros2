@@ -33,6 +33,10 @@ from rclpy.duration import Duration
 from rclpy.node import Node
 from trajectory_msgs.msg import JointTrajectoryPoint
 
+from arm_client.planning.types import PlannedJointTrajectory
+
+import numpy as np
+
 
 class JointTrajectoryControllerClient(ActionClient):
     """A ROS2 Action Client for controlling robot joints through trajectory messages.
@@ -100,4 +104,63 @@ class JointTrajectoryControllerClient(ActionClient):
                 self.node.get_logger().debug("Waiting for goal result...", throttle_duration_sec=1.0)
 
             self.node.get_logger().debug(f"Goal result: {future.result()}")
+            return future.result()
+
+    def send_joint_trajectory(
+        self,
+        joint_trajectory: PlannedJointTrajectory,
+        blocking: bool = True,
+    ) -> Optional[FollowJointTrajectory.Result]:
+        """Send a full joint trajectory to the robot.
+
+        Args:
+            joint_trajectory (PlannedJointTrajectory): The planned joint trajectory to send.
+            blocking (bool, optional): Whether to block until completion.
+
+        Returns:
+            Optional[FollowJointTrajectory.Result]: Result when blocking, otherwise None.
+        """
+        joint_names = joint_trajectory.joint_names
+
+        joint_positions = joint_trajectory.joint_positions
+        joint_velocities = joint_trajectory.joint_velocities
+        joint_accelerations = joint_trajectory.joint_accelerations
+        time_from_start = joint_trajectory.time_from_start
+
+        if len(joint_positions) != len(time_from_start):
+            raise ValueError("joint_positions and time_from_start must have the same length")
+        if len(joint_positions) == 0:
+            raise ValueError("joint_positions cannot be empty")
+
+        self._goal.trajectory.joint_names = [self._prefix + joint_name for joint_name in joint_names]
+        self._goal.trajectory.header.stamp = self.node.get_clock().now().to_msg()
+        self._goal.trajectory.points = []
+
+        for position, vel, accel, t in zip(joint_positions, joint_velocities, joint_accelerations, time_from_start):
+            point = JointTrajectoryPoint()
+            point.time_from_start = Duration(seconds=int(t), nanoseconds=int((t % 1) * 1e9)).to_msg()
+
+            point.positions = list(position)
+
+            if not np.isnan(vel).any():
+                point.velocities = list(vel)
+
+            if not np.isnan(accel).any():
+                point.accelerations = list(accel)
+
+            self._goal.trajectory.points.append(point)
+
+        future = self.send_goal_async(self._goal)
+
+        if blocking:
+            while not future.done():
+                self.node.get_logger().debug("Waiting for trajectory goal answer...", throttle_duration_sec=1.0)
+
+            goal_handle = future.result()
+
+            future = goal_handle.get_result_async()
+            while not future.done():
+                self.node.get_logger().debug("Waiting for trajectory result...", throttle_duration_sec=1.0)
+
+            self.node.get_logger().debug(f"Trajectory goal result: {future.result()}")
             return future.result()

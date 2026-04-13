@@ -1,0 +1,20 @@
+# Franka Gripper Configuration Example
+# This file shows how to configure the Franka gripper client
+
+max_width: 0.08  # Maximum gripper width in meters (8 cm)
+min_width: 0.0   # Minimum gripper width in meters (fully closed)
+default_speed: 0.1  # Default movement speed in m/s (10 cm/s)
+default_force: 50.0  # Default grasping force in N
+grasp_epsilon_inner: 0.005  # Inner epsilon for grasp action tolerance
+grasp_epsilon_outer: 0.005  # Outer epsilon for grasp action tolerance
+
+# ROS2 topic and action names (usually don't need to change these)
+joint_state_topic: "franka_gripper/joint_states"
+grasp_action: "franka_gripper/grasp"
+move_action: "franka_gripper/move"
+homing_action: "franka_gripper/homing"
+gripper_command_action: "franka_gripper/gripper_action"
+
+# Timing configuration
+max_joint_delay: 1.0  # Maximum delay for joint state messages before considering them stale
+action_timeout: 10.0  # Timeout for action calls in seconds

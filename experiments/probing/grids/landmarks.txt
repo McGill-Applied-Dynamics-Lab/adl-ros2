@@ -1,9 +1,0 @@
-TOP RIGHT POSITION (W/R VIEWER)
-- x: 0.6416
-- y: -0.01052
-- z: 0.1654
-
-BUTTON POSITION
-- x: 0.5835
-- y: 0.006288
-- z: 0.1751
