@@ -22,5 +22,11 @@ jobs:
           pixi-version: v0.67.0
           cache: true
 
+      - name: Setup colcon mixins
+        run: pixi run setup-colcon
+
+      - name: Build ROS2 workspace
+        run: pixi run -e humble build
+
       - name: Smoke test Pixi environment
         run: pixi run -e humble test-install
