@@ -53,7 +53,7 @@ def main():
 
     traj1, traj2 = robot.plan_joint_trajectory_sequence(
         [waypoints_1, waypoints_2],
-        [5.0, 5.0],
+        [2.0, 2.0],
     )
 
     # robot.execute_sequence(
