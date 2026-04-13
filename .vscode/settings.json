@@ -1,24 +1,25 @@
 {
     "python.defaultInterpreterPath": "${workspaceFolder}/.pixi/envs/humble/bin/python",
     "python.autoComplete.extraPaths": [
-        "${workspaceFolder}/src/arm_client",
-        "${workspaceFolder}/src/robot_arm",
-        "${workspaceFolder}/src/robot_tasks",
-        "${workspaceFolder}/src/teleop",
-        "${workspaceFolder}/src/adg_ros2_utils",
-        "${workspaceFolder}/build_humble/**",
-        "${workspaceFolder}/install_humble/**"
+        "${workspaceFolder}/src",
+        "${workspaceFolder}/build_humble",
+        "${workspaceFolder}/install_humble",
+        "${workspaceFolder}/install_humble/arm_client/lib/python3.12/site-packages",
+        "${workspaceFolder}/install_humble/arm_interfaces/lib/python3.12/site-packages"
     ],
     "python.analysis.extraPaths": [
+        "${workspaceFolder}/src",
         "${workspaceFolder}/src/arm_client",
+        "${workspaceFolder}/src/arm_interfaces",
         "${workspaceFolder}/src/robot_arm",
         "${workspaceFolder}/src/robot_tasks",
         "${workspaceFolder}/src/teleop",
-        "${workspaceFolder}/src/adg_ros2_utils",
-        "${workspaceFolder}/build_humble/**",
-        "${workspaceFolder}/install_humble/**",
+        "${workspaceFolder}/build_humble",
+        "${workspaceFolder}/install_humble",
+        "${workspaceFolder}/install_humble/arm_client/lib/python3.12/site-packages",
+        "${workspaceFolder}/install_humble/arm_interfaces/lib/python3.12/site-packages",
         // "/opt/openrobots/lib/python3.10/site-packages",
-        "/usr/local/lib/python3.10/site-packages"
+        "/usr/local/lib/python3.10/site-packages",
     ],
     "files.associations": {
         "*.sty": "latex",
@@ -126,7 +127,7 @@
     "python.testing.pytestEnabled": true,
     "python.testing.autoTestDiscoverOnSaveEnabled": false,
     "terminal.integrated.env.linux": {
-        "BASH_ENV": "/home/ros/ros2_ws/install/setup.bash"
+        "BASH_ENV": "${workspaceFolder}/install_humble/setup.bash"
     },
     //
     "ros.distro": "humble",
@@ -139,16 +140,6 @@
         "latex",
         "plaintext"
     ],
-    //--- Docker
-    "containers.composeCommand": "docker compose",
-    "cmake.sourceDirectory": "/home/ros/ros2_ws/src/adl-ros2/src/robot_arm/robot_arm_testing",
-    // Path mapping to redirect build directory files to source directory
-    // "python.debugging.pathMappings": [
-    //     {
-    //         "localRoot": "${workspaceFolder}/src",
-    //         "remoteRoot": "/home/ros/ros2_ws/build"
-    //     }
-    // ],
     // Alternative: Configure file exclusions to hide build directory duplicates
     "files.exclude": {
         "**/build/**/*.py": true,

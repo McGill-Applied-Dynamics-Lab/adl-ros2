@@ -4,6 +4,7 @@
 # .vscode/
 # !**/adg_ros2/.vscode/
 .vscode/.env.humble
+.vscode/**.code-workspace
 
 # Python
 *.pyc

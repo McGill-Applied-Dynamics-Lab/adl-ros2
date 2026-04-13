@@ -6,7 +6,13 @@ import importlib.metadata
 
 __version__ = importlib.metadata.version("arm_client")
 # CONFIG_DIR = Path(__file__).parent.parent.parent.parent / "src" /"configs"
-CONFIG_DIR = Path("/home/ros/ros2_ws/src/adl-ros2/configs")
+
+root_dir = Path(__file__).parent.parent.parent.parent
+
+CONFIG_DIR = root_dir / "configs"
+
+if not CONFIG_DIR.exists():
+    Warning(f"Config directory {CONFIG_DIR} not found.")
 
 try:
     import rclpy  # noqa: F401

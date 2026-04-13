@@ -1,0 +1,166 @@
+# Documentation Setup
+This directory contains the [Zensical](https://zensical.org/docs/get-started/)-based documentation for the ADL ROS2 project.
+
+**Doc To Add**
+Robot Setup:
+
+- [ ] Franka Desk logins
+- [ ] SSH Instructions
+- [ ] FCI screenshots
+
+
+
+## Development
+- Description and example of how to use your package in `docs/packages/<your_pkg>.md`
+  - Auto-generated docs from docstring in `docs/reference/<your_pkg>.md`
+  - Add the new files to the nav tree in `zensical.toml:nav`
+
+
+### Build the Documentation
+
+```bash
+zensical serve
+```
+
+The documentation will be available at `http://localhost:8000`. The documentation auto-reloads when you make changes.
+
+
+## Deployment
+
+### GitHub Pages
+The documentation can be automatically deployed to GitHub Pages:
+
+```yaml
+# .github/workflows/docs.yml
+name: Deploy Documentation
+on:
+  push:
+    branches: [main]
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+    - name: Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: 3.x
+    - run: pip install -r docs-requirements.txt
+    - run: mkdocs gh-deploy --force
+```
+
+### Manual Deployment
+
+```bash
+# Deploy to GitHub Pages
+mkdocs gh-deploy
+
+# Build for other hosting
+mkdocs build
+# Upload contents of site/ directory to your web server
+```
+
+## Tips for Writing Good Documentation
+### Generating API Documentation from Docstrings
+MkDocs can generate documentation from Python docstrings. This setup uses:
+
+1. **mkdocstrings**: Extracts docstrings and converts them to markdown
+2. **Google-style docstrings**: Supports the Google docstring format
+3. **Automatic discovery**: Finds and documents Python modules automatically
+
+#### Example Docstring
+All Python code follows Google-style docstrings:
+
+```python
+def example_function(param1: str, param2: int = 0) -> bool:
+    """
+    Short description of the function.
+    
+    Longer description if needed. This can span multiple lines
+    and provide more detailed information about the function's
+    behavior and use cases.
+    
+    Args:
+        param1: Description of the first parameter
+        param2: Description of the second parameter with default value
+        
+    Returns:
+        Description of the return value
+        
+    Raises:
+        ValueError: When param1 is empty
+        RuntimeError: When operation fails
+        
+    Example:
+        >>> result = example_function("hello", 42)
+        >>> print(result)
+        True
+    """
+    if not param1:
+        raise ValueError("param1 cannot be empty")
+    
+    return len(param1) > param2
+```
+
+#### Including Docstrings in Documentation
+
+To include a module's docstrings in your documentation:
+
+```markdown
+# My Module Documentation
+
+::: my_package.my_module
+```
+
+This will automatically:
+- Extract all functions, classes, and methods
+- Format docstrings nicely
+- Include type hints
+- Show inheritance relationships
+- Generate cross-references
+
+
+### For Python Code
+
+1. **Use Google-style docstrings**:
+   ```python
+   def my_function(param1: str, param2: int = 0) -> bool:
+       """
+       Brief description.
+       
+       Args:
+           param1: Description of param1
+           param2: Description with default value
+           
+       Returns:
+           Description of return value
+           
+       Raises:
+           ValueError: When this happens
+       """
+   ```
+
+2. **Include examples**:
+   ```python
+   """
+   Example:
+       >>> result = my_function("hello", 42)
+       >>> print(result)
+       True
+   """
+   ```
+
+3. **Use type hints**: They automatically appear in the generated documentation
+
+
+### Including Code from Source Files
+```markdown
+--8<-- "path/to/source/file.py:10:20"
+```
+
+This includes lines 10-20 from the specified file.
+
+
+## Getting Help
+- [Zensical Documentation](https://zensical.org/docs)
+

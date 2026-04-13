@@ -5,6 +5,9 @@ name = "adl-ros2"
 platforms = ["linux-64"]
 version = "0.1.0"
 
+[activation]
+scripts = ["install_humble/setup.sh"]
+
 # -----------------------------
 # MARK: Tasks
 # -----------------------------
@@ -74,8 +77,7 @@ ninja = "*"
 numpy = "<=2, <=2.4.3"
 colcon-common-extensions = ">=0.3.0,<0.4"
 colcon-mixin = ">=0.2.3,<0.3"
-pyserial = ">=3.5,<4"
-pyqtgraph = ">=0.14.0,<0.15"
+zensical = ">=0.0.32,<0.0.33"
 
 [pypi-dependencies]
 adl-ros2 = { path = ".", editable = true }
@@ -92,6 +94,7 @@ channels = ["https://prefix.dev/robostack-humble"]
 
 [feature.humble.dependencies]
 ros-humble-desktop = "*"
+ros-humble-franka-ros2 = "*"
 ros-humble-ament-cmake = "<4.0"
 ros-humble-control-toolbox = "*"
 ros-humble-controller-interface = "*"

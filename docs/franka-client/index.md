@@ -1,6 +1,8 @@
 # Franka Client
 The client is running on the user's PC. It provides a python wrapper around ROS2.
 
+For installation, refer to the [getting started guide](../getting-started.md#4-setup-the-client)
+
 ## Installation
 
 1. Install pixi

@@ -1,4 +1,4 @@
-# Franka Server Controllers
+# Controllers
 How to modify and add new controllers.
 
 The main config file: `franka_server/config/controllers.yaml`
