@@ -794,3 +794,24 @@ Test package interactions:
 # Launch test for integration testing
 ros2 launch robot_arm_testing integration_test.launch.py
 ```
+
+FROM old README.md
+### Franka-PC
+1. Run tests
+```
+colcon test --event-handlers console_direct+ --packages-select robot_arm_testing
+```
+
+2. Process results w/ xunit-viewer
+```
+xunit-viewer -r build/robot_arm_testing/test_results
+```
+
+Note: Step 1 & 2 can be run using the *ROS2 Test - robot_arm_testing* task in VsCode
+
+3. Copy results to host (*run on host*)
+```
+scp csirois@franka-pc:~/workspaces/franka_ros2_ws/index.html ~/workspaces/franka_ros2_ws
+```
+
+4. Open `index.html` in browser

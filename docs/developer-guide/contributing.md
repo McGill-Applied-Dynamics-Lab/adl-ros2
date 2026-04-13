@@ -151,13 +151,7 @@ def calculate_inverse_kinematics(target_pose: Pose, current_joints: List[float])
 ```
 
 #### Markdown Documentation
-
-- Use clear headings and structure
-- Include code examples with syntax highlighting
-- Add cross-references to related sections
-- Use diagrams where helpful (Mermaid preferred)
-
-
+See [Zensical authoring guide](https://zensical.org/docs/authoring/markdown/) for tips on how to write in markdown. 
 
 ## Testing Guidelines
 *Coming soon...*
@@ -165,11 +159,11 @@ def calculate_inverse_kinematics(target_pose: Pose, current_joints: List[float])
 
 ## Getting Help
 
-### Communication Channels
+<!-- ### Communication Channels
 
 - **GitHub Issues**: Bug reports and feature requests
 - **GitHub Discussions**: Questions and general discussion
-- **Pull Request Comments**: Code-specific discussions
+- **Pull Request Comments**: Code-specific discussions -->
 
 ### Resources
 
