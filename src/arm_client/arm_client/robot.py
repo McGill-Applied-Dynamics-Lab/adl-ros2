@@ -19,7 +19,7 @@ from sensor_msgs.msg import JointState
 from arm_client.control.controller_switcher import ControllerSwitcherClient
 from arm_client.control.joint_trajectory_controller_client import JointTrajectoryControllerClient
 from arm_client.control.parameters_client import ParametersClient
-from arm_client.planning.ik_pyroki import plan_fr3_joint_trajectory
+from arm_client.planning.ik_pyroki import plan_fr3_joint_trajectory, solve_online_planning
 from arm_client.planning.types import CartesianWaypoint, PlannedJointTrajectory
 from arm_client.planning.visualization import visualize_planned_joint_trajectory
 from arm_client.planning.waypoints import generate_linear_waypoints
@@ -262,6 +262,26 @@ class Robot:
     # =======================
     # MARK: Properties
     # =======================
+
+    @property
+    def visualizer(self):
+        """Lazy-loaded Viser-based robot visualizer."""
+        if not hasattr(self, "_visualizer"):
+            from arm_client.planning.visualization import RobotVisualizer
+
+            self._visualizer = RobotVisualizer()
+        return self._visualizer
+
+    @property
+    def pyroki_robot(self):
+        """Lazy-loaded Pyroki robot instance."""
+        if not hasattr(self, "_pyroki_robot"):
+            import pyroki as pk
+            from arm_client.planning.ik_pyroki import load_fr3_urdf
+
+            self._pyroki_robot = pk.Robot.from_urdf(load_fr3_urdf())
+        return self._pyroki_robot
+
     @property
     def nq(self) -> int:
         """Get the number of joints in the robot.
@@ -842,6 +862,26 @@ class Robot:
         if len(trajectory.joint_positions) > 0:
             self._q_target = np.array(trajectory.joint_positions[-1], dtype=float)
 
+    def send_joint_trajectory(
+        self,
+        trajectory: PlannedJointTrajectory,
+    ):
+        """Stream a joint trajectory to the controller directly via topic for smooth online execution.
+
+        Args:
+            trajectory: Planned trajectory sequence.
+        """
+        active_controller = self.controller_switcher_client.get_active_controller()
+        if active_controller != "joint_trajectory_controller":
+            self.controller_switcher_client.switch_controller("joint_trajectory_controller")
+
+        self.joint_trajectory_controller_client.publish_joint_trajectory(
+            joint_trajectory=trajectory,
+        )
+
+        if len(trajectory.joint_positions) > 0:
+            self._q_target = np.array(trajectory.joint_positions[-1], dtype=float)
+
     def visualize_sequence(
         self,
         steps: Sequence[Any],
@@ -867,6 +907,57 @@ class Robot:
             playback_hz=playback_hz,
             respect_timing=respect_timing,
         )
+
+    def online_planning(
+        self,
+        target_position: NDArray,
+        target_orientation: NDArray | Rotation,
+        trajectory_length: int = 5,
+        dt: float = 0.1,
+    ) -> NDArray:
+        """Continuously solve inverse kinematics online for active teleoperation.
+
+        Args:
+            target_position: Desktop/Target space coordinate.
+            target_orientation: Target spatial orientation (scipy.spatial.transform.Rotation or wxyz quat array).
+            trajectory_length: Number of time steps to look ahead.
+            dt: Time step duration.
+
+        Returns:
+            NDArray: Joint configuration directly preceding the planner output.
+        """
+
+        if not hasattr(self, "_online_planning_sols"):
+            # Initialize with copies of current joint configuration
+            q_current = np.array(self.q, dtype=float)
+            self._online_planning_sols = np.array([q_current.copy() for _ in range(trajectory_length)])
+
+        qk_w = (
+            target_orientation.as_quat()[[3, 0, 1, 2]]
+            if isinstance(target_orientation, Rotation)
+            else target_orientation
+        )
+        target_w = np.array(qk_w, dtype=float)
+        target_p = np.array(target_position, dtype=float)
+        start_cfg = np.array(self.q, dtype=float)
+
+        sol_traj, _, _ = solve_online_planning(
+            robot=self.pyroki_robot,
+            target_link_name=self.config.ik_target_link_name,
+            target_position=target_p,
+            target_wxyz=target_w,
+            timesteps=trajectory_length,
+            dt=dt,
+            start_cfg=start_cfg,
+            prev_sols=self._online_planning_sols,
+        )
+
+        # Retain trajectories for the next sequential warmup (may include finger joints internally)
+        self._online_planning_sols = sol_traj
+
+        # Return only the joints requested by the arm configuration
+        arm_joint_count = len(self.config.joint_names)
+        return self._online_planning_sols[0, :arm_joint_count].copy()
 
     def execute_sequence(
         self,
