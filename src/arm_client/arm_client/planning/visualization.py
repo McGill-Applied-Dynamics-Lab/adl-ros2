@@ -4,6 +4,8 @@ import time
 from typing import Any
 
 import numpy as np
+from scipy.spatial.transform import Rotation
+import pyroki as pk
 
 import viser
 from viser.extras import ViserUrdf
@@ -31,17 +33,58 @@ class RobotVisualizer:
 
         self.server = _viser_server
         self.urdf_vis = _viser_urdf_vis
+        self._gui_handles = []
 
-    def update_robot_config(self, joint_positions: np.ndarray):
-        """Immediately update the robot visual mesh."""
+        if not hasattr(self, "_pk_robot"):
+            self._pk_robot = pk.Robot.from_urdf(load_fr3_urdf())
+
+        self._add_robot_state_ui()
+
+    def _add_robot_state_ui(self):
+        """Add persistent GUI elements for robot state."""
+        if hasattr(self, "_state_q"):
+            return
+
+        with self.server.gui.add_folder("Current Robot State"):
+            self._state_q = self.server.gui.add_text("Joints (deg)", initial_value="")
+            self._state_ee_pos = self.server.gui.add_text("EE Pos (m)", initial_value="")
+            self._state_ee_rpy = self.server.gui.add_text("EE RPY (deg)", initial_value="")
+
+    def update_robot_config(self, joint_positions: np.ndarray, ee_link_name: str = "fr3_hand"):
+        """Immediately update the robot visual mesh and state UI."""
         # Ensure we pad with finger joints if missing
         q = np.asarray(joint_positions)
         if q.shape[-1] == 7:  # FR3 has 7 arm joints, hand expects more
-            q_vis = np.hstack([q, 0.04 * np.ones((q.ndim > 1 and q.shape[0] or 1, 1))]).squeeze()
+            q_vis = np.hstack([q, 0.04 * np.ones((1,))]).squeeze()
         else:
             q_vis = q
 
         self.urdf_vis.update_cfg(q_vis)
+
+        if hasattr(self, "_state_q"):
+            self._state_q.value = "[" + ", ".join([f"{x:.3f}" for x in np.degrees(q[:7])]) + "]"
+
+            try:
+                if ee_link_name in self._pk_robot.links.names:
+                    ee_idx = self._pk_robot.links.names.index(ee_link_name)
+
+                    default_q = np.array(self._pk_robot.joint_var_cls(0).default_factory())
+                    q_fk = default_q.copy()
+                    q_fk[: min(len(q_fk), len(q))] = q[: min(len(q_fk), len(q))]
+
+                    # Compute FK using pyroki logic
+                    pose_params = np.array(self._pk_robot.forward_kinematics(q_fk)[ee_idx])
+
+                    # jaxlie SE3 array format: [qw, qx, qy, qz, px, py, pz]
+                    pos = pose_params[4:]
+                    quat_wxyz = pose_params[:4]
+                    quat_xyzw = np.array([quat_wxyz[1], quat_wxyz[2], quat_wxyz[3], quat_wxyz[0]])
+                    rpy = Rotation.from_quat(quat_xyzw).as_euler("xyz", degrees=True)
+
+                    self._state_ee_pos.value = f"[{pos[0]:.3f}, {pos[1]:.3f}, {pos[2]:.3f}]"
+                    self._state_ee_rpy.value = f"[{rpy[0]:.1f}, {rpy[1]:.1f}, {rpy[2]:.1f}]"
+            except Exception:
+                pass
 
     def visualize_planned_joint_trajectory(
         self,
@@ -68,7 +111,12 @@ class RobotVisualizer:
         print("Use Approve/Reject in GUI to continue.")
 
         # Clean old GUI if present
-        self.server.gui.clear()
+        for handle in self._gui_handles:
+            try:
+                handle.remove()
+            except Exception:
+                pass
+        self._gui_handles.clear()
 
         status_label = self.server.gui.add_text("Status", "Initializing...")
         timesteps = len(trajectory.joint_positions)
@@ -78,6 +126,10 @@ class RobotVisualizer:
         speed_slider = self.server.gui.add_slider("Playback speed", min=0.1, max=3.0, step=0.1, initial_value=1.0)
         approve_btn = self.server.gui.add_button("Approve")
         reject_btn = self.server.gui.add_button("Reject")
+
+        self._gui_handles.extend(
+            [status_label, slider, playing, respect_timing_checkbox, speed_slider, approve_btn, reject_btn]
+        )
 
         finished = False
         approved = False
@@ -129,7 +181,13 @@ class RobotVisualizer:
         except KeyboardInterrupt:
             approved = False
 
-        self.server.gui.clear()
+        for handle in self._gui_handles:
+            try:
+                handle.remove()
+            except Exception:
+                pass
+        self._gui_handles.clear()
+
         return approved
 
 

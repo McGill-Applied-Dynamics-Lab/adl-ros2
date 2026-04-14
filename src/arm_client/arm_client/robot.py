@@ -434,7 +434,7 @@ class Robot:
         self._q_target = None
         self._target_wrench = None
 
-    def wait_until_ready(self, timeout: float = 10.0, check_frequency: float = 10.0):
+    def wait_until_ready(self, timeout: float = 2.0, check_frequency: float = 10.0):
         """Wait until the robot is ready for operation.
 
         Args:
@@ -1084,27 +1084,41 @@ class Robot:
 
     def _build_full_sequence_trajectory(self, steps: Sequence[Any]) -> PlannedJointTrajectory:
         """Build one continuous trajectory from all trajectory steps in a sequence."""
-        traj_steps = [step for step in steps if isinstance(step, PlannedJointTrajectory)]
+        traj_steps: list[PlannedJointTrajectory] = [step for step in steps if isinstance(step, PlannedJointTrajectory)]
+
         if len(traj_steps) == 0:
             raise ValueError("No PlannedJointTrajectory found in sequence.")
 
         joint_names = traj_steps[0].joint_names
         all_times: list[float] = []
         all_positions: list[np.ndarray] = []
+        all_velocities: list[np.ndarray] = []
+        all_accelerations: list[np.ndarray] = []
+
         time_offset = 0.0
 
         for i, trajectory in enumerate(traj_steps):
             if trajectory.joint_names != joint_names:
                 raise ValueError("All trajectory steps must share the same joint_names.")
+
             if len(trajectory.time_from_start) != len(trajectory.joint_positions):
                 raise ValueError("Trajectory time_from_start and joint_positions length mismatch.")
 
-            for j, (t, q) in enumerate(zip(trajectory.time_from_start, trajectory.joint_positions)):
+            for j, (t, q, q_dot, q_ddot) in enumerate(
+                zip(
+                    trajectory.time_from_start,
+                    trajectory.joint_positions,
+                    trajectory.joint_velocities,
+                    trajectory.joint_accelerations,
+                )
+            ):
                 # Avoid duplicate timestamp at segment boundaries.
                 if i > 0 and j == 0:
                     continue
                 all_times.append(float(t) + time_offset)
                 all_positions.append(np.array(q, dtype=float))
+                all_velocities.append(np.array(q_dot, dtype=float))
+                all_accelerations.append(np.array(q_ddot, dtype=float))
 
             if len(trajectory.time_from_start) > 0:
                 time_offset += float(trajectory.time_from_start[-1])
@@ -1113,6 +1127,8 @@ class Robot:
             joint_names=joint_names,
             time_from_start=all_times,
             joint_positions=np.array(all_positions),
+            joint_velocities=np.array(all_velocities),
+            joint_accelerations=np.array(all_accelerations),
         )
 
     # ----- Cartesian
