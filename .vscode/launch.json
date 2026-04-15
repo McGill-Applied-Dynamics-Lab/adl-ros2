@@ -1,25 +1,28 @@
 {
     "version": "0.2.0",
     "configurations": [
-        // {
-        //     "name": "Python: Current File",
-        //     "type": "debugpy",
-        //     "request": "launch",
-        //     "program": "${file}",
-        //     "console": "integratedTerminal",
-        //     "justMyCode": false,
-        //     "env": {
-        //         "PYTHONPATH": "${workspaceFolder}/src:${workspaceFolder}/install_humble/arm_client/lib/python3.12/site-packages:${workspaceFolder}/install_humble/franka_rim/lib/python3.12/site-packages"
-        //     }
-        // },
         {
-            "name": "ROS2 Python Debug",
+            "name": "Python Debugger: Current File (ROS2)",
             "type": "debugpy",
             "request": "launch",
             "program": "${file}",
             // "python": "${workspaceFolder}/.pixi/envs/humble/bin/python",
             "envFile": "${workspaceFolder}/.vscode/.env.humble",
-            "console": "integratedTerminal"
+            "console": "integratedTerminal",
+            "pathMappings": [
+                {
+                    "localRoot": "${workspaceFolder}/src",
+                    "remoteRoot": "/home/athena/csirois/git/adl-ros2/build_humble"
+                },
+                {
+                    "localRoot": "${workspaceFolder}/src",
+                    "remoteRoot": "/home/athena/csirois/git/adl-ros2/install_humble"
+                },
+                {
+                    "localRoot": "${workspaceFolder}/",
+                    "remoteRoot": "/home/athena/csirois/git/adl-ros2/"
+                }
+            ]
         },
         {
             "name": "Python: Current File (with args)",
@@ -29,6 +32,20 @@
             "console": "integratedTerminal",
             "args": [],
             "justMyCode": false,
+            "pathMappings": [
+                {
+                    "localRoot": "${workspaceFolder}/src",
+                    "remoteRoot": "/home/athena/csirois/git/adl-ros2/build_humble"
+                },
+                {
+                    "localRoot": "${workspaceFolder}/src",
+                    "remoteRoot": "/home/athena/csirois/git/adl-ros2/install_humble"
+                },
+                {
+                    "localRoot": "${workspaceFolder}/src",
+                    "remoteRoot": "/home/athena/csirois/git/adl-ros2/src"
+                }
+            ],
             "env": {
                 "PYTHONPATH": "${workspaceFolder}/src:${workspaceFolder}/install_humble/arm_client/lib/python3.12/site-packages:${workspaceFolder}/install_humble/franka_rim/lib/python3.12/site-packages"
             }
@@ -55,6 +72,20 @@
             ],
             "console": "integratedTerminal",
             "justMyCode": false,
+            "pathMappings": [
+                {
+                    "localRoot": "${workspaceFolder}/src",
+                    "remoteRoot": "/home/athena/csirois/git/adl-ros2/build_humble"
+                },
+                {
+                    "localRoot": "${workspaceFolder}/src",
+                    "remoteRoot": "/home/athena/csirois/git/adl-ros2/install_humble"
+                },
+                {
+                    "localRoot": "${workspaceFolder}/src",
+                    "remoteRoot": "/home/athena/csirois/git/adl-ros2/src"
+                }
+            ],
             "env": {
                 "PYTHONPATH": "${workspaceFolder}/src:${workspaceFolder}/install_humble/arm_client/lib/python3.12/site-packages:${workspaceFolder}/install_humble/franka_rim/lib/python3.12/site-packages"
             }

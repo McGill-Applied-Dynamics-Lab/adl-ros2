@@ -206,6 +206,37 @@ def plan_fr3_joint_trajectory(
         if show_progress:
             _print_progress(i + 1, n_points)
 
+    # Fix endpoint glitchiness: Force the final trajectory point to exactly match
+    # the last waypoint by solving IK for the exact final Cartesian target.
+    # This avoids interpolation artifacts and ensures smooth endpoint behavior.
+    final_waypoint_quat_wxyz = waypoints[-1].orientation.as_quat()[[3, 0, 1, 2]]
+    final_waypoint_pos = waypoints[-1].position
+
+    q_final = solve_ik_single(
+        jnp.array(final_waypoint_quat_wxyz),
+        jnp.array(final_waypoint_pos),
+        jnp.array(all_joint_configs[-1]),  # Use current last point as seed
+        jnp.array(all_joint_configs[-1]),
+    )
+    q_final.block_until_ready()
+    all_joint_configs[-1] = np.array(q_final)
+
+    # Set boundary conditions
+    q_dot_start = np.zeros(len(joint_names))
+    q_dot_end = np.zeros(len(joint_names))
+
+    q_ddot_start = np.zeros(len(joint_names))
+    q_ddot_end = np.zeros(len(joint_names))
+
+    arm_joint_velocities = np.full((len(s_values), len(joint_names)), np.nan)
+    arm_joint_accels = np.full((len(s_values), len(joint_names)), np.nan)
+
+    arm_joint_velocities[0, :] = q_dot_start
+    arm_joint_velocities[-1, :] = q_dot_end
+
+    arm_joint_accels[0, :] = q_ddot_start
+    arm_joint_accels[-1, :] = q_ddot_end
+
     arm_joint_count = len(joint_names)
     arm_joint_positions = all_joint_configs[:, :arm_joint_count]
     time_from_start = (s_values * duration).tolist()
@@ -214,4 +245,198 @@ def plan_fr3_joint_trajectory(
         joint_names=joint_names,
         time_from_start=time_from_start,
         joint_positions=arm_joint_positions,
+        joint_velocities=arm_joint_velocities,
+        joint_accelerations=arm_joint_accels,
+    )
+
+
+def solve_online_planning(
+    robot: pk.Robot,
+    target_link_name: str,
+    target_position: np.ndarray,
+    target_wxyz: np.ndarray,
+    timesteps: int,
+    dt: float,
+    start_cfg: np.ndarray,
+    prev_sols: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Solve online planning in free space."""
+
+    assert target_position.shape == (3,) and target_wxyz.shape == (4,)
+    target_link_indices = [robot.links.names.index(target_link_name)]
+
+    target_poses = jaxlie.SE3(jnp.concatenate([jnp.array(target_wxyz), jnp.array(target_position)], axis=-1))
+    target_links = jnp.array(target_link_indices)
+
+    # Pad joint configs to match the URDF (e.g. including finger joints)
+    default_q = np.array(robot.joint_var_cls(0).default_factory())
+    expected_joints = len(default_q)
+
+    padded_start_cfg = default_q.copy()
+    padded_start_cfg[: min(expected_joints, len(start_cfg))] = start_cfg[: min(expected_joints, len(start_cfg))]
+
+    padded_prev_sols = np.tile(default_q, (len(prev_sols), 1))
+    padded_prev_sols[:, : min(expected_joints, prev_sols.shape[1])] = prev_sols[
+        :, : min(expected_joints, prev_sols.shape[1])
+    ]
+
+    # Warm start: use previous solution shifted by one step.
+    timesteps = timesteps + 1  # for start pose cost.
+
+    sol_traj, sol_pos, sol_wxyz = _solve_online_planning_jax(
+        robot,
+        target_poses,
+        target_links,
+        timesteps,
+        dt,
+        jnp.array(padded_start_cfg),
+        jnp.concatenate([padded_prev_sols, padded_prev_sols[-1:]], axis=0),
+    )
+    sol_traj = sol_traj[1:]
+    sol_pos = sol_pos[1:]
+    sol_wxyz = sol_wxyz[1:]
+
+    return np.array(sol_traj), np.array(sol_pos), np.array(sol_wxyz)
+
+
+@jdc.jit
+def _solve_online_planning_jax(
+    robot: pk.Robot,
+    target_poses: jaxlie.SE3,
+    target_links: jnp.ndarray,
+    timesteps: jdc.Static[int],
+    dt: float,
+    start_cfg: jnp.ndarray,
+    prev_sols: jnp.ndarray,
+) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+    num_targets = len(target_links)
+
+    def batched_rplus(
+        pose: jaxlie.SE3,
+        delta: jax.Array,
+    ) -> jaxlie.SE3:
+        return jax.vmap(jaxlie.manifold.rplus)(pose, delta.reshape(num_targets, -1))
+
+    # Custom SE3 variable to batch across multiple joint targets.
+    class BatchedSE3Var(  # pylint: disable=missing-class-docstring
+        jaxls.Var[jaxlie.SE3],
+        default_factory=lambda: jaxlie.SE3.identity((num_targets,)),
+        retract_fn=batched_rplus,
+        tangent_dim=jaxlie.SE3.tangent_dim * num_targets,
+    ): ...
+
+    # --- Define Variables ---
+    traj_var = robot.joint_var_cls(jnp.arange(0, timesteps))
+    traj_var_prev = robot.joint_var_cls(jnp.arange(0, timesteps - 1))
+    traj_var_next = robot.joint_var_cls(jnp.arange(1, timesteps))
+    pose_var = BatchedSE3Var(jnp.arange(0, timesteps))
+    pose_var_prev = BatchedSE3Var(jnp.arange(0, timesteps - 1))
+    pose_var_next = BatchedSE3Var(jnp.arange(1, timesteps))
+
+    init_pose_vals = jaxlie.SE3(robot.forward_kinematics(prev_sols)[..., target_links, :])
+
+    # --- Define Costs ---
+    factors: list[jaxls.Cost] = []
+
+    @jaxls.Cost.factory(name="SE3PoseMatchJointCost")
+    def match_joint_to_pose_cost(
+        vals: jaxls.VarValues,
+        joint_var: jaxls.Var[jnp.ndarray],
+        pose_var: BatchedSE3Var,
+    ):
+        joint_cfg = vals[joint_var]
+        target_pose = vals[pose_var]
+        Ts_joint_world = robot.forward_kinematics(joint_cfg)
+        residual = ((jaxlie.SE3(Ts_joint_world[..., target_links, :])).inverse() @ (target_pose)).log()
+        return residual.flatten() * 100.0
+
+    @jaxls.Cost.factory(name="SE3SmoothnessCost")
+    def pose_smoothness_cost(
+        vals: jaxls.VarValues,
+        pose_var: BatchedSE3Var,
+        pose_var_prev: BatchedSE3Var,
+    ):
+        return (vals[pose_var].inverse() @ vals[pose_var_prev]).log().flatten() * 1.0
+
+    @jaxls.Cost.factory(name="SE3PoseMatchCost")
+    def pose_match_cost(
+        vals: jaxls.VarValues,
+        pose_var: BatchedSE3Var,
+    ):
+        return ((vals[pose_var].inverse() @ target_poses).log() * jnp.array([50.0] * 3 + [20.0] * 3)).flatten()
+
+    @jaxls.Cost.factory(name="MatchStartPoseCost")
+    def match_start_pose_cost(
+        vals: jaxls.VarValues,
+        joint_var: jaxls.Var[jnp.ndarray],
+    ):
+        return (vals[joint_var] - start_cfg).flatten() * 100.0
+
+    # Add pose costs.
+    factors.extend(
+        [
+            pose_match_cost(
+                BatchedSE3Var(timesteps - 1),
+            ),
+            pose_smoothness_cost(
+                pose_var_next,
+                pose_var_prev,
+            ),
+        ]
+    )
+
+    # Need to constrain the start joint cfg.
+    factors.append(match_start_pose_cost(robot.joint_var_cls(0)))
+
+    factors.extend(
+        [
+            match_joint_to_pose_cost(
+                traj_var,
+                pose_var,
+            ),
+            pk.costs.smoothness_cost(
+                traj_var_prev,
+                traj_var_next,
+                weight=10.0,
+            ),
+            pk.costs.limit_velocity_cost(
+                jax.tree.map(lambda x: x[None], robot),
+                traj_var_prev,
+                traj_var_next,
+                weight=1.0,
+                dt=dt,
+            ),
+            pk.costs.limit_cost(
+                jax.tree.map(lambda x: x[None], robot),
+                traj_var,
+                weight=100.0,
+            ),
+            pk.costs.rest_cost(
+                traj_var,
+                jnp.array(traj_var.default_factory())[None],
+                weight=0.01,
+            ),
+            pk.costs.manipulability_cost(
+                jax.tree.map(lambda x: x[None], robot),
+                traj_var,
+                weight=0.01,
+                target_link_indices=target_links,
+            ),
+        ]
+    )
+
+    solution = (
+        jaxls.LeastSquaresProblem(factors, [traj_var, pose_var])
+        .analyze()
+        .solve(
+            verbose=False,
+            initial_vals=jaxls.VarValues.make((traj_var.with_value(prev_sols), pose_var.with_value(init_pose_vals))),
+            termination=jaxls.TerminationConfig(max_iterations=20),
+        )
+    )
+    pose_traj = solution[pose_var]
+    return (
+        solution[traj_var],
+        pose_traj.translation(),
+        pose_traj.rotation().wxyz,
     )

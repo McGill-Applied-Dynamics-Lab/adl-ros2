@@ -44,7 +44,13 @@ try:
 except importlib.metadata.PackageNotFoundError:
     __version__ = "0.0.0"
 # CONFIG_DIR = Path(__file__).parent.parent.parent.parent / "src" /"configs"
-CONFIG_DIR = Path("configs")
+
+root_dir = Path(__file__).parent.parent.parent.parent
+
+CONFIG_DIR = root_dir / "configs"
+
+if not CONFIG_DIR.exists():
+    Warning(f"Config directory {CONFIG_DIR} not found.")
 
 try:
     import rclpy  # noqa: F401

@@ -1,0 +1,33 @@
+# Controller: joint_space_controller
+# Default configuration for the joint space controller
+arm_id: fr3
+joints:
+  - fr3_joint1
+  - fr3_joint2
+  - fr3_joint3
+  - fr3_joint4
+  - fr3_joint5
+  - fr3_joint6
+  - fr3_joint7
+
+
+gains.fr3_joint1: { p: 600., d: 30., i: 0., i_clamp: 1. }
+# gains.fr3_joint1.d: 30.0 # Use negative value for automatic damping calculation
+
+# gains.fr3_joint2.p: 700.0
+# gains.fr3_joint2.d: 30.0 # Use negative value for automatic damping calculation
+
+# gains.fr3_joint3.p: 700.0
+# gains.fr3_joint3.d: 30.0 # Use negative value for automatic damping calculation
+
+# gains.fr3_joint4.p: 600.0
+# gains.fr3_joint4.d: 30.0 # Use negative value for automatic damping calculation
+
+# gains.fr3_joint5.p: 250.0
+# gains.fr3_joint5.d: 10.0 # Use negative value for automatic damping calculation
+
+# gains.fr3_joint6.p: 275.0
+# gains.fr3_joint6.d: 10.0 # Use negative value for automatic damping calculation
+
+# gains.fr3_joint7.p: 50.0
+# gains.fr3_joint7.d: 5.0 # Use negative value for automatic damping calculation

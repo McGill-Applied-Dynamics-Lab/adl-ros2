@@ -2,6 +2,25 @@
   "version": "2.0.0",
   "tasks": [
     {
+      "label": "run-current-file-in-container",
+      "type": "shell",
+      "command": "docker",
+      "args": [
+        "exec",
+        "-it",
+        "adl_ros2",
+        "bash",
+        "-c",
+        "source /home/ros/ros2_ws/install/setup.bash && cd /home/ros/ros2_ws/src/adl-ros2 && python ${relativeFile} --no-prompt"
+      ],
+      "isBackground": false,
+      "presentation": {
+        "reveal": "always",
+        "panel": "new"
+      },
+      "problemMatcher": []
+    },
+    {
       "label": "colcon build",
       "type": "shell",
       "command": [
@@ -41,12 +60,16 @@
       "type": "shell",
       "command": [
         "cd ${workspaceFolder} &&",
-        "python src/arm_client/scripts/00_home.py"
+        "pixi run -e humble python examples/00_home.py"
       ],
       "problemMatcher": [],
       "group": {
         "kind": "test",
-        "isDefault": false
+        "isDefault": true
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "new"
       }
     },
     {
