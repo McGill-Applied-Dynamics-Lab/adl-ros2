@@ -1203,13 +1203,13 @@ class Robot:
 
     def shutdown(self):
         """Shutdown the node."""
-        try:
-            self.node.destroy_node()
-        except Exception:
-            pass
-
         if rclpy.ok():
             rclpy.shutdown()
 
         if self._spin_thread is not None and self._spin_thread.is_alive() and threading.current_thread() is not self._spin_thread:
             self._spin_thread.join(timeout=1.0)
+
+        try:
+            self.node.destroy_node()
+        except Exception:
+            pass
