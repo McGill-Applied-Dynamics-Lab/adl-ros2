@@ -338,6 +338,8 @@ def _anchor_first_waypoint_to_current_joints(
         joint_names=list(trajectory.joint_names),
         time_from_start=times,
         joint_positions=positions,
+        joint_velocities=np.full_like(positions, np.nan),
+        joint_accelerations=np.full_like(positions, np.nan),
     )
 
 

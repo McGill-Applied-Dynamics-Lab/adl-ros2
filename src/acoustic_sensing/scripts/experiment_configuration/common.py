@@ -422,10 +422,14 @@ def serialize_trajectory(traj: PlannedJointTrajectory) -> dict:
 
 
 def deserialize_trajectory(data: dict) -> PlannedJointTrajectory:
+    positions = np.asarray(data["joint_positions"], dtype=float)
+    nan_array = np.full_like(positions, np.nan)
     return PlannedJointTrajectory(
         joint_names=list(data["joint_names"]),
         time_from_start=[float(t) for t in data["time_from_start"]],
-        joint_positions=np.asarray(data["joint_positions"], dtype=float),
+        joint_positions=positions,
+        joint_velocities=np.asarray(data["joint_velocities"], dtype=float) if "joint_velocities" in data else nan_array,
+        joint_accelerations=np.asarray(data["joint_accelerations"], dtype=float) if "joint_accelerations" in data else nan_array,
     )
 
 

@@ -68,7 +68,7 @@ def probe(
     ee_poses = []
     ts = []
 
-    robot.execute_trajectory(waypoints, time_from_start)
+    robot.execute_cartesian_traj(waypoints, time_from_start)
 
     if t0_perf is None:
         t0_perf = time.perf_counter()

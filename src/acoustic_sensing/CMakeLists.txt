@@ -63,8 +63,8 @@ install(DIRECTORY launch
 
 install(
   PROGRAMS
-    scripts/acoustic_plot_receiver.py
-    scripts/acoustic_plot_2receiver.py
+    scripts/testing/acoustic_plot_receiver.py
+    scripts/testing/acoustic_plot_2receiver.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

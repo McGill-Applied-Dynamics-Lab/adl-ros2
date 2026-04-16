@@ -184,14 +184,20 @@ def _pose_xyz_rpy_str(pose):
     )
 
 
-def _build_contact_trajectory(segment_pairs, durations, n_waypoints=CONTACT_WAYPOINTS, time_offset=EXEC_TRAJ_TIME_OFFSET):
-    """Build (waypoints, times) for execute_trajectory.
+def _build_contact_trajectory(
+    segment_pairs,
+    durations,
+    n_waypoints=CONTACT_WAYPOINTS,
+    time_offset=EXEC_TRAJ_TIME_OFFSET,
+    segment_velocities=None,
+):
+    """Build (waypoints, times) for execute_cartesian_traj.
 
     Distributes n_waypoints evenly across the total duration, interpolating
     linearly across segment boundaries. The fr3_pose controller uses quintic
     polynomial interpolation between these waypoints internally.
 
-    time_offset shifts all timestamps forward to compensate for execute_trajectory's
+    time_offset shifts all timestamps forward to compensate for execute_cartesian_traj's
     internal 0.5s pre-publish sleep: without the offset the first waypoint is already
     in the past when the controller receives the message, causing an abrupt start.
 
@@ -200,9 +206,14 @@ def _build_contact_trajectory(segment_pairs, durations, n_waypoints=CONTACT_WAYP
         durations: Duration [s] for each segment.
         n_waypoints: Total number of waypoints to send.
         time_offset: Seconds to add to all waypoint times (default EXEC_TRAJ_TIME_OFFSET).
+        segment_velocities: Optional list of Twist | None, one entry per segment.
+            When non-None for a segment, every waypoint in that segment carries the
+            given constant velocity hint.  The controller uses this to avoid stopping
+            at intermediate waypoints, producing smooth constant-speed motion.
+            Waypoints with None hints receive zero-velocity boundary conditions.
 
     Returns:
-        (waypoints, times): waypoints is List[tuple[Pose, None]], times is List[float].
+        (waypoints, times): waypoints is List[tuple[Pose, Twist | None]], times is List[float].
     """
     t_bounds = [0.0]
     for dur in durations:
@@ -227,7 +238,9 @@ def _build_contact_trajectory(segment_pairs, durations, n_waypoints=CONTACT_WAYP
         pos = (1.0 - t_frac) * np.array(sp.position) + t_frac * np.array(ep.position)
         q = (1.0 - t_frac) * sp.orientation.as_quat() + t_frac * ep.orientation.as_quat()
         ori = Rotation.from_quat(q / np.linalg.norm(q))
-        waypoints.append((Pose(pos, ori), None))
+
+        vel = (segment_velocities[seg] if segment_velocities is not None else None)
+        waypoints.append((Pose(pos, ori), vel))
         times.append(float(t) + time_offset)
 
     return waypoints, times
@@ -480,7 +493,7 @@ def main():
             # RF window covers compress + settle + slide + decompress
             # Each execute_trajectory call wall time = motion_duration + 0.5s internal sleep
             # + EXEC_TRAJ_TIME_OFFSET + 2.0s timeout_margin (from wait_for_trajectory_completion).
-            exec_traj_overhead = (0.5 + EXEC_TRAJ_TIME_OFFSET + 2.0) * 3  # 3 phases
+            exec_traj_overhead = (0.5 + EXEC_TRAJ_TIME_OFFSET + 2.0) * 3  # 3 traj phases (compress + slide + decompress)
             rf_window_duration  = compress_duration + SETTLE_SEC + slide_duration + decompress_duration + exec_traj_overhead
 
             # Build trajectories for all three phases.
@@ -515,10 +528,7 @@ def main():
             slide_t0 = None
 
             # ── 4. Execute compress → settle → slide → decompress ─────────────
-            # Each phase is separate and blocking — slide never starts before
-            # compress finishes, decompress never starts before slide finishes.
-            # compress and decompress use move_to (smooth A→B via fr3_pose).
-            # slide uses execute_trajectory (quintic interpolation, no jitter).
+            # All three phases use execute_cartesian_traj (quintic interpolation).
 
             # Start RF before compress
             slide_t0 = time.perf_counter()
@@ -543,7 +553,7 @@ def main():
             sample_thread.start()
 
             # Step 1: Compress — smooth descent to compressed Z
-            robot.execute_trajectory(compress_wps, compress_times)
+            robot.execute_cartesian_traj(compress_wps, compress_times)
             while robot.wait_for_trajectory_completion(compress_duration + EXEC_TRAJ_TIME_OFFSET):
                 pass
             print(f"  Compress done: {_pose_xyz_rpy_str(robot.end_effector_pose.copy())}")
@@ -551,15 +561,15 @@ def main():
             # Step 2: Settle — hold at compressed Z before sliding
             time.sleep(SETTLE_SEC)
 
-            # Step 3: Slide — smooth constant-speed Y translation
+            # Step 3: Slide — quintic-interpolated Y translation
             print("  Sliding...")
-            robot.execute_trajectory(slide_wps, slide_times)
+            robot.execute_cartesian_traj(slide_wps, slide_times)
             while robot.wait_for_trajectory_completion(slide_duration + EXEC_TRAJ_TIME_OFFSET):
                 pass
             print(f"  Slide done: {_pose_xyz_rpy_str(robot.end_effector_pose.copy())}")
 
             # Step 4: Decompress — smooth ascent back to surface
-            robot.execute_trajectory(decompress_wps, decompress_times)
+            robot.execute_cartesian_traj(decompress_wps, decompress_times)
             while robot.wait_for_trajectory_completion(decompress_duration + EXEC_TRAJ_TIME_OFFSET):
                 pass
             print(f"  Decompress done: {_pose_xyz_rpy_str(robot.end_effector_pose.copy())}")

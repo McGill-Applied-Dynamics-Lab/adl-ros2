@@ -8,7 +8,7 @@ import numpy as np
 import rclpy
 import rclpy.executors
 from builtin_interfaces.msg import Duration
-from geometry_msgs.msg import PoseStamped, WrenchStamped, TwistStamped
+from geometry_msgs.msg import PoseStamped, Twist as TwistMsg, TwistStamped, WrenchStamped
 from numpy.typing import NDArray
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.node import Node
@@ -438,7 +438,7 @@ class Robot:
         self._q_target = None
         self._target_wrench = None
 
-    def wait_until_ready(self, timeout: float = 2.0, check_frequency: float = 10.0):
+    def wait_until_ready(self, timeout: float = 10.0, check_frequency: float = 10.0):
         """Wait until the robot is ready for operation.
 
         Args:
@@ -453,6 +453,8 @@ class Robot:
             rate.sleep()
             timeout -= 1.0 / check_frequency
             if timeout <= 0:
+                if self.is_ready():
+                    break
                 missing = []
                 if self._current_pose is None:
                     missing.append(self.config.current_pose_topic)
@@ -1211,9 +1213,11 @@ class Robot:
             ori = slerp([t])[0]
             next_pose = Pose(pos, ori)
             self._target_pose = next_pose
+            self._target_pose_command_active = True
             rate.sleep()
 
         self._target_pose = desired_pose
+        self._target_pose_command_active = True
 
     def execute_cartesian_traj(
         self,
@@ -1261,8 +1265,11 @@ class Robot:
         msg.header.frame_id = self.config.base_frame
 
         # Add waypoints
+        vel_hints = []
         for path, time_sec in zip(waypoints, time_from_start):
             pose = path[0]
+            vel_hint = path[1] if (len(path) > 1) else None
+            vel_hints.append(vel_hint)
 
             point = self._pose_to_pose_msg(pose)
             msg.points.append(point)  # msg.points = [*msg.points, point]
@@ -1272,6 +1279,20 @@ class Robot:
             duration.sec = int(time_sec)
             duration.nanosec = int((time_sec % 1.0) * 1e9)
             msg.time_from_start.append(duration)  # msg.time_from_start = [*msg.time_from_start, duration]
+
+        # Populate velocity hints when at least one waypoint carries a non-None hint.
+        # Waypoints with None hint get a zero-velocity Twist so the array length matches.
+        if any(v is not None for v in vel_hints):
+            for v in vel_hints:
+                twist_msg = TwistMsg()
+                if v is not None:
+                    twist_msg.linear.x = float(v.linear[0])
+                    twist_msg.linear.y = float(v.linear[1])
+                    twist_msg.linear.z = float(v.linear[2])
+                    twist_msg.angular.x = float(v.angular[0])
+                    twist_msg.angular.y = float(v.angular[1])
+                    twist_msg.angular.z = float(v.angular[2])
+                msg.velocities.append(twist_msg)
 
         # Set velocity limits
         msg.max_linear_velocity = max_linear_velocity

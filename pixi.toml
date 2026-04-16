@@ -17,17 +17,13 @@ colcon mixin add default https://raw.githubusercontent.com/colcon/colcon-mixin-r
 colcon mixin update default
 """ }
 
-build = { cmd = [
-    "colcon",
-    "build",
-    "--build-base",
-    "build_$ROS_DISTRO",
-    "--install-base",
-    "install_$ROS_DISTRO",
-    "--symlink-install",
-    "--cmake-args",
-    "'-DCMAKE_BUILD_TYPE=Debug'",
-] }
+build = { cmd = """
+bash -c 'colcon build \
+  --build-base build_$ROS_DISTRO \
+  --install-base install_$ROS_DISTRO \
+  --symlink-install \
+  --cmake-args -DCMAKE_BUILD_TYPE=Debug'
+""" }
 
 test = { cmd = [
     "colcon",
@@ -56,6 +52,7 @@ test-install = { cmd = [
 [activation.env]
 CMAKE_INSTALL_MODE = "SYMLINK"
 COLCON_DEFAULT_OUTPUT_STYLE = "catkin_tools"
+ROS_DOMAIN_ID = "1"
 
 [environments]
 humble = { features = ["humble", "dev"] }
@@ -111,6 +108,7 @@ ros-humble-sensor-msgs = "*"
 ros-humble-joy = "*"
 ros-humble-rqt-graph = "*"
 ros-humble-rviz2 = "*"
+ros-humble-ament-cmake-clang-format = "*"
 colcon-common-extensions = "*"
 rosdep = "*"
 libstdcxx-ng = "*"
