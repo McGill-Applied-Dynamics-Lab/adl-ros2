@@ -286,16 +286,17 @@ def _rf_capture_summary(frames, expected_duration_s):
 
 
 def _next_trial_dir(results_dir):
+    """Return the next available trial directory path without creating it."""
     counter = 0
     trial_dir = results_dir / f"trial_{counter:02d}"
     while trial_dir.exists():
         counter += 1
         trial_dir = results_dir / f"trial_{counter:02d}"
-    trial_dir.mkdir(parents=True, exist_ok=False)
     return trial_dir
 
 
 def _save_trial_result(trial_dir, speed_m_s, trial_payload, session_metadata):
+    trial_dir.mkdir(parents=True, exist_ok=True)
     speed_mm_s = speed_m_s * 1000.0
     out_path = trial_dir / f"rolling_speed_{speed_mm_s:06.1f}_mm_s.pkl"
     with open(out_path, "wb") as f:
@@ -382,7 +383,7 @@ def _setup_fr3_pose_controller(robot):
 def main():
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     trial_dir = _next_trial_dir(RESULTS_DIR)
-    print(f"Saving this session under: {trial_dir}")
+    print(f"Results will be saved under: {trial_dir}  (created on first completed roll)")
 
     roll_distance_m = _roll_distance_m()
     R = ROLLER_DIAMETER_M / 2.0
