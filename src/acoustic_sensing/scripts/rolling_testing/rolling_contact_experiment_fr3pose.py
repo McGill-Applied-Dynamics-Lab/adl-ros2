@@ -591,11 +591,18 @@ def main():
 
             measured_post_contact = robot.end_effector_pose.copy()
 
-            # Slide-only EE window (after compress + settle)
-            slide_start_t = compress_duration + SETTLE_SEC
+            # Slide-only EE window.
+            # Time-based windowing is unreliable because stick-slip causes the
+            # robot to lag behind the commanded trajectory and continue moving in Y
+            # after the 25 s trajectory nominally ends.  Instead, filter by Z
+            # position: the robot is in the slide phase whenever its Z is within
+            # 1 mm of the compressed depth, which cleanly separates slide from the
+            # compress (Z descending) and decompress (Z ascending) phases.
+            compressed_z = desired_compressed_start.position[2]
+            Z_TOL_M = 0.001
             ee_poses_slide_only = [
                 ep for ep in ee_poses_trial
-                if slide_start_t <= ep["t"] <= slide_start_t + slide_duration
+                if abs(ep["position"][2] - compressed_z) < Z_TOL_M
             ]
 
             # ── 5. Return to approach ─────────────────────────────────────────
