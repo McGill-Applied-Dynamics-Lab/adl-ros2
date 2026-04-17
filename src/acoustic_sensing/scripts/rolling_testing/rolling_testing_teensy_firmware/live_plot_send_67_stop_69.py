@@ -13,7 +13,7 @@ SERIAL_TIMEOUT_SEC = 10.0
 SAMPLE_RATE = 178804.2
 SPEED_OF_SOUND_M_S = 343.0
 RANGING_DISTANCE_M = 0.6
-EXPECTED_SAMPLES = int((SAMPLE_RATE / SPEED_OF_SOUND_M_S) * 2.0 * RANGING_DISTANCE_M * 1.2)
+EXPECTED_SAMPLES = 1000
 DEFAULT_YMIN = 0.0
 DEFAULT_YMAX = 4095.0
 CHANNEL_MARKERS = ("S0", "S1", "S2", "S3")
@@ -128,14 +128,22 @@ def run_viewer(port: str, baud: int, chunk_size: int, update_ms: int, ymin: floa
             self.widget = pg.GraphicsLayoutWidget()
             self.setCentralWidget(self.widget)
 
+            _CHANNEL_COLORS = [
+                (0,   220, 255),   # S0 — cyan
+                (0,   255, 100),   # S1 — lime green
+                (255, 160,   0),   # S2 — orange
+                (255, 255, 255),   # S3 — white
+            ]
+
             self.curves = []
             for idx, channel in enumerate(CHANNEL_MARKERS):
-                plot = self.widget.addPlot(row=idx, col=0, title=channel)
+                plot = self.widget.addPlot(row=0, col=idx, title=channel)
                 plot.setLabel("left", "ADC")
                 plot.setLabel("bottom", "Sample")
                 plot.showGrid(x=True, y=True, alpha=0.3)
                 plot.setYRange(ymin, ymax, padding=0.0)
-                curve = plot.plot(pen=pg.intColor(idx, hues=len(CHANNEL_MARKERS)))
+                plot.setXRange(0, 1000, padding=0.0)
+                curve = plot.plot(pen=pg.mkPen(color=_CHANNEL_COLORS[idx], width=1))
                 self.curves.append(curve)
 
             self.statusBar().showMessage("Sending 67 and waiting for RF frames...")
@@ -190,7 +198,7 @@ def run_viewer(port: str, baud: int, chunk_size: int, update_ms: int, ymin: floa
         write_timeout=SERIAL_TIMEOUT_SEC,
     )
     window = TeensyLiveViewer(ser)
-    window.resize(1100, 800)
+    window.resize(1600, 400)
     window.show()
     print(f"Sent 67 to Teensy on {port}. Close the Qt window to stop.")
     app_exec = getattr(app, "exec", None)

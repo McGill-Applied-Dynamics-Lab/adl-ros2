@@ -28,7 +28,7 @@ SERIAL_TIMEOUT_SEC = 10
 CMD_START = bytes([0x43])  # 'C' (67) - start continuous streaming
 CMD_STOP  = bytes([0x45])  # 'E' (69) - stop streaming
 
-EXPECTED_SAMPLES = 750
+EXPECTED_SAMPLES = 1100
 CHANNEL_MARKERS = ("S0", "S1", "S2", "S3")
 
 
