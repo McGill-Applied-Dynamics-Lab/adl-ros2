@@ -22,17 +22,23 @@ Acoustic sensing experiment where the FR3 robot rolls a finray-gripper sensor al
       │  move_to  (APPROACH_SPEED_M_S)
 (2) contact_pose      ← sensor just touching cylinder
       │  execute_cartesian_traj compress  (position-controlled)
+      │  settle SETTLE_SEC
 (3) compressed_pose   ← COMPRESS_DEPTH_M below contact
-      │  force-acquisition phase: press slowly until fz ≤ FORCE_UPPER_N
+      │  [force variant] press slowly until fz ≤ FORCE_UPPER_N
+      │  [spline variant] execute_cartesian_traj press to spline start Z, settle SETTLE_SEC
       │  RF streaming starts
-      │  force-controlled (or spline-tracked) slide at FORCE_CTRL_HZ
-      │    Y: y_start + SLIDE_SPEED_M_S × t              (constant)
-      │    Z: adjusted by PID on Fz error  (force) or spline  (spline)
-(4) compressed_end    ← after slide terminates
-      │  RF streaming stops
+      │  slide phase:
+      │    [force]  set_target at FORCE_CTRL_HZ, Z adjusted by adaptive PID on Fz error
+      │    [spline] execute_cartesian_traj pre-built from spline (Y uniform, Z = spline(Y))
+      │  settle SETTLE_SEC
+(4) compressed_end    ← slide terminates (use COMMANDED end pose for next traj)
       │  execute_cartesian_traj decompress  (position-controlled)
+      │  settle 1.0 s  ← long settle so Fz fully releases before ascent
+      │  RF streaming stops
 (5) surface_end       ← back up COMPRESS_DEPTH_M
-      │  move_to approach  (RETURN_SPEED_M_S)
+      │  execute_cartesian_traj ascend to approach height
+      │  settle SETTLE_SEC
+      │  execute_cartesian_traj return to approach Y
 (6) approach_pose     ← ready for next trial
 ```
 
@@ -77,14 +83,51 @@ If the Z displacement window is too small (`< STIFFNESS_MIN_DZ_M`), the estimate
 
 ## Spline Feedforward Variant
 
-`rolling_contact_experiment_spline.py` replaces the PID with a pre-learned Z(Y) spline:
+`rolling_contact_experiment_spline.py` replaces the PID with a pre-learned Z(Y) spline.
 
-1. Run `build_depth_trajectory.py` on one or more prior force-control results.
-2. The spline maps `y_traveled_mm → z_world_m`.
-3. During the slide, Z tracks the spline directly: `z_cmd = interp(y_traveled, spline_y_mm, spline_z_world_m)`.
-4. Fz is still monitored for contact loss.
+**Workflow:**
+
+1. Run one force-controlled trial to learn the fin-ray's depth profile.
+2. Run `build_depth_trajectory.py` — fits a k=5 smoothing spline to Z(Y) and saves `<trial>_depth_spline.npz` in `depth_profiles/`.
+3. Run `rolling_contact_experiment_spline.py` — loads the latest spline and executes it as a feedforward trajectory.
+
+**Execution:**
+
+- **Pre-press phase**: a smooth `execute_cartesian_traj` move from the compressed Z to the spline's starting Z.
+- **Slide phase**: all waypoints (Y-uniform, Z from spline) are pre-computed and passed to `execute_cartesian_traj` in a single call. The controller applies quintic interpolation → smooth velocity/acceleration.
+- **Telemetry + Fz**: a parallel thread logs actual vs. commanded at `FORCE_CTRL_HZ`. Contact loss is flagged but doesn't abort (robot just follows the spline through air if contact breaks — safe).
+
+**Why `execute_cartesian_traj` instead of `set_target` streaming:**
+
+The force-PID slide uses `set_target` at 50 Hz — each call is a discrete pose step with no velocity continuity between ticks, which produces visible Z jitter. The spline slide pre-computes the entire trajectory and hands it to the controller once, which interpolates smoothly.
+
+**Waypoint density:** the slide uses `~8 waypoints/s` (≈200 for a 25-s slide) rather than one per control tick. More waypoints don't help — the controller's internal quintic fills the gaps, and passing too many (~1000+) can destabilise the trajectory action server.
 
 Spline files live in `depth_profiles/`.
+
+---
+
+## Trajectory Transitions — Franka Reflex Avoidance
+
+Every transition between `execute_cartesian_traj` calls is a potential source of the
+`cartesian_motion_generator_joint_acceleration_discontinuity` reflex. Two rules apply:
+
+### 1. Settle between trajectories
+
+`wait_for_trajectory_completion` returns when the controller has finished sending commands, but the robot may still have residual velocity (especially after long slides under contact force). A short `time.sleep(SETTLE_SEC)` before the next `execute_cartesian_traj` lets the robot physically come to rest. Current settle points:
+
+```
+compress  → settle → slide
+slide     → settle → decompress
+decompress → 1.0 s settle → lift
+lift       → settle → return
+```
+
+### 2. Pass the COMMANDED end-pose, not the actual, as the next trajectory's start
+
+During a slide under contact force, the actual robot Z lags the commanded Z by ~1–2 mm (surface compliance). The Franka trajectory controller continues its internal reference from the previous trajectory's endpoint. If the next trajectory's first waypoint is the **actual** pose, the reference jumps by the commanded/actual offset — a position step that computes as infinite acceleration and trips the reflex.
+
+Both `_spline_slide` and `_force_controlled_slide` now return the **commanded** end pose. The actual is logged for diagnostics only.
 
 ---
 

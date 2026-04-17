@@ -684,19 +684,27 @@ def _force_controlled_slide(robot, compressed_start_pose, roll_distance_m,
 
     print()  # newline after the live debug line
 
-    # Capture final pose
+    # Return the COMMANDED end-of-slide pose (last set_target), not the actual.
+    # The Franka reference continues from the previous trajectory's endpoint; passing
+    # the actual pose (which lags commanded by surface compliance) causes a reference
+    # step when the next execute_cartesian_traj fires, triggering the reflex.
+    commanded_end_pose = Pose(
+        np.array([x_fixed, y_cmd, z_cmd]),
+        compressed_start_pose.orientation,
+    )
+
     try:
         actual_end_pose = robot.end_effector_pose.copy()
+        print(f"  Slide done ({termination_reason}): "
+              f"Y traveled {(y_cmd - y_start) * 1000:.1f} mm in {elapsed:.1f} s  "
+              f"  commanded: {_pose_xyz_rpy_str(commanded_end_pose)}  "
+              f"actual: {_pose_xyz_rpy_str(actual_end_pose)}")
     except RuntimeError:
-        actual_end_pose = Pose(
-            np.array([x_fixed, y_cmd, z_cmd]),
-            compressed_start_pose.orientation,
-        )
+        print(f"  Slide done ({termination_reason}): "
+              f"Y traveled {(y_cmd - y_start) * 1000:.1f} mm in {elapsed:.1f} s  "
+              f"  commanded: {_pose_xyz_rpy_str(commanded_end_pose)}")
 
-    print(f"  Slide done ({termination_reason}): "
-          f"Y traveled {(y_cmd - y_start) * 1000:.1f} mm in {elapsed:.1f} s  "
-          f"  actual: {_pose_xyz_rpy_str(actual_end_pose)}")
-    return actual_end_pose, termination_reason
+    return commanded_end_pose, termination_reason
 
 
 # ---------------------------------------------------------------------------
@@ -904,10 +912,11 @@ def main():
                 ee_poses_slide_force, slide_t0,
             )
 
-            # ── 8. Decompress (position-controlled) from actual slide end ─────
+            # ── 8. Decompress (position-controlled) from commanded slide end ──
             print("  Settling after slide...")
             time.sleep(SETTLE_SEC)
-            actual_slide_end_pose = robot.end_effector_pose.copy()
+            # Keep actual_slide_end_pose as the COMMANDED end (from _force_controlled_slide).
+            # Reading the actual pose here would cause a reference step in the next trajectory.
             desired_surface_end = Pose(
                 actual_slide_end_pose.position + np.array([0.0, 0.0, COMPRESS_DEPTH_M]),
                 BASE_ORI,

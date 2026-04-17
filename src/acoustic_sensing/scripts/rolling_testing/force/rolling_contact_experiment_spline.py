@@ -246,16 +246,25 @@ def _spline_slide(robot, compressed_start_pose, roll_distance_m,
     monitor_thread.join(timeout=1.0)
     print()
 
+    # Return the COMMANDED end-of-slide pose (last waypoint), not the actual.
+    # The Franka controller continues its reference from the previous trajectory's
+    # endpoint.  Passing the actual pose (which lags commanded by ~1.5 mm due to
+    # surface compliance) would cause a position step in the reference when the
+    # next trajectory fires, triggering the joint-acceleration-discontinuity reflex.
+    commanded_end_pose = Pose(
+        np.array([x_fixed, y_start + roll_distance_m, float(z_world[-1])]),
+        compressed_start_pose.orientation)
+
     try:
         actual_end_pose = robot.end_effector_pose.copy()
+        print(f"  Slide done ({termination_flag['reason']}): "
+              f"commanded: {_pose_xyz_rpy_str(commanded_end_pose)}  "
+              f"actual: {_pose_xyz_rpy_str(actual_end_pose)}")
     except RuntimeError:
-        actual_end_pose = Pose(
-            np.array([x_fixed, y_start + roll_distance_m, float(z_world[-1])]),
-            compressed_start_pose.orientation)
+        print(f"  Slide done ({termination_flag['reason']}): "
+              f"commanded: {_pose_xyz_rpy_str(commanded_end_pose)}")
 
-    print(f"  Slide done ({termination_flag['reason']}): "
-          f"actual: {_pose_xyz_rpy_str(actual_end_pose)}")
-    return actual_end_pose, termination_flag["reason"]
+    return commanded_end_pose, termination_flag["reason"]
 
 
 # ---------------------------------------------------------------------------
@@ -411,7 +420,9 @@ def main():
             # ── 7. Decompress ────────────────────────────────────────────────
             print("  Settling after slide...")
             time.sleep(SETTLE_SEC)
-            actual_slide_end_pose = robot.end_effector_pose.copy()
+            # NOTE: keep actual_slide_end_pose as the COMMANDED end (returned by
+            # _spline_slide).  Reading the actual pose here would re-introduce the
+            # commanded/actual mismatch and trigger the reflex when decompress fires.
             desired_surface_end = Pose(
                 actual_slide_end_pose.position + np.array([0.0, 0.0, COMPRESS_DEPTH_M]),
                 BASE_ORI,

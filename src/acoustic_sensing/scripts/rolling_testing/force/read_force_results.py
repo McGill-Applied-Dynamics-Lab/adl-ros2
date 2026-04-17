@@ -222,9 +222,10 @@ def replay(payload: dict, fps: float) -> FuncAnimation:
     chart_gs = outer[0, 0].subgridspec(1, 4, wspace=0.35)
     axes = [fig.add_subplot(chart_gs[0, i]) for i in range(4)]
 
-    right_gs = outer[0, 1].subgridspec(2, 1, height_ratios=[1.5, 1.7], hspace=0.28)
-    fz_ax   = fig.add_subplot(right_gs[0, 0])
-    info_ax = fig.add_subplot(right_gs[1, 0])
+    right_gs  = outer[0, 1].subgridspec(3, 1, height_ratios=[1.5, 0.28, 1.7], hspace=0.22)
+    fz_ax     = fig.add_subplot(right_gs[0, 0])
+    roller_ax = fig.add_subplot(right_gs[1, 0])
+    info_ax   = fig.add_subplot(right_gs[2, 0])
 
     x = np.arange(n_samples)
     vmin = float(np.percentile(arr, 1))
@@ -254,6 +255,30 @@ def replay(payload: dict, fps: float) -> FuncAnimation:
                    ha="center", va="center", color=DIM_TEXT,
                    transform=fz_ax.transAxes)
     fz_cursor = fz_ax.axvline(0.0, color=CURSOR, linewidth=1.0, alpha=0.8)
+
+    # ── Roller contact-position strip ─────────────────────────────────────────
+    t_roll_l = float(fc_t[0])  if len(fc_t) else (float(ts[0])  if len(ts) else 0.0)
+    t_roll_r = float(fc_t[-1]) if len(fc_t) else (float(ts[-1]) if len(ts) else 1.0)
+
+    roller_ax.set_facecolor(PANEL)
+    for spine in roller_ax.spines.values():
+        spine.set_edgecolor(BORDER)
+        spine.set_linewidth(0.7)
+    roller_ax.set_xticks([])
+    roller_ax.set_yticks([])
+    roller_ax.set_xlim(t_roll_l, t_roll_r)
+    roller_ax.set_ylim(-1, 1)
+    roller_ax.set_title("contact position →", fontsize=7, color=DIM_TEXT, pad=2)
+    # Track
+    roller_ax.axhline(0, color=DIM_TEXT, linewidth=2.5, alpha=0.35,
+                      solid_capstyle="round", zorder=1)
+    # End caps
+    roller_ax.plot([t_roll_l, t_roll_r], [0, 0], "|",
+                   color=DIM_TEXT, markersize=8, markeredgewidth=1.0, alpha=0.5)
+    # Moving roller marker
+    roller_dot, = roller_ax.plot([t_roll_l], [0], "o",
+                                  color=CURSOR, markersize=12,
+                                  markeredgecolor=TEXT, markeredgewidth=0.8, zorder=5)
 
     info_ax.set_facecolor(PANEL)
     for spine in info_ax.spines.values():
@@ -321,6 +346,9 @@ def replay(payload: dict, fps: float) -> FuncAnimation:
         ph = _phase(t_now)
         fz_cursor.set_xdata([t_now, t_now])
 
+        t_roller = float(np.clip(t_now, t_roll_l, t_roll_r))
+        roller_dot.set_data([t_roller], [0])
+
         title.set_text(
             f"Force-Controlled Rolling Replay  ·  {speed_m_s*1000.0:.1f} mm/s  ·  "
             f"band=[{fz_lo:.1f},{fz_hi:.1f}] N  ·  "
@@ -376,7 +404,7 @@ def replay(payload: dict, fps: float) -> FuncAnimation:
             f" z_corr   {_f(z_corr_mm, 3)} mm\n"
             f" Kp       {kp_str} m/N"
         )
-        return [*lines, fz_cursor, txt_top, txt_meas, txt_cmd, txt_err, txt_frc, title]
+        return [*lines, fz_cursor, roller_dot, txt_top, txt_meas, txt_cmd, txt_err, txt_frc, title]
 
     ani = FuncAnimation(fig, update, frames=n_frames, interval=interval_ms, blit=False, repeat=True)
     plt.show()
