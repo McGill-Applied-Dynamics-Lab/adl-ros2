@@ -447,7 +447,7 @@ def main():
         print(f"Approach pose:   {approach_pose.position.tolist()}")
         print(f"Compress depth:  {d*1000:.1f} mm")
         print(f"Roller diameter: {ROLLER_DIAMETER_M*1000:.1f} mm  |  R_eff: {R_eff*1000:.1f} mm")
-        print(f"Slide travel:    {y_disp_mm:.1f} mm in -Y")
+        print(f"Slide travel:    {y_disp_mm:.1f} mm in +Y")
         print(f"Roller rotation: {roller_rotation_deg:.1f} deg")
         print(f"Speeds:          {[s*1000 for s in ROLL_SPEEDS_M_S]} mm/s")
         print(f"Trajectory waypoints: {CONTACT_WAYPOINTS} (quintic interpolation by controller)")
@@ -480,7 +480,7 @@ def main():
                 BASE_ORI,
             )
             desired_compressed_end = Pose(
-                desired_compressed_start.position + np.array([0.0, -roll_distance_m, 0.0]),
+                desired_compressed_start.position + np.array([0.0, roll_distance_m, 0.0]),
                 BASE_ORI,
             )
             desired_surface_end = Pose(
