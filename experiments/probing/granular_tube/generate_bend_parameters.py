@@ -12,13 +12,13 @@ from pathlib import Path
 
 
 def generate_bend_parameters(
-    num_experiments: int = 50,
+    num_experiments: int = 10,
     theta_min: float = 15.0,
-    theta_max: float = 60.0,
-    phi_min: float = -180.0,
-    phi_max: float = 180.0,
+    theta_max: float = 45.0,
+    phi_min: float = 0.0,
+    phi_max: float = -180.0,
     speed_min: float = 5.0,
-    speed_max: float = 30.0,
+    speed_max: float = 15.0,
     seed: int = None,
 ) -> dict:
     """
@@ -125,13 +125,13 @@ def main():
     # Generate parameters with reasonable defaults
     # Angular speeds in deg/s: 5-30 deg/s is typical for smooth robotic motion
     parameters = generate_bend_parameters(
-        num_experiments=10,
+        num_experiments=100,
         theta_min=15.0,
-        theta_max=60.0,
+        theta_max=45.0,
         phi_min=-180.0,
-        phi_max=180.0,
+        phi_max=0.0,
         speed_min=5.0,  # deg/s
-        speed_max=30.0,  # deg/s
+        speed_max=15.0,  # deg/s
         seed=42,  # For reproducibility
     )
 

@@ -13,8 +13,8 @@ from arm_client.planning.waypoints import (
 )
 
 RADIUS = 0.200
-THETA = 35
-PHI = 0.0
+THETA = 45
+PHI = -225.0
 
 
 def main():
@@ -26,12 +26,14 @@ def main():
 
     robot.home()
 
-    START_POSITION = np.array([0.45, -0.045, 0.40])
+    START_POSITION = np.array([0.40, -0.045, 0.40])
     START_ORIENTATION = R.from_euler("xyz", [-180, 0, 0], degrees=True)
 
     robot.end_effector_pose
 
-    start_pose = robot.end_effector_pose
+    start_pose = Pose(START_POSITION, START_ORIENTATION)
+    robot.move_to(pose=start_pose)
+    time.sleep(2.0)
 
     waypoints_1 = generate_spherical_waypoints(
         start_position=start_pose.position,
@@ -39,7 +41,7 @@ def main():
         radius=RADIUS,
         theta_deg=THETA,
         phi_deg=PHI,
-        num_waypoints=20,
+        num_waypoints=50,
     )
 
     end_pose_1 = Pose(
@@ -53,12 +55,12 @@ def main():
         radius=RADIUS,
         theta_deg=-THETA,
         phi_deg=PHI,
-        num_waypoints=20,
+        num_waypoints=50,
     )
 
     traj1, traj2 = robot.plan_joint_trajectory_sequence(
         [waypoints_1, waypoints_2],
-        [5.0, 5.0],
+        [2.0, 2.0],
     )
 
     # robot.execute_sequence(

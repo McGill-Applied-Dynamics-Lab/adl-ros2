@@ -16,16 +16,16 @@ import pickle
 from pathlib import Path
 
 # ===== CONFIGURATION =====
-NUM_POINTS = 10  # Number of rotation pairs to generate
+NUM_POINTS = 100  # Number of rotation pairs to generate
 
 # List of (min, max) angle ranges in radians to allow for discontinuous sampling
 ANGLE_RANGES = [
-    (np.radians(-110.0), np.radians(-50.0)),
-    (np.radians(50.0), np.radians(110.0)),
+    (np.radians(-110.0), np.radians(-40.0)),
+    (np.radians(40.0), np.radians(110.0)),
 ]
 
 SPEED_RANGE = (
-    np.radians(40.0),
+    np.radians(30.0),
     np.radians(60.0),
 )  # Min and max rotation speed in radians/second
 

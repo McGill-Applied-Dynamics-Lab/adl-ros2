@@ -3,6 +3,9 @@ import threading
 import numpy as np
 import serial
 import pickle
+import matplotlib
+
+matplotlib.use("Agg")  # Use non-interactive backend for headless saving
 import matplotlib.pyplot as plt
 from pathlib import Path
 
@@ -12,7 +15,7 @@ from arm_client.planning.waypoints import generate_linear_waypoints
 
 # Configuration
 SETTLE_SEC = 1.00
-START_POSITION = np.array([0.45, -0.045, 0.40])
+START_POSITION = np.array([0.493, 0.0455, 0.406])
 START_ORIENTATION = R.from_euler("xyz", [-180, 0, 0], degrees=True)
 
 # Teensy Configuration
@@ -22,7 +25,7 @@ BAUD_RATE = 3000000
 # File paths
 PROJECT_ROOT = Path(__file__).resolve().parent
 PARAMETERS_FILE = PROJECT_ROOT / "results" / "grids" / "rotation_params.pkl"
-RESULTS_FILE = PROJECT_ROOT / "results" / "TEST.pkl"
+RESULTS_FILE = PROJECT_ROOT / "results" / "twist_100.pkl"
 PLOTS_DIR = PROJECT_ROOT / "results" / "plots"
 
 
@@ -58,6 +61,75 @@ def fetch_teensy_dump(ser):
     ser.readline()
 
     return np.column_stack((buf1, buf2))
+
+
+def collect_teensy_data_streaming(ser, max_duration=10.0):
+    """
+    Collect Teensy pressure sensor data via streaming chunks.
+
+    Reads chunks of data as they arrive from the Teensy, avoiding buffer overflow.
+    Call ser.write(b"2") to end collection.
+
+    Args:
+        ser: Serial connection to Teensy
+        max_duration: Maximum collection time (seconds)
+
+    Returns:
+        numpy array of shape (N, 2) with pressure readings
+    """
+    all_samples_1 = []
+    all_samples_2 = []
+    start_time = time.perf_counter()
+
+    try:
+        # Start streaming
+        ser.write(b"1")
+        time.sleep(0.1)
+
+        while time.perf_counter() - start_time < max_duration:
+            if ser.in_waiting > 0:
+                marker = ser.read(1)
+
+                if marker == b"B":  # Streaming mode start marker
+                    continue
+
+                elif marker == b"C":  # Chunk marker
+                    # Read chunk size (4 bytes)
+                    chunk_size_bytes = read_exact_bytes(ser, 4)
+                    chunk_size = int.from_bytes(chunk_size_bytes, byteorder="little")
+
+                    # Read chunk data for both sensors
+                    chunk_data_1 = read_exact_bytes(
+                        ser, chunk_size * 2
+                    )  # 2 bytes per sample
+                    chunk_data_2 = read_exact_bytes(ser, chunk_size * 2)
+
+                    # Convert to uint16 arrays
+                    samples_1 = np.frombuffer(chunk_data_1, dtype=np.uint16)
+                    samples_2 = np.frombuffer(chunk_data_2, dtype=np.uint16)
+
+                    all_samples_1.extend(samples_1)
+                    all_samples_2.extend(samples_2)
+
+                elif marker == b"E":  # End marker
+                    # Read total count
+                    total_bytes = read_exact_bytes(ser, 4)
+                    total_count = int.from_bytes(total_bytes, byteorder="little")
+                    print(f"  ✓ Received {total_count} samples from Teensy")
+                    break
+            else:
+                time.sleep(0.001)
+
+        # Combine into 2D array
+        if len(all_samples_1) > 0:
+            pressures = np.column_stack([all_samples_1, all_samples_2])
+            return pressures
+        else:
+            return np.array([])
+
+    except Exception as e:
+        print(f"Error in streaming data collection: {e}")
+        return np.array([])
 
 
 def generate_plot(
@@ -152,12 +224,11 @@ def execute_wrist_rotation_pair(
         [np.abs(target_angle_rad / speed_val), np.abs(target_angle_rad / speed_val)],
     )
 
-    # ================= 2. START RECORDING =================
+    # ================= 2. START DATA COLLECTION =================
     ser.reset_input_buffer()
     ser.reset_output_buffer()
-    ser.write(b"1")
 
-    # ================= 3. EXECUTE IN BACKGROUND =================
+    # Robot state collection
     ts_all = []
     angles_all = []
     positions_all = []
@@ -165,6 +236,23 @@ def execute_wrist_rotation_pair(
     forces_all = []
     torques_all = []
 
+    # Thread-safe lists for Teensy data
+    pressure_list = []
+
+    def collect_teensy_in_thread():
+        """Thread target: collect Teensy data during execution."""
+        try:
+            pressure = collect_teensy_data_streaming(ser, max_duration=10.0)
+            pressure_list.append(pressure)
+        except Exception as e:
+            print(f"  Error in Teensy collection thread: {e}")
+            pressure_list.append(np.array([]))
+
+    # Start Teensy collection thread
+    teensy_thread = threading.Thread(target=collect_teensy_in_thread)
+    teensy_thread.start()
+
+    # ================= 3. EXECUTE IN BACKGROUND =================
     exec_thread = threading.Thread(
         target=robot.execute_sequence,
         args=([traj1, traj2],),
@@ -177,6 +265,7 @@ def execute_wrist_rotation_pair(
     t0 = time.perf_counter()
     exec_thread.start()
 
+    # Collect robot state while executing
     while exec_thread.is_alive():
         try:
             pose = robot.end_effector_pose
@@ -193,11 +282,13 @@ def execute_wrist_rotation_pair(
 
         time.sleep(0.01)
 
-    # ================= 4. STOP RECORDING & FETCH BINARY =================
+    # ================= 4. STOP RECORDING & WAIT FOR TEENSY =================
     ser.write(b"2")
+    time.sleep(0.1)
 
-    print("\tFetching high-speed binary data...")
-    pressures_full_cycle = fetch_teensy_dump(ser)
+    # Wait for Teensy collection to complete
+    teensy_thread.join(timeout=15.0)
+    pressures_full_cycle = pressure_list[0] if len(pressure_list) > 0 else np.array([])
 
     time.sleep(SETTLE_SEC)
 
