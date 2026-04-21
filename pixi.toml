@@ -6,7 +6,7 @@ platforms = ["linux-64"]
 version = "0.1.0"
 
 [activation]
-scripts = ["install_humble/setup.sh"]
+# scripts = ["install_humble/setup.sh"]
 
 # -----------------------------
 # MARK: Tasks

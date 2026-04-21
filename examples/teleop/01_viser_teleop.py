@@ -11,6 +11,15 @@ from arm_client.planning.types import PlannedJointTrajectory
 from jaxlie import SE3
 import jax.numpy as jnp
 
+import jax
+import os
+
+LOOP_HZ = 0.1
+
+# Add near the top of your script, before any JAX calls
+jax.config.update("jax_compilation_cache_dir", "/tmp/jax_cache")
+os.makedirs("/tmp/jax_cache", exist_ok=True)
+
 
 def main():
     robot = Robot(namespace="fr3")
@@ -29,10 +38,19 @@ def main():
 
     trajectory_length = 5
     dt = 0.1
+    loop_dt = 1.0 / LOOP_HZ
+    loop_count = 0
+
+    BUFFER_S = 0.05  # how far ahead the first point is scheduled
+
+    # Single epoch for the whole session — never reset this
+    t_epoch = time.monotonic()
 
     print("Starting teleoperation loop...")
     try:
         while True:
+            t_loop_start = time.monotonic()
+
             target_position = viser_teleop.target_position
             target_orientation = viser_teleop.target_orientation
 
@@ -49,23 +67,20 @@ def main():
             # Get the full planned horizon specifically formatted for the arm
             arm_joint_count = len(robot.config.joint_names)
             horizon_positions = robot._online_planning_sols[:, :arm_joint_count]
-
-            # Because ROS 2 JTC completely replaces the ongoing trajectory, sending NaNs
-            # tells the controller "My velocity at each point is implicitly 0". It halts!
-            # By explicitly sending gradient velocities, it threads the splines together smoothly.
             horizon_velocities = np.gradient(horizon_positions, dt, axis=0)
             horizon_accelerations = np.gradient(horizon_velocities, dt, axis=0)
 
-            # Try only sending the first immediate next point smoothly
-            # We keep the slicing as 2D arrays [:1] to comply with PlannedJointTrajectory
-            horizon_times = [dt]
+            # Compute times relative to t_epoch, not relative to now
+            # This means each message extends the same timeline — no resets
+            t_now_rel = time.monotonic() - t_epoch
+            horizon_times = [t_now_rel + BUFFER_S + (i + 1) * dt for i in range(trajectory_length)]
 
             traj_msg = PlannedJointTrajectory(
                 joint_names=robot.config.joint_names,
                 time_from_start=horizon_times,
-                joint_positions=horizon_positions[:1],
-                joint_velocities=horizon_velocities[:1],
-                joint_accelerations=horizon_accelerations[:1],
+                joint_positions=horizon_positions,
+                joint_velocities=horizon_velocities,
+                joint_accelerations=horizon_accelerations,
             )
 
             # Publish trajectory sequentially, allowing built-in ROS splining
@@ -86,6 +101,17 @@ def main():
             viser_teleop.update_visualization(
                 joint_configuration=sequence_solutions[0], target_positions=target_positions, target_wxyzs=target_wxyzs
             )
+
+            elapsed = time.monotonic() - t_loop_start
+            sleep_time = loop_dt - elapsed
+            if sleep_time > 0:
+                time.sleep(sleep_time)
+
+            if loop_count % (0.5 * LOOP_HZ) == 0:
+                # print(f"Loop compute time: {elapsed}")
+                ...
+
+            loop_count += 1
 
     except KeyboardInterrupt:
         print("\nStopping teleoperation loop.")

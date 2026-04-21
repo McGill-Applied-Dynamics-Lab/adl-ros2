@@ -1,0 +1,44 @@
+rates:
+  control_rate_hz: 50.0
+  model_rate_hz: 50.0
+  rim_rate_hz: 1000.0
+  haptic_rate_hz: 1000.0
+
+interface:
+  axis: z
+  stiffness: 1000.0
+  damping: 90.0
+  contact_surface: 0.0
+  contact_stiffness: 10000.0
+  contact_damping: 100.0
+
+safety:
+  stale_state_timeout_s: 0.2
+  stale_model_timeout_s: 0.25
+  deadman_required: false
+
+inverse3:
+  uri: ws://localhost:10001
+  interface_axis: z
+  interface_workspace_scale: 1.0
+  enable_force_feedback: true
+  interface_force_scale: 1.0
+  force_cap: 12.0
+  # Maps vectors from haptic frame to robot base frame via xyz RPY.
+  # Values are [roll, pitch, yaw] in radians unless *_degrees is true.
+  haptic_to_robot_rpy: [0.0, 0.0, 0.0]
+  haptic_to_robot_rpy_degrees: false
+
+robot:
+  namespace: fr3
+  controller_name: joint_trajectory_controller
+  trajectory_length: 5
+  trajectory_dt: 0.1
+
+model:
+  urdf_package: franka_rim
+  urdf_relative_path: models/fr3_franka_hand.urdf
+  ee_frame_name: fr3_hand_tcp
+  filter_alpha_q: 0.3
+  filter_alpha_q_dot: 0.2
+  filter_alpha_tau: 0.2

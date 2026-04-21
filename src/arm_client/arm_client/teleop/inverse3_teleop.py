@@ -3,11 +3,10 @@ import numpy as np
 import asyncio
 import websockets
 import orjson
-import numpy as np
 from typing import Tuple, Dict, Any, Optional
 import threading
-import time
 from dataclasses import dataclass, field
+from scipy.spatial.transform import Rotation
 
 
 from arm_client.teleop.base_teleop import BaseTeleop
@@ -28,6 +27,13 @@ class Inverse3Config:
     stiffness: float = 150.0
     force_cap: float = 2.0
     orientation_default: list = field(default_factory=lambda: [0.0, 1.0, 0.0, 0.0])  # Defaults downward (w, x, y, z)
+    interface_axis: str = "z"
+    interface_workspace_scale: float = 1.0
+    interface_force_scale: float = 1.0
+    # Roll/pitch/yaw mapping from haptic frame to robot frame.
+    # Uses xyz Euler convention and radians by default.
+    haptic_to_robot_rpy: list[float] = field(default_factory=lambda: [0.0, 0.0, 0.0])
+    haptic_to_robot_rpy_degrees: bool = False
 
 
 def close_to_point(point_position, device_pos, thres):
@@ -241,11 +247,15 @@ class Inverse3Websocket:
         return self._connected
 
 
+_AXIS_TO_INDEX = {"x": 0, "y": 1, "z": 2}
+
+
 class Inverse3Teleop(BaseTeleop):
     def __init__(
         self,
         initial_robot_position: np.ndarray,
         config: Inverse3Config = Inverse3Config(),
+        center_on_start: bool = True,
     ):
         """
         Inverse3 Teleoperation device mapping relative cursor movements to the robot space.
@@ -257,6 +267,24 @@ class Inverse3Teleop(BaseTeleop):
         print(f"Initializing Inverse3 device...")
 
         self.config = config
+        self._center_on_start = center_on_start
+        if self.config.interface_axis not in _AXIS_TO_INDEX:
+            raise ValueError(
+                f"Invalid interface_axis '{self.config.interface_axis}'. Expected one of {list(_AXIS_TO_INDEX.keys())}."
+            )
+
+        self._interface_axis_idx = _AXIS_TO_INDEX[self.config.interface_axis]
+        self._interface_initial_pos: Optional[np.ndarray] = None
+        if len(self.config.haptic_to_robot_rpy) != 3:
+            raise ValueError(
+                "Invalid haptic_to_robot_rpy length. Expected [roll, pitch, yaw] with 3 values, "
+                f"got {self.config.haptic_to_robot_rpy}."
+            )
+        self._haptic_to_robot_rotation = Rotation.from_euler(
+            "xyz",
+            self.config.haptic_to_robot_rpy,
+            degrees=self.config.haptic_to_robot_rpy_degrees,
+        )
         self.translation_scale = self.config.translation_scale
         self.workspace_center = np.array(self.config.workspace_center, dtype=float)
         self.enable_force_feedback = self.config.enable_force_feedback
@@ -284,38 +312,90 @@ class Inverse3Teleop(BaseTeleop):
             raise RuntimeError("Failed to connect to Inverse3!")
         print("\tConnected to Inverse3 device!")
 
-        print("\tMoving device to the center of the workspace region...")
-        dt = 0.01
-        i3_at_center = False
-        while not i3_at_center and self.i3.is_connected():
-            pos, _ = self.i3.get_state()
-            if close_to_point(self.workspace_center, pos, 0.015):
-                i3_at_center = True
-                self.i3.apply_force(np.zeros(3))
-            else:
-                # Apply proportional force to pull cursor to center
-                direction = self.workspace_center - pos
-                distance = np.linalg.norm(direction)
-                dir_norm = direction / distance if distance > 0 else np.zeros(3)
+        if self._center_on_start:
+            print("\tMoving device to the center of the workspace region...")
+            dt = 0.01
+            i3_at_center = False
+            while not i3_at_center and self.i3.is_connected():
+                pos, _ = self.i3.get_state()
+                if close_to_point(self.workspace_center, pos, 0.015):
+                    i3_at_center = True
+                    self.i3.apply_force(np.zeros(3))
+                else:
+                    # Apply proportional force to pull cursor to center
+                    direction = self.workspace_center - pos
+                    distance = np.linalg.norm(direction)
+                    dir_norm = direction / distance if distance > 0 else np.zeros(3)
 
-                # Gentle pull towards center
-                force = dir_norm * (distance * 50.0)
+                    # Gentle pull towards center
+                    force = dir_norm * (distance * 50.0)
 
-                # Cap force
-                force_norm = np.linalg.norm(force)
-                if force_norm > 1.5:  # Safe centering cap
-                    force = (force / force_norm) * 1.5
+                    # Cap force
+                    force_norm = np.linalg.norm(force)
+                    if force_norm > 1.5:  # Safe centering cap
+                        force = (force / force_norm) * 1.5
 
-                self.i3.apply_force(force)
-            time.sleep(dt)
+                    self.i3.apply_force(force)
+                time.sleep(dt)
 
         print("\tInverse3 initialized! Ready for teleoperation.")
         self._i3_initial_pos, _ = self.i3.get_state()
+        self._interface_initial_pos = self._i3_initial_pos.copy()
 
     def stop(self) -> None:
         """Stop device tracking and remove all forces."""
-        self.i3.apply_force(np.zeros(3))
+        self.set_device_force(np.zeros(3))
         self.i3.stop()
+
+    def is_connected(self) -> bool:
+        """Return connection state of the underlying Inverse3 websocket."""
+        return self.i3.is_connected()
+
+    def get_device_state(self) -> Tuple[np.ndarray, np.ndarray]:
+        """Get raw device position and velocity."""
+        return self.i3.get_state()
+
+    def set_device_force(self, force: np.ndarray) -> None:
+        """Apply a raw 3D force command to the device."""
+        self.i3.apply_force(force)
+
+    def _map_haptic_vector_to_robot(self, vector_haptic: np.ndarray) -> np.ndarray:
+        """Map a vector from haptic frame to robot frame."""
+        return self._haptic_to_robot_rotation.apply(vector_haptic)
+
+    def _map_robot_vector_to_haptic(self, vector_robot: np.ndarray) -> np.ndarray:
+        """Map a vector from robot frame to haptic frame.
+
+        For orthonormal rotations this is the transpose operation.
+        """
+        return self._haptic_to_robot_rotation.inv().apply(vector_robot)
+
+    def get_interface_state(self) -> Tuple[np.ndarray, np.ndarray]:
+        """Return reduced interface position/velocity as shape (1,) arrays."""
+        pos, vel = self.get_device_state()
+        if self._interface_initial_pos is None:
+            self._interface_initial_pos = pos.copy()
+        delta_haptic = pos - self._interface_initial_pos
+        delta_robot = self.config.interface_workspace_scale * self._map_haptic_vector_to_robot(delta_haptic)
+        vel_robot = self.config.interface_workspace_scale * self._map_haptic_vector_to_robot(vel)
+        return np.array([delta_robot[self._interface_axis_idx]], dtype=float), np.array(
+            [vel_robot[self._interface_axis_idx]], dtype=float
+        )
+
+    def set_interface_force(self, force: np.ndarray) -> None:
+        """Render reduced 1D force onto the configured interface axis."""
+        command_robot = np.zeros(3, dtype=float)
+        if self.enable_force_feedback:
+            scaled = float(
+                np.clip(
+                    self.config.interface_force_scale * force[0],
+                    -self.force_cap,
+                    self.force_cap,
+                )
+            )
+            command_robot[self._interface_axis_idx] = scaled
+        command_haptic = self._map_robot_vector_to_haptic(command_robot)
+        self.set_device_force(command_haptic)
 
     @property
     def target_position(self) -> np.ndarray:
@@ -323,13 +403,13 @@ class Inverse3Teleop(BaseTeleop):
         if not self.i3.is_connected() or self._i3_initial_pos is None:
             return self._robot_initial_pos
 
-        pos, _ = self.i3.get_state()
+        pos, _ = self.get_device_state()
         delta_i3 = pos - self._i3_initial_pos
 
         # Note: Depending on Inverse3 physical setup versus the Franka base frame,
         # cross-axis configurations might be needed here (e.g. mapping X to Y).
-        # We start with a direct uniform map in all 3 axes.
-        delta_franka = delta_i3 * self.translation_scale
+        # This mapping is now handled by the explicit haptic->robot frame transform.
+        delta_franka = self.translation_scale * self._map_haptic_vector_to_robot(delta_i3)
         return self._robot_initial_pos + delta_franka
 
     @property
@@ -343,15 +423,17 @@ class Inverse3Teleop(BaseTeleop):
         based on the physical robot positional lag versus the target.
         """
         if not self.i3.is_connected() or not self.enable_force_feedback:
-            self.i3.apply_force(np.zeros(3))
+            self.set_device_force(np.zeros(3))
             return
 
-        current_i3_pos, _ = self.i3.get_state()
+        current_i3_pos, _ = self.get_device_state()
 
         # Map actual robot position back down into the Inverse3 scale.
         # This tells us where the Inverse3 'should' feel the physical boundary.
         actual_franka_delta = actual_robot_pos - self._robot_initial_pos
-        target_i3_pos = self._i3_initial_pos + (actual_franka_delta / self.translation_scale)
+        target_i3_pos = self._i3_initial_pos + self._map_robot_vector_to_haptic(
+            actual_franka_delta / self.translation_scale
+        )
 
         # Virtual spring pulling I3 physically towards the real target limit
         error_i3 = target_i3_pos - current_i3_pos
@@ -362,4 +444,5 @@ class Inverse3Teleop(BaseTeleop):
         if force_norm > self.force_cap:
             force = (force / force_norm) * self.force_cap
 
-        self.i3.apply_force(force)
+        self.set_device_force(force)
+

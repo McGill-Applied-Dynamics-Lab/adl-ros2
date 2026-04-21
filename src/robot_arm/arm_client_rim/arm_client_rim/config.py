@@ -1,0 +1,97 @@
+"""Configuration dataclasses for RIM teleoperation runtime."""
+
+from dataclasses import dataclass, field, is_dataclass
+
+import yaml
+
+from arm_client.teleop.inverse3_teleop import Inverse3Config
+
+
+@dataclass(kw_only=True)
+class RateConfig:
+    """Multi-rate loop settings in Hz."""
+
+    control_rate_hz: float = 50.0
+    model_rate_hz: float = 50.0
+    rim_rate_hz: float = 1000.0
+    haptic_rate_hz: float = 1000.0
+
+
+@dataclass(kw_only=True)
+class InterfaceConfig:
+    """RIM interface and force rendering settings."""
+
+    axis: str = "z"
+    stiffness: float = 1000.0
+    damping: float = 90.0
+    contact_surface: float = 0.0
+    contact_stiffness: float = 10000.0
+    contact_damping: float = 100.0
+    force_scale: float = 1.0
+    force_cap: float = 12.0
+
+
+@dataclass(kw_only=True)
+class SafetyConfig:
+    """Safety and stale data gates."""
+
+    stale_state_timeout_s: float = 0.2
+    stale_model_timeout_s: float = 0.25
+    deadman_required: bool = False
+
+
+@dataclass(kw_only=True)
+class RobotRuntimeConfig:
+    """Robot-facing runtime settings specific to RIM orchestration."""
+
+    namespace: str = "fr3"
+    controller_name: str = "joint_trajectory_controller"
+    trajectory_length: int = 5
+    trajectory_dt: float = 0.1
+
+
+@dataclass(kw_only=True)
+class ModelConfig:
+    """Local model estimator settings."""
+
+    urdf_package: str = "franka_rim"
+    urdf_relative_path: str = "models/fr3_franka_hand.urdf"
+    ee_frame_name: str = "fr3_hand_tcp"
+    filter_alpha_q: float = 0.3
+    filter_alpha_q_dot: float = 0.2
+    filter_alpha_tau: float = 0.2
+
+
+@dataclass(kw_only=True)
+class RIMTeleopConfig:
+    """Top-level configuration for the full orchestrator."""
+
+    rates: RateConfig = field(default_factory=RateConfig)
+    interface: InterfaceConfig = field(default_factory=InterfaceConfig)
+    safety: SafetyConfig = field(default_factory=SafetyConfig)
+    inverse3: Inverse3Config = field(default_factory=Inverse3Config)
+    robot: RobotRuntimeConfig = field(default_factory=RobotRuntimeConfig)
+    model: ModelConfig = field(default_factory=ModelConfig)
+
+
+def _apply_nested_config(instance, values: dict) -> None:
+    """Apply nested dict values to nested dataclass instances in place."""
+    for key, value in values.items():
+        if not hasattr(instance, key):
+            continue
+        current = getattr(instance, key)
+        if is_dataclass(current) and isinstance(value, dict):
+            _apply_nested_config(current, value)
+        else:
+            setattr(instance, key, value)
+
+
+def load_config_from_yaml(file_path: str) -> RIMTeleopConfig:
+    """Load RIM teleoperation config from a YAML file."""
+    with open(file_path, "r", encoding="utf-8") as handle:
+        loaded = yaml.safe_load(handle) or {}
+    config = RIMTeleopConfig()
+    if not isinstance(loaded, dict):
+        raise ValueError("Expected YAML root object to be a dictionary")
+    _apply_nested_config(config, loaded)
+    return config

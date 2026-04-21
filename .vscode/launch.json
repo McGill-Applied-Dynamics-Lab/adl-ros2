@@ -6,22 +6,24 @@
             "type": "debugpy",
             "request": "launch",
             "program": "${file}",
-            // "python": "${workspaceFolder}/.pixi/envs/humble/bin/python",
+            "python": "${workspaceFolder}/.pixi/envs/humble/bin/python",
+            "args": [],
+            // "preLaunchTask": "gen-vscode-env",
             "envFile": "${workspaceFolder}/.vscode/.env.humble",
             "console": "integratedTerminal",
             "pathMappings": [
-                {
-                    "localRoot": "${workspaceFolder}/src",
-                    "remoteRoot": "/home/athena/csirois/git/adl-ros2/build_humble"
-                },
-                {
-                    "localRoot": "${workspaceFolder}/src",
-                    "remoteRoot": "/home/athena/csirois/git/adl-ros2/install_humble"
-                },
-                {
-                    "localRoot": "${workspaceFolder}/",
-                    "remoteRoot": "/home/athena/csirois/git/adl-ros2/"
-                }
+                // {
+                //     "localRoot": "${workspaceFolder}/src",
+                //     "remoteRoot": "/home/athena/csirois/git/adl-ros2/build_humble"
+                // },
+                // {
+                //     "localRoot": "${workspaceFolder}/src",
+                //     "remoteRoot": "/home/athena/csirois/git/adl-ros2/install_humble"
+                // },
+                // {
+                //     "localRoot": "${workspaceFolder}/",
+                //     "remoteRoot": "/home/athena/csirois/git/adl-ros2/"
+                // }
             ]
         },
         {
@@ -29,6 +31,7 @@
             "type": "debugpy",
             "request": "launch",
             "program": "${file}",
+            "python": "${workspaceFolder}/.pixi/envs/humble/bin/python",
             "console": "integratedTerminal",
             "args": [],
             "justMyCode": false,
@@ -64,6 +67,7 @@
             "type": "debugpy",
             "request": "launch",
             "module": "pytest",
+            "python": "${workspaceFolder}/.pixi/envs/humble/bin/python",
             "args": [
                 "${file}",
                 "-v",
@@ -95,6 +99,7 @@
             "type": "debugpy",
             "request": "launch",
             "module": "pytest",
+            "python": "${workspaceFolder}/.pixi/envs/humble/bin/python",
             "args": [
                 "${workspaceFolder}/src/robot_arm/robot_arm_testing/test/",
                 "-v",
@@ -106,6 +111,34 @@
             "env": {
                 "PYTHONPATH": "${workspaceFolder}/src:${workspaceFolder}/install_humble/arm_client/lib/python3.12/site-packages:${workspaceFolder}/install_humble/franka_rim/lib/python3.12/site-packages"
             }
-        }
+        },
+        {
+            "name": "Python Debugger: launch_rim_teleop",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/src/robot_arm/arm_client_rim/arm_client_rim/launch_rim_teleop.py",
+            "python": "${workspaceFolder}/.pixi/envs/humble/bin/python",
+            // "preLaunchTask": "gen-vscode-env",
+            "envFile": "${workspaceFolder}/.vscode/.env.humble",
+            "console": "integratedTerminal",
+            "args": [
+                "--config",
+                "${workspaceFolder}/src/robot_arm/arm_client_rim/config/rim_teleop_default.yaml"
+            ],
+            "pathMappings": [
+                // {
+                //     "localRoot": "${workspaceFolder}/src",
+                //     "remoteRoot": "/home/athena/csirois/git/adl-ros2/build_humble"
+                // },
+                // {
+                //     "localRoot": "${workspaceFolder}/src",
+                //     "remoteRoot": "/home/athena/csirois/git/adl-ros2/install_humble"
+                // },
+                // {
+                //     "localRoot": "${workspaceFolder}/",
+                //     "remoteRoot": "/home/athena/csirois/git/adl-ros2/"
+                // }
+            ]
+        },
     ]
 }

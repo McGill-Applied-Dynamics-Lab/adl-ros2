@@ -78,6 +78,12 @@
       "command": "source ${workspaceFolder}/install_humble/setup.bash && sleep 1"
     },
     {
+      "label": "gen-vscode-env",
+      "type": "shell",
+      "command": "pixi run -e humble gen-vscode-env",
+      "problemMatcher": []
+    },
+    {
       "label": "ROS2 Test - robot_arm_testing",
       "type": "shell",
       "command": [

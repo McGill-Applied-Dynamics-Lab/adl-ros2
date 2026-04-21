@@ -1,11 +1,13 @@
 {
     "python.defaultInterpreterPath": "${workspaceFolder}/.pixi/envs/humble/bin/python",
+    "python.terminal.activateEnvironment": false,
     "python.autoComplete.extraPaths": [
         "${workspaceFolder}/src",
         "${workspaceFolder}/build_humble",
         "${workspaceFolder}/install_humble",
         "${workspaceFolder}/install_humble/arm_client/lib/python3.12/site-packages",
-        "${workspaceFolder}/install_humble/arm_interfaces/lib/python3.12/site-packages"
+        "${workspaceFolder}/install_humble/arm_interfaces/lib/python3.12/site-packages",
+        "${workspaceFolder}/install_humble/arm_client_rim/lib/python3.12/site-packages",
     ],
     "python.analysis.extraPaths": [
         "${workspaceFolder}/src",
@@ -14,10 +16,12 @@
         "${workspaceFolder}/src/robot_arm",
         "${workspaceFolder}/src/robot_tasks",
         "${workspaceFolder}/src/teleop",
+        "${workspaceFolder}/src/robot_arm/arm_client_rim",
         "${workspaceFolder}/build_humble",
         "${workspaceFolder}/install_humble",
         "${workspaceFolder}/install_humble/arm_client/lib/python3.12/site-packages",
         "${workspaceFolder}/install_humble/arm_interfaces/lib/python3.12/site-packages",
+        "${workspaceFolder}/install_humble/arm_client_rim/lib/python3.12/site-packages",
         // "/opt/openrobots/lib/python3.10/site-packages",
         "/usr/local/lib/python3.10/site-packages",
     ],

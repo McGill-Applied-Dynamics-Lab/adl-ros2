@@ -173,6 +173,10 @@ class Robot:
         self._target_twist = None
         self._current_wrench = None  # added current wrench
 
+        self._last_pose_update_time: float | None = None
+        self._last_joint_update_time: float | None = None
+        self._last_wrench_update_time: float | None = None
+
         # Flag to disable target_pose publishing during trajectory execution
         self._trajectory_mode_active = False
 
@@ -577,6 +581,7 @@ class Robot:
             msg (WrenchStamped): ROS message containing the current wrench.
         """
         self._current_wrench = self._wrench_msg_to_wrench(msg)
+        self._last_wrench_update_time = time.time()
         if self._target_wrench is None:
             self._target_wrench = self._current_wrench.copy()
 
@@ -590,6 +595,7 @@ class Robot:
             msg (PoseStamped): ROS message containing the current pose.
         """
         self._current_pose = self._pose_msg_to_pose(msg)
+        self._last_pose_update_time = time.time()
         if self._target_pose is None:
             self._target_pose = self._current_pose.copy()
 
@@ -631,6 +637,16 @@ class Robot:
 
         if self._tau_target is None:
             self._tau_target = self._tau_current.copy()
+
+        self._last_joint_update_time = time.time()
+
+    def get_state_update_times(self) -> dict[str, float | None]:
+        """Return last update timestamps (unix seconds) for key robot streams."""
+        return {
+            "pose": self._last_pose_update_time,
+            "joint": self._last_joint_update_time,
+            "wrench": self._last_wrench_update_time,
+        }
 
     # =======================
     # MARK: Utilities
@@ -959,6 +975,41 @@ class Robot:
         arm_joint_count = len(self.config.joint_names)
         return self._online_planning_sols[0, :arm_joint_count].copy()
 
+    def build_online_planning_step_trajectory(
+        self,
+        target_position: NDArray,
+        target_orientation: NDArray | Rotation,
+        trajectory_length: int = 5,
+        dt: float = 0.1,
+    ) -> PlannedJointTrajectory:
+        """Build a single-step `PlannedJointTrajectory` from online planning output.
+
+        This method provides a public API for teleoperation loops to obtain a
+        smooth immediate command point without depending on private attributes.
+        """
+        self.online_planning(
+            target_position=target_position,
+            target_orientation=target_orientation,
+            trajectory_length=trajectory_length,
+            dt=dt,
+        )
+
+        if not hasattr(self, "_online_planning_sols"):
+            raise RuntimeError("Online planning solutions are unavailable.")
+
+        arm_joint_count = len(self.config.joint_names)
+        horizon_positions = self._online_planning_sols[:, :arm_joint_count]
+        horizon_velocities = np.gradient(horizon_positions, dt, axis=0)
+        horizon_accelerations = np.gradient(horizon_velocities, dt, axis=0)
+
+        return PlannedJointTrajectory(
+            joint_names=self.config.joint_names,
+            time_from_start=[dt],
+            joint_positions=horizon_positions[:1],
+            joint_velocities=horizon_velocities[:1],
+            joint_accelerations=horizon_accelerations[:1],
+        )
+
     def execute_sequence(
         self,
         steps: Sequence[Any],
@@ -1028,8 +1079,6 @@ class Robot:
             raise ValueError("Trajectory times must be strictly increasing")
 
         shifted_times = [t + settle_time for t in original_times]
-        duration = original_times[-1]
-
         first_q = np.array(trajectory.joint_positions[0], dtype=float)
         last_q = np.array(trajectory.joint_positions[-1], dtype=float)
         first_dq = np.array(trajectory.joint_velocities[0], dtype=float)
