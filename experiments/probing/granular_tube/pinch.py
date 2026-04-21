@@ -36,7 +36,9 @@ PINCH_TIME = 1.0
 TUBE_LENGTH = 0.10
 
 
-def move_waypoints(start_rad, end_rad, start_height, end_height) -> tuple[float, Sequence[CartesianWaypoint]]:
+def move_waypoints(
+    start_rad, end_rad, start_height, end_height
+) -> tuple[float, Sequence[CartesianWaypoint]]:
     """
     Generate trajectory between consecutive pinch locations.
 
@@ -69,7 +71,9 @@ def move_waypoints(start_rad, end_rad, start_height, end_height) -> tuple[float,
         # Calculate rotation relative to SAFE_ORI directly
         # rotation = R.from_euler("z", current_theta, degrees=False) * SAFE_ORI
 
-        cartesian_wp = CartesianWaypoint(position=waypoint.position, orientation=waypoint.orientation, s=i / n_points)
+        cartesian_wp = CartesianWaypoint(
+            position=waypoint.position, orientation=waypoint.orientation, s=i / n_points
+        )
 
         waypoints.append(cartesian_wp)
 
@@ -112,7 +116,9 @@ def main():
     last_angle = 0.0
     last_height = 0.0
     start_pose = coord_to_pose(last_angle, last_height)
-    print(f"Moving to start position (angle: {np.degrees(last_angle):.2f}°, height: {last_height:.2f}m)")
+    print(
+        f"Moving to start position (angle: {np.degrees(last_angle):.2f}°, height: {last_height:.2f}m)"
+    )
     robot.move_to(pose=start_pose)
     last_joint_cfg = robot.q.copy()
 
@@ -127,7 +133,9 @@ def main():
 
         # target_rot = R.from_euler("z", target_angle, degrees=False) * SAFE_ORI
 
-        traj_duration, waypoints = move_waypoints(last_angle, target_angle, last_height, target_height)
+        traj_duration, waypoints = move_waypoints(
+            last_angle, target_angle, last_height, target_height
+        )
 
         joint_traj = robot.plan_joint_trajectory(
             waypoints=waypoints,

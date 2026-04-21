@@ -127,7 +127,7 @@ def main():
     parameters = generate_bend_parameters(
         num_experiments=100,
         theta_min=15.0,
-        theta_max=45.0,
+        theta_max=40.0,
         phi_min=-180.0,
         phi_max=0.0,
         speed_min=5.0,  # deg/s
