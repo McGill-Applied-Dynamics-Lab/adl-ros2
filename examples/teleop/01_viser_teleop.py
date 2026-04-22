@@ -14,11 +14,10 @@ import jax.numpy as jnp
 import jax
 import os
 
-LOOP_HZ = 0.1
+LOOP_HZ = 5
 
-# Add near the top of your script, before any JAX calls
-jax.config.update("jax_compilation_cache_dir", "/tmp/jax_cache")
-os.makedirs("/tmp/jax_cache", exist_ok=True)
+# jax.config.update("jax_compilation_cache_dir", "/tmp/jax_cache")
+# os.makedirs("/tmp/jax_cache", exist_ok=True)
 
 
 def main():
@@ -45,6 +44,7 @@ def main():
 
     # Single epoch for the whole session — never reset this
     t_epoch = time.monotonic()
+    t_epoch_ros = robot.node.get_clock().now()
 
     print("Starting teleoperation loop...")
     try:
@@ -70,10 +70,16 @@ def main():
             horizon_velocities = np.gradient(horizon_positions, dt, axis=0)
             horizon_accelerations = np.gradient(horizon_velocities, dt, axis=0)
 
+            horizon_velocities = np.full(horizon_positions.shape, np.nan)
+            horizon_accelerations = np.full(horizon_positions.shape, np.nan)
+
             # Compute times relative to t_epoch, not relative to now
             # This means each message extends the same timeline — no resets
-            t_now_rel = time.monotonic() - t_epoch
-            horizon_times = [t_now_rel + BUFFER_S + (i + 1) * dt for i in range(trajectory_length)]
+            # t_now_rel = time.monotonic() - t_epoch
+            # horizon_times = [t_now_rel + BUFFER_S + (i + 1) * dt for i in range(trajectory_length)]
+
+            n_points = horizon_positions.shape[0]
+            horizon_times = [(i + 1) * dt for i in range(n_points)]  # [0.1, 0.2, 0.3, 0.4, 0.5]
 
             traj_msg = PlannedJointTrajectory(
                 joint_names=robot.config.joint_names,
@@ -84,7 +90,10 @@ def main():
             )
 
             # Publish trajectory sequentially, allowing built-in ROS splining
-            robot.send_joint_trajectory(traj_msg)
+            robot.send_joint_trajectory(
+                traj_msg
+                # , header_stamp=t_epoch_ros
+            )
 
             # Visualize the result
             # Here we grab the last planned sequence from the state in robot obj.

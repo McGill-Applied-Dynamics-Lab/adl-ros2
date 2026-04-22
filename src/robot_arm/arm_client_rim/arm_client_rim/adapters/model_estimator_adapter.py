@@ -36,12 +36,19 @@ class ModelEstimatorAdapter:
         self._update_rate_hz = update_rate_hz
         self._dt = 1.0 / update_rate_hz
         self._frame_name = model_cfg.ee_frame_name
+        self._robot_joint_names = list(self._robot.config.joint_names)
 
         urdf_root = get_package_share_directory(model_cfg.urdf_package)
         urdf_path = os.path.join(urdf_root, model_cfg.urdf_relative_path)
-        self._model = pin.buildModelFromUrdf(urdf_path)
+        full_model = pin.buildModelFromUrdf(urdf_path)
+        self._model = self._build_model_matching_robot_dof(full_model)
         self._data = self._model.createData()
         self._ee_frame_id = self._model.getFrameId(self._frame_name)
+
+        self._model_joint_names = [
+            self._model.names[jid] for jid in range(1, self._model.njoints) if self._model.joints[jid].nq > 0
+        ]
+        self._model_order_from_robot = [self._robot_joint_names.index(name) for name in self._model_joint_names]
 
         axis_idx = _AXIS_TO_INDEX[interface_cfg.axis]
         self._di = np.zeros((1, 6))
@@ -55,6 +62,40 @@ class ModelEstimatorAdapter:
         self._lock = threading.Lock()
         self._running = False
         self._thread: threading.Thread | None = None
+
+    def _build_model_matching_robot_dof(self, full_model: pin.Model) -> pin.Model:
+        """Build a model whose DOF matches the `Robot` joint state vectors.
+
+        If URDF DOF is higher than the robot state (e.g., gripper/finger joints),
+        build a reduced model by locking non-arm joints.
+        """
+        expected_n = len(self._robot_joint_names)
+        if full_model.nv == expected_n:
+            return full_model
+
+        actuated_joint_ids = [jid for jid in range(1, full_model.njoints) if full_model.joints[jid].nq > 0]
+        lock_joint_ids = [jid for jid in actuated_joint_ids if full_model.names[jid] not in self._robot_joint_names]
+
+        if not lock_joint_ids:
+            self._node.get_logger().warn(
+                f"Model DOF ({full_model.nv}) != robot state DOF ({expected_n}), "
+                "but no lockable non-robot joints were found. Using full model."
+            )
+            return full_model
+
+        q_ref = pin.neutral(full_model)
+        reduced_model = pin.buildReducedModel(full_model, lock_joint_ids, q_ref)
+
+        if reduced_model.nv != expected_n:
+            self._node.get_logger().warn(
+                f"Reduced model DOF ({reduced_model.nv}) still differs from robot state DOF ({expected_n})."
+            )
+
+        locked_joint_names = [full_model.names[jid] for jid in lock_joint_ids]
+        self._node.get_logger().info(
+            f"Built reduced Pinocchio model to match robot state DOF. Locked joints: {locked_joint_names}"
+        )
+        return reduced_model
 
     def start(self) -> None:
         self._running = True
@@ -75,11 +116,15 @@ class ModelEstimatorAdapter:
 
     def _compute_once(self) -> None:
         try:
-            q = self._f_q.update(self._robot.q)
-            dq = self._f_dq.update(self._robot.dq)
-            tau = self._f_tau.update(self._robot.tau)
+            q_robot = self._f_q.update(self._robot.q)
+            dq_robot = self._f_dq.update(self._robot.dq)
+            tau_robot = self._f_tau.update(self._robot.tau)
         except RuntimeError:
             return
+
+        q = q_robot[self._model_order_from_robot]
+        dq = dq_robot[self._model_order_from_robot]
+        tau = tau_robot[self._model_order_from_robot]
 
         pin.computeAllTerms(self._model, self._data, q, dq)
         pin.updateFramePlacements(self._model, self._data)

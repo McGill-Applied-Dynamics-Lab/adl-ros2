@@ -27,33 +27,6 @@
             ]
         },
         {
-            "name": "Python: Current File (with args)",
-            "type": "debugpy",
-            "request": "launch",
-            "program": "${file}",
-            "python": "${workspaceFolder}/.pixi/envs/humble/bin/python",
-            "console": "integratedTerminal",
-            "args": [],
-            "justMyCode": false,
-            "pathMappings": [
-                {
-                    "localRoot": "${workspaceFolder}/src",
-                    "remoteRoot": "/home/athena/csirois/git/adl-ros2/build_humble"
-                },
-                {
-                    "localRoot": "${workspaceFolder}/src",
-                    "remoteRoot": "/home/athena/csirois/git/adl-ros2/install_humble"
-                },
-                {
-                    "localRoot": "${workspaceFolder}/src",
-                    "remoteRoot": "/home/athena/csirois/git/adl-ros2/src"
-                }
-            ],
-            "env": {
-                "PYTHONPATH": "${workspaceFolder}/src:${workspaceFolder}/install_humble/arm_client/lib/python3.12/site-packages:${workspaceFolder}/install_humble/franka_rim/lib/python3.12/site-packages"
-            }
-        },
-        {
             "name": "Python Debugger: Remote Attach",
             "type": "debugpy",
             "request": "attach",

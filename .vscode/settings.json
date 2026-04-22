@@ -1,5 +1,6 @@
 {
     "python.defaultInterpreterPath": "${workspaceFolder}/.pixi/envs/humble/bin/python",
+    "python.envFile": "${workspaceFolder}/.vscode/.env.humble",
     "python.terminal.activateEnvironment": false,
     "python.autoComplete.extraPaths": [
         "${workspaceFolder}/src",
@@ -123,7 +124,9 @@
     },
     //! Pytest
     "python.testing.pytestArgs": [
-        "src/",
+        "src/arm_client/test",
+        "-p",
+        "no:launch_testing_ros_pytest_entrypoint",
         "--ignore=src/_legacy",
     ],
     // "python.testing.pytestPath": "/usr/bin/pytest-3"

@@ -74,7 +74,7 @@ class RIMTeleopOrchestrator:
         self._threads = [
             threading.Thread(target=self._haptic_loop, daemon=True),
             threading.Thread(target=self._rim_loop, daemon=True),
-            threading.Thread(target=self._control_loop, daemon=True),
+            # threading.Thread(target=self._control_loop, daemon=True),
             threading.Thread(target=self._log_loop, daemon=True),
         ]
         for t in self._threads:
@@ -178,12 +178,12 @@ class RIMTeleopOrchestrator:
             time.sleep(max(0.0, next_tick - time.perf_counter()))
 
     def _log_loop(self) -> None:
+        log_period = 5.0  # sec
         while self._running:
-            time.sleep(1.0)
             summaries = []
             for name, monitor in self._loop_monitors.items():
                 snap = monitor.snapshot()
                 summaries.append(
                     f"{name}: {snap.measured_hz:.1f}Hz target={snap.target_hz:.1f}Hz p95={snap.p95_dt_ms:.2f}ms"
                 )
-            self._robot.node.get_logger().info(" | ".join(summaries))
+            self._robot.node.get_logger().info(" | ".join(summaries), throttle_duration_sec=log_period)
