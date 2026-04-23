@@ -63,6 +63,36 @@ class ModelConfig:
 
 
 @dataclass(kw_only=True)
+class FileSinkConfig:
+    """Local file sink configuration."""
+
+    enabled: bool = True
+    output_dir: str = "data/rim_runs"
+    run_name: str | None = None
+    flush_hz: float = 20.0
+
+
+@dataclass(kw_only=True)
+class FoxgloveSinkConfig:
+    """Foxglove live sink configuration."""
+
+    enabled: bool = True
+    host: str = "0.0.0.0"
+    port: int = 8765
+    topic_prefix: str = "/rim"
+
+
+@dataclass(kw_only=True)
+class LoggingConfig:
+    """Experiment logger with pluggable sinks."""
+
+    enabled: bool = True
+    sinks: list[str] = field(default_factory=lambda: ["file_sink", "foxglove_sink"])
+    file_sink: FileSinkConfig = field(default_factory=FileSinkConfig)
+    foxglove_sink: FoxgloveSinkConfig = field(default_factory=FoxgloveSinkConfig)
+
+
+@dataclass(kw_only=True)
 class RIMTeleopConfig:
     """Top-level configuration for the full orchestrator."""
 
@@ -72,6 +102,7 @@ class RIMTeleopConfig:
     inverse3: Inverse3Config = field(default_factory=Inverse3Config)
     robot: RobotRuntimeConfig = field(default_factory=RobotRuntimeConfig)
     model: ModelConfig = field(default_factory=ModelConfig)
+    logging: LoggingConfig = field(default_factory=LoggingConfig)
 
 
 def _apply_nested_config(instance, values: dict) -> None:

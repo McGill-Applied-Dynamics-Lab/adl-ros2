@@ -36,19 +36,19 @@ class _FakeI3Websocket:
 
 def _make_teleop(monkeypatch, config: i3mod.Inverse3Config, fake: _FakeI3Websocket):
     monkeypatch.setattr(i3mod, "Inverse3Websocket", lambda uri: fake)
-    return i3mod.Inverse3Teleop(initial_robot_position=np.zeros(3), config=config, center_on_start=False)
+    return i3mod.Inverse3Device(initial_robot_position=np.zeros(3), config=config, center_on_start=False)
 
 
 def test_init_rejects_invalid_interface_axis():
     cfg = i3mod.Inverse3Config(interface_axis="bad")
     with pytest.raises(ValueError, match="Invalid interface_axis"):
-        i3mod.Inverse3Teleop(initial_robot_position=np.zeros(3), config=cfg, center_on_start=False)
+        i3mod.Inverse3Device(initial_robot_position=np.zeros(3), config=cfg, center_on_start=False)
 
 
 def test_init_rejects_bad_rpy_length():
     cfg = i3mod.Inverse3Config(haptic_to_robot_rpy=[0.0, 0.0])
     with pytest.raises(ValueError, match="Invalid haptic_to_robot_rpy length"):
-        i3mod.Inverse3Teleop(initial_robot_position=np.zeros(3), config=cfg, center_on_start=False)
+        i3mod.Inverse3Device(initial_robot_position=np.zeros(3), config=cfg, center_on_start=False)
 
 
 def test_get_interface_state_projects_selected_axis(monkeypatch):
@@ -124,7 +124,7 @@ def test_position_origin_and_robot_properties(monkeypatch):
         haptic_to_robot_rpy=[0.0, 0.0, 0.0],
         haptic_to_robot_rpy_degrees=False,
     )
-    teleop = i3mod.Inverse3Teleop(initial_robot_position=np.array([0.5, 0.0, 0.0]), config=cfg, center_on_start=False)
+    teleop = i3mod.Inverse3Device(initial_robot_position=np.array([0.5, 0.0, 0.0]), config=cfg, center_on_start=False)
     teleop.i3_interface = fake
 
     fake._position = np.array([1.0, 2.0, 3.0])

@@ -56,9 +56,9 @@ class Inverse3Config:
     # Transform - I3 base to I3 workspace center
     i3_origin: list = field(default_factory=lambda: [0.0, -0.17, 0.16])  # Translation from I3 origin to WS center
     i3_origin_rpy: list[float] = field(
-        default_factory=lambda: [0.0, 0.0, 0.0]
+        default_factory=lambda: [0.0, 0.0, 90.0]
     )  # Roll/pitch/yaw mapping from I3 base to I3 origin
-    i3_origin_rpy_degrees: bool = False
+    i3_origin_rpy_degrees: bool = True
 
     center_on_start: bool = False  # To bring I3 to origin
 
@@ -66,6 +66,7 @@ class Inverse3Config:
     stiffness: float = 150.0
     force_cap: float = 2.0
     orientation_default: list = field(default_factory=lambda: [0.0, 1.0, 0.0, 0.0])  # Defaults downward (w, x, y, z)
+
     interface_axis: str = "z"
 
     interface_workspace_scale: float = 1.0
@@ -277,7 +278,9 @@ class Inverse3Websocket:
         return self._connected
 
 
-class Inverse3Teleop(BaseTeleop):
+class Inverse3Device:
+    """To interface with an Inverse 3 device. Wrapper around the websocket to handle the frame transforms."""
+
     def __init__(
         self,
         initial_robot_position: np.ndarray,
@@ -347,8 +350,6 @@ class Inverse3Teleop(BaseTeleop):
             self._robot_initial_pos, np.zeros(3), degrees=True
         )  # Transform from I3 origin to robot
 
-        self._T_BI3_robot = ...
-
         # Initial states
         self._i3_initial_pos = None
         self.origin_position = self.config.i3_origin  # I3 Origin position in I3 base frame
@@ -385,7 +386,7 @@ class Inverse3Teleop(BaseTeleop):
             dt = 0.01
             i3_at_center = False
             while not i3_at_center and self.i3_interface.is_connected():
-                pos, _ = self.i3_interface.get_state()
+                self.update_device_state()
                 i3_position_base = self.position_base
 
                 if close_to_point(self.origin_position, i3_position_base, 0.015):
@@ -446,32 +447,32 @@ class Inverse3Teleop(BaseTeleop):
 
     @property
     def position_base(self) -> np.ndarray:
-        """Current I3 position in I3 base frame."""
+        """Current I3 end-effector position in I3 base frame."""
         return self._p_i3_base.copy()
 
     @property
     def position_origin(self) -> np.ndarray:
-        """Current I3 position in I3 origin frame."""
+        """Current I3 end-effectorposition in I3 origin frame."""
         return self._p_i3_origin.copy()
 
     @property
     def position_robot(self) -> np.ndarray:
-        """Current I3 position in robot frame."""
+        """Current I3 end-effector position in robot frame."""
         return self._p_robot.copy()
 
     @property
     def velocity_base(self) -> np.ndarray:
-        """Current I3 velocity in I3 base frame."""
+        """Current I3 end-effector velocity in I3 base frame."""
         return self._v_i3_base.copy()
 
     @property
     def velocity_origin(self) -> np.ndarray:
-        """Current I3 velocity in I3 origin frame."""
+        """Current I3 end-effector velocity in I3 origin frame."""
         return self._v_i3_origin.copy()
 
     @property
     def velocity_robot(self) -> np.ndarray:
-        """Current I3 velocity in robot frame."""
+        """Current I3 end-effector velocity in robot frame."""
         return self._v_robot.copy()
 
     @property
@@ -491,8 +492,17 @@ class Inverse3Teleop(BaseTeleop):
             force: Force in I3 Origin frame to apply.
 
         """
-        ...
-        self.i3_interface.apply_force(force)
+        f_I3_base = self._T_BI3_OI3[:3, :3] @ force
+
+        self.i3_interface.apply_force(f_I3_base)
+
+
+class Inverse3Teleop(BaseTeleop):
+    """To Teleop the Franka Arm with an Inverse 3 device.
+
+    Args:
+        BaseTeleop (_type_): _description_
+    """
 
     # -------------------
     # RIM Teleop

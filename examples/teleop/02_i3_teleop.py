@@ -5,7 +5,7 @@ import time
 import numpy as np
 
 from arm_client.robot import Robot, Pose
-from arm_client.teleop.inverse3_teleop import Inverse3Teleop, Inverse3Config
+from arm_client.teleop.inverse3_teleop import Inverse3Device, Inverse3Config
 from arm_client.planning.types import PlannedJointTrajectory
 
 from jaxlie import SE3
@@ -41,7 +41,7 @@ def main():
         orientation_default=[0.0, 1.0, 0.0, 0.0],  # w, x, y, z downward
     )
 
-    i3_teleop = Inverse3Teleop(initial_robot_position=initial_robot_position, config=i3_config)
+    i3_teleop = Inverse3Device(initial_robot_position=initial_robot_position, config=i3_config)
     i3_teleop.start()
 
     trajectory_length = 5

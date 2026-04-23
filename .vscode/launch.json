@@ -107,10 +107,18 @@
                 //     "localRoot": "${workspaceFolder}/src",
                 //     "remoteRoot": "/home/athena/csirois/git/adl-ros2/install_humble"
                 // },
-                // {
-                //     "localRoot": "${workspaceFolder}/",
-                //     "remoteRoot": "/home/athena/csirois/git/adl-ros2/"
-                // }
+                {
+                    "localRoot": "${workspaceFolder}/src/robot_arm/arm_client_rim",
+                    "remoteRoot": "/home/athena/csirois/git/adl-ros2/build_humble/arm_client_rim"
+                },
+                {
+                    "localRoot": "${workspaceFolder}/src/robot_arm/arm_client_rim",
+                    "remoteRoot": "/home/athena/csirois/git/adl-ros2/install_humble/arm_client_rim"
+                },
+                {
+                    "localRoot": "${workspaceFolder}/",
+                    "remoteRoot": "/home/athena/csirois/git/adl-ros2/"
+                }
             ]
         },
     ]

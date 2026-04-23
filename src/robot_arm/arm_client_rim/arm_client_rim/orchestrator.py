@@ -7,9 +7,9 @@ import time
 
 import numpy as np
 from arm_client.robot import Pose, Robot
-from arm_client.teleop.inverse3_teleop import Inverse3Teleop
+from arm_client.teleop.inverse3_teleop import Inverse3Device
 
-from .adapters import ModelEstimatorAdapter
+from .adapters import ExperimentLogger, ModelEstimatorAdapter, TeleopInterfaceAdapter
 from .config import RIMTeleopConfig
 from .delay_rim import DelayRIM
 from .monitoring import LoopRateMonitor
@@ -38,11 +38,11 @@ class RIMTeleopOrchestrator:
             update_rate_hz=config.rates.model_rate_hz,
         )
 
-        self.haply = Inverse3Teleop(
+        self.haply = Inverse3Device(
             initial_robot_position=np.zeros(3),
             config=config.inverse3,
-            center_on_start=False,
         )
+        self.teleop_interface = TeleopInterfaceAdapter(device=self.haply, interface_cfg=config.interface)
 
         self.rim_calc = RIMCalculator()
         self.delay_rim = DelayRIM(
@@ -52,6 +52,7 @@ class RIMTeleopOrchestrator:
             damping=config.interface.damping,
             contact_surface=config.interface.contact_surface,
         )
+        self.logger = ExperimentLogger(config.logging, full_config=config)
 
         self._running = False
         self._deadman_active = not self.cfg.safety.deadman_required
@@ -70,6 +71,7 @@ class RIMTeleopOrchestrator:
 
         self.haply.start()
         self.model_adapter.start()
+        self.logger.start()
         self._running = True
         self._threads = [
             threading.Thread(target=self._haptic_loop, daemon=True),
@@ -85,10 +87,11 @@ class RIMTeleopOrchestrator:
         for t in self._threads:
             if t.is_alive():
                 t.join(timeout=2.0)
-        if self.haply.is_connected():
-            self.haply.set_interface_force(np.zeros(1, dtype=float))
+        if self.teleop_interface.is_connected():
+            self.teleop_interface.set_interface_force(np.zeros(1, dtype=float))
         self.haply.stop()
         self.model_adapter.stop()
+        self.logger.stop()
         self._robot.shutdown()
 
     @property
@@ -141,13 +144,27 @@ class RIMTeleopOrchestrator:
         dt = 1.0 / self.cfg.rates.haptic_rate_hz
         next_tick = time.perf_counter()
         while self._running:
-            leader_pos, leader_vel = self.haply.get_interface_state()
+            self.teleop_interface.update()
+            leader_pos, leader_vel = self.teleop_interface.get_interface_state()
+
             self.delay_rim.add_leader_state(leader_pos, leader_vel)
             now = time.time()
             force = (
                 self.delay_rim.get_interface_force() if self._safety_allows_output(now) else np.zeros(1, dtype=float)
             )
-            self.haply.set_interface_force(force)
+            self.teleop_interface.set_interface_force(force)
+
+            self.logger.log_sample(
+                "haptic",
+                {
+                    "leader_pos": leader_pos,
+                    "leader_vel": leader_vel,
+                    "force_cmd": force,
+                    "deadman_active": self._deadman_active,
+                },
+                timestamp_s=now,
+            )
+
             self._loop_monitors["haptic"].tick()
             next_tick += dt
             time.sleep(max(0.0, next_tick - time.perf_counter()))
@@ -156,7 +173,15 @@ class RIMTeleopOrchestrator:
         dt = 1.0 / self.cfg.rates.rim_rate_hz
         next_tick = time.perf_counter()
         while self._running:
-            self.delay_rim.step()
+            x_rim, v_rim = self.delay_rim.step()
+            if x_rim is not None and v_rim is not None:
+                self.logger.log_sample(
+                    "rim",
+                    {
+                        "x_rim": x_rim,
+                        "v_rim": v_rim,
+                    },
+                )
             self._loop_monitors["rim"].tick()
             next_tick += dt
             time.sleep(max(0.0, next_tick - time.perf_counter()))
@@ -173,6 +198,14 @@ class RIMTeleopOrchestrator:
                 rim_x, _ = self.delay_rim.get_rim_state()
                 if rim_x is not None and self._safety_allows_output(now):
                     self._send_axis_target(axis=self._axis, target_axis_value=float(rim_x[0]))
+                self.logger.log_sample(
+                    "control",
+                    {
+                        "rim_x": rim_x,
+                        "model_stamp_s": model.stamp_s,
+                    },
+                    timestamp_s=now,
+                )
             self._loop_monitors["control"].tick()
             next_tick += dt
             time.sleep(max(0.0, next_tick - time.perf_counter()))
@@ -181,9 +214,20 @@ class RIMTeleopOrchestrator:
         log_period = 5.0  # sec
         while self._running:
             summaries = []
+            snapshot_payload: dict[str, dict[str, float]] = {}
             for name, monitor in self._loop_monitors.items():
                 snap = monitor.snapshot()
                 summaries.append(
                     f"{name}: {snap.measured_hz:.1f}Hz target={snap.target_hz:.1f}Hz p95={snap.p95_dt_ms:.2f}ms"
                 )
+                snapshot_payload[name] = {
+                    "measured_hz": snap.measured_hz,
+                    "target_hz": snap.target_hz,
+                    "mean_dt_ms": snap.mean_dt_ms,
+                    "p95_dt_ms": snap.p95_dt_ms,
+                    "max_dt_ms": snap.max_dt_ms,
+                }
+
+            self.logger.log_sample("metrics", snapshot_payload)
             self._robot.node.get_logger().info(" | ".join(summaries), throttle_duration_sec=log_period)
+            time.sleep(log_period)

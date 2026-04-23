@@ -20,14 +20,15 @@ safety:
 inverse3:
   uri: ws://localhost:10001
   interface_axis: z
-  interface_workspace_scale: 1.0
+  scale: 1.0
+  i3_origin: [0.0, -0.17, 0.16]
+  i3_origin_rpy: [0.0, 0.0, 90.0]
+  i3_origin_rpy_degrees: true
+  center_on_start: false
+
   enable_force_feedback: true
   interface_force_scale: 1.0
   force_cap: 12.0
-  # Maps vectors from haptic frame to robot base frame via xyz RPY.
-  # Values are [roll, pitch, yaw] in radians unless *_degrees is true.
-  haptic_to_robot_rpy: [0.0, 0.0, 0.0]
-  haptic_to_robot_rpy_degrees: false
 
 robot:
   namespace: fr3
@@ -42,3 +43,19 @@ model:
   filter_alpha_q: 0.3
   filter_alpha_q_dot: 0.2
   filter_alpha_tau: 0.2
+
+logging:
+  enabled: true
+  sinks: [file_sink, foxglove_sink]
+
+  file_sink:
+    enabled: true
+    output_dir: data/rim_runs
+    run_name: null
+    flush_hz: 20.0
+
+  foxglove_sink:
+    enabled: true
+    host: 0.0.0.0
+    port: 8765
+    topic_prefix: /rim
