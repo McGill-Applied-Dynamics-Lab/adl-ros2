@@ -11,6 +11,8 @@ import threading
 import time
 from typing import Any, Protocol
 
+import foxglove
+
 from ..config import FileSinkConfig, FoxgloveSinkConfig, LoggingConfig, RIMTeleopConfig
 
 
@@ -32,14 +34,31 @@ class _NullSink:
         return
 
 
+# def _foxglove_message_from_sample(sample: dict[str, Any]) -> dict[str, Any]:
+#     msg: dict[str, Any] = {
+#         "timestamp_s": float(sample.get("ts", time.time())),
+#         "stream": str(sample.get("stream", "samples")),
+#     }
+
+#     values = sample.get("values", {})
+#     if isinstance(values, dict):
+#         msg.update(_flatten_for_foxglove(values))
+#     else:
+#         msg["values"] = values
+
+#     return msg
+
+
 class _FileSink:
-    """Local JSONL sink with metadata and periodic flush."""
+    """Local MCAP sink using Foxglove SDK."""
 
     def __init__(self, cfg: FileSinkConfig, full_config: RIMTeleopConfig | None = None):
         self.cfg = cfg
         self._full_config = full_config
         self._run_dir: Path | None = None
-        self._handle = None
+        self._context = None
+        self._writer = None
+        self._channels: dict[str, Any] = {}
         self._next_flush = 0.0
 
     @property
@@ -65,22 +84,56 @@ class _FileSink:
         with open(self._run_dir / "metadata.json", "w", encoding="utf-8") as handle:
             json.dump(metadata, handle, indent=2)
 
-        self._handle = open(self._run_dir / "samples.jsonl", "a", encoding="utf-8")
+        mcap_path = self._run_dir / "samples.mcap"
+        self._context = foxglove.Context()
+        self._writer = foxglove.open_mcap(mcap_path, allow_overwrite=True, context=self._context)
+        self._writer.write_metadata(
+            "arm_client_rim",
+            {
+                "created_at": metadata["created_at"],
+                "logger": "ExperimentLogger",
+            },
+        )
         self._next_flush = time.perf_counter() + 1.0 / max(self.cfg.flush_hz, 1.0)
 
+        print(f"[ExperimentLogger] File sink started. Logging to {self._run_dir}")
+
     def stop(self) -> None:
-        if self._handle is not None:
-            self._handle.flush()
-            self._handle.close()
-            self._handle = None
+        for channel in self._channels.values():
+            try:
+                channel.close()
+            except Exception:
+                pass
+        self._channels.clear()
+
+        if self._writer is not None:
+            try:
+                self._writer.close()
+            except Exception:
+                pass
+            self._writer = None
+
+        self._context = None
 
     def publish(self, sample: dict[str, Any]) -> None:
-        if self._handle is None:
+        if self._writer is None or self._context is None:
             return
-        self._handle.write(json.dumps(sample) + "\n")
+
+        import foxglove
+
+        stream = str(sample.get("stream", "samples"))
+        topic = f"/rim/{stream}"
+        channel = self._channels.get(topic)
+        if channel is None:
+            channel = foxglove.Channel(topic, message_encoding="json", context=self._context)
+            self._channels[topic] = channel
+
+        log_time = int(float(sample.get("ts", time.time())) * 1e9)
+        channel.log(sample, log_time=log_time)
+
         now = time.perf_counter()
         if now >= self._next_flush:
-            self._handle.flush()
+            # SDK writer flushes internally; keep periodic cadence for symmetry.
             self._next_flush = now + 1.0 / max(self.cfg.flush_hz, 1.0)
 
 
@@ -104,6 +157,7 @@ class _FoxgloveSink:
             self._server = None
             return
 
+        # Quickstart-style setup: explicit context + websocket sink attached to it.
         self._context = foxglove.Context()
         self._server = foxglove.start_server(
             name="arm_client_rim",
@@ -111,6 +165,8 @@ class _FoxgloveSink:
             port=self.cfg.port,
             context=self._context,
         )
+
+        print(f"[ExperimentLogger] Foxglove sink started. Publishing to port {self.cfg.port}")
 
     def stop(self) -> None:
         for channel in self._channels.values():
@@ -135,11 +191,39 @@ class _FoxgloveSink:
         topic = f"{self.cfg.topic_prefix.rstrip('/')}/{stream}"
         channel = self._channels.get(topic)
         if channel is None:
-            import foxglove
-
             channel = foxglove.Channel(topic, message_encoding="json", context=self._context)
             self._channels[topic] = channel
-        channel.log(sample)
+
+        log_time = int(float(sample.get("ts", time.time())) * 1e9)
+
+        vals = sample.get("values", {})
+        channel.log(self._flatten_dict(vals), log_time=log_time)
+
+    def _flatten_dict(self, value: Any, prefix: str = "") -> dict[str, Any]:
+        out: dict[str, Any] = {}
+
+        if isinstance(value, dict):
+            for key, child in value.items():
+                key_str = str(key)
+                child_prefix = f"{prefix}_{key_str}" if prefix else key_str
+                out.update(self._flatten_dict(child, child_prefix))
+            return out
+
+        if isinstance(value, (list, tuple)):
+            if len(value) == 1 and not isinstance(value[0], (dict, list, tuple)):
+                out[prefix] = value[0]
+                return out
+            for i, child in enumerate(value):
+                child_prefix = f"{prefix}_{i}" if prefix else str(i)
+                if isinstance(child, (dict, list, tuple)):
+                    out.update(self._flatten_dict(child, child_prefix))
+                else:
+                    out[child_prefix] = child
+            return out
+
+        if prefix:
+            out[prefix] = value
+        return out
 
 
 class ExperimentLogger:

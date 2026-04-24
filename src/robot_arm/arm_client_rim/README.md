@@ -14,14 +14,14 @@ RIM-based bilateral teleoperation package for FR3 using `arm_client`.
 ## Run
 
 ```bash
-pixi run -e humble ros2 run arm_client_rim rim_teleop --config src/robot_arm/arm_client_rim/config/rim_teleop_default.yaml
+pixi run -e humble ros2 run arm_client_rim rim_teleop --config src/robot_arm/arm_client_rim/configs/rim_teleop_default.yaml
 ```
 
 Optional CLI overrides still work and take precedence over the YAML file.
 
 ```bash
 pixi run -e humble ros2 run arm_client_rim rim_teleop \
-  --config src/robot_arm/arm_client_rim/config/rim_teleop_default.yaml \
+  --config src/robot_arm/arm_client_rim/configs/rim_teleop_default.yaml \
   --axis z --control-rate 60
 ```
 

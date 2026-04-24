@@ -89,14 +89,14 @@
             "name": "Python Debugger: launch_rim_teleop",
             "type": "debugpy",
             "request": "launch",
-            "program": "${workspaceFolder}/src/robot_arm/arm_client_rim/arm_client_rim/launch_rim_teleop.py",
+            "program": "${workspaceFolder}/src/robot_arm/arm_client_rim/scripts/launch_rim_teleop.py",
             "python": "${workspaceFolder}/.pixi/envs/humble/bin/python",
             // "preLaunchTask": "gen-vscode-env",
             "envFile": "${workspaceFolder}/.vscode/.env.humble",
             "console": "integratedTerminal",
             "args": [
                 "--config",
-                "${workspaceFolder}/src/robot_arm/arm_client_rim/config/rim_teleop_default.yaml"
+                "${workspaceFolder}/src/robot_arm/arm_client_rim/configs/rim_teleop_default.yaml"
             ],
             "pathMappings": [
                 // {

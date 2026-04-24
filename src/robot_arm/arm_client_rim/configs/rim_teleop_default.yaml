@@ -50,7 +50,7 @@ logging:
 
   file_sink:
     enabled: true
-    output_dir: data/rim_runs
+    output_dir: /home/athena/csirois/data/franka/rim
     run_name: null
     flush_hz: 20.0
 
