@@ -25,6 +25,9 @@ build_humble/
 install_humble/
 log/
 
+# Agents
+.github/plans/
+
 # Data
 **/test/results/**
 **/results/**
