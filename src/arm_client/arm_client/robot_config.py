@@ -43,6 +43,7 @@ class RobotConfig:
 
     current_pose_topic: str = "current_pose"
     current_joint_topic: str = "joint_states"
+    current_twist_topic: str = "current_twist"
 
     current_wrench_topic: str = (
         "/fr3/franka_robot_state_broadcaster/external_wrench_in_base_frame"  # added current wrench topic

@@ -175,6 +175,7 @@ class Robot:
 
         self._last_pose_update_time: float | None = None
         self._last_joint_update_time: float | None = None
+        self._last_twist_update_time: float | None = None
         self._last_wrench_update_time: float | None = None
 
         # Flag to disable target_pose publishing during trajectory execution
@@ -223,6 +224,14 @@ class Robot:
             WrenchStamped,
             self.config.current_wrench_topic,
             self._callback_monitor.monitor(f"{namespace.capitalize()} Current Wrench", self._callback_current_wrench),
+            qos_profile_sensor_data,
+            callback_group=ReentrantCallbackGroup(),
+        )
+        # end-effector twist
+        self.node.create_subscription(
+            TwistStamped,
+            self.config.current_twist_topic,
+            self._callback_monitor.monitor(f"{namespace.capitalize()} Current Twist", self._callback_current_twist),
             qos_profile_sensor_data,
             callback_group=ReentrantCallbackGroup(),
         )
@@ -320,6 +329,19 @@ class Robot:
                 "The robot has not received any wrenches yet. Run wait_until_ready() before running anything else."
             )
         return self._current_wrench.copy()
+
+    @property
+    def end_effector_twist(self) -> Twist:
+        """Get the current end-effector twist.
+
+        Returns:
+            Twist: The current end-effector twist, or None if not available.
+        """
+        if self._current_twist is None:
+            raise RuntimeError(
+                "The robot has not received any twists yet. Run wait_until_ready() before running anything else."
+            )
+        return self._current_twist.copy()
 
     @property
     def target_pose(self) -> Pose:
@@ -599,6 +621,17 @@ class Robot:
         if self._target_pose is None:
             self._target_pose = self._current_pose.copy()
 
+    def _callback_current_twist(self, msg: TwistStamped):
+        """Update the current end-effector twist from a ROS message.
+
+        Args:
+            msg (TwistStamped): ROS message containing end-effector twist.
+        """
+        self._current_twist = self._twist_msg_to_twist(msg)
+        self._last_twist_update_time = time.time()
+        if self._target_twist is None:
+            self._target_twist = self._current_twist.copy()
+
     def _callback_current_joint(self, msg: JointState):
         """Update the current joint state (position, velocity and torque) from a ROS message.
 
@@ -645,6 +678,7 @@ class Robot:
         return {
             "pose": self._last_pose_update_time,
             "joint": self._last_joint_update_time,
+            "twist": self._last_twist_update_time,
             "wrench": self._last_wrench_update_time,
         }
 
@@ -735,6 +769,12 @@ class Robot:
         msg.twist.angular.x, msg.twist.angular.y, msg.twist.angular.z = twist.angular
 
         return msg
+
+    def _twist_msg_to_twist(self, msg: TwistStamped) -> Twist:
+        """Convert a ROS2 twist msg to a twist."""
+        linear = np.array([msg.twist.linear.x, msg.twist.linear.y, msg.twist.linear.z])
+        angular = np.array([msg.twist.angular.x, msg.twist.angular.y, msg.twist.angular.z])
+        return Twist(linear=linear, angular=angular)
 
     def _parse_pose_or_position(self, position: List | NDArray | None = None, pose: Pose | None = None) -> Pose:
         """Parse a pose from a desired position or pose.

@@ -76,7 +76,7 @@ class RIMTeleopOrchestrator:
         self._threads = [
             threading.Thread(target=self._haptic_loop, daemon=True),
             threading.Thread(target=self._rim_loop, daemon=True),
-            # threading.Thread(target=self._control_loop, daemon=True),
+            threading.Thread(target=self._control_loop, daemon=True),
             threading.Thread(target=self._log_loop, daemon=True),
         ]
         for t in self._threads:
@@ -192,12 +192,62 @@ class RIMTeleopOrchestrator:
         while self._running:
             model = self.model_adapter.latest()
             now = time.time()
+
+            # Always log robot telemetry at control-loop rate for Foxglove.
+            try:
+                q = self._robot.q
+                dq = self._robot.dq
+                tau = self._robot.tau
+                ee_pose = self._robot.end_effector_pose
+                ee_twist = self._robot.end_effector_twist
+                ee_wrench = self._robot.end_effector_wrench
+
+                self.logger.log_sample(
+                    "robot/joint_states",
+                    {
+                        "name": list(self._robot.config.joint_names),
+                        "position": q,
+                        "velocity": dq,
+                        "effort": tau,
+                    },
+                    timestamp_s=now,
+                )
+                self.logger.log_sample(
+                    "robot/end_effector/pose",
+                    {
+                        "frame_id": self._robot.config.base_frame,
+                        "position": ee_pose.position,
+                        "orientation_xyzw": ee_pose.orientation.as_quat(),
+                    },
+                    timestamp_s=now,
+                )
+                self.logger.log_sample(
+                    "robot/end_effector/velocity",
+                    {
+                        "linear": ee_twist.linear,
+                        "angular": ee_twist.angular,
+                    },
+                    timestamp_s=now,
+                )
+                self.logger.log_sample(
+                    "robot/end_effector/force",
+                    {
+                        "frame_id": self._robot.config.base_frame,
+                        "force": ee_wrench["force"],
+                        "torque": ee_wrench["torque"],
+                    },
+                    timestamp_s=now,
+                )
+            except RuntimeError:
+                # One or more robot streams unavailable yet.
+                pass
+
             if self._is_model_fresh(model, now):
                 rim = self.rim_calc.compute(model)
                 self.delay_rim.update_rim(rim)
                 rim_x, _ = self.delay_rim.get_rim_state()
-                if rim_x is not None and self._safety_allows_output(now):
-                    self._send_axis_target(axis=self._axis, target_axis_value=float(rim_x[0]))
+                # if rim_x is not None and self._safety_allows_output(now):
+                #     self._send_axis_target(axis=self._axis, target_axis_value=float(rim_x[0]))
                 self.logger.log_sample(
                     "control",
                     {
@@ -211,6 +261,11 @@ class RIMTeleopOrchestrator:
             time.sleep(max(0.0, next_tick - time.perf_counter()))
 
     def _log_loop(self) -> None:
+        """
+        To log metrics.
+
+        Log loop monitoring data to '/metrics'
+        """
         log_period = 5.0  # sec
         while self._running:
             summaries = []

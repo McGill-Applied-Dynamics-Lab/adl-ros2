@@ -26,7 +26,7 @@ inverse3:
   i3_origin_rpy_degrees: true
   center_on_start: false
 
-  enable_force_feedback: true
+  enable_force_feedback: false
   interface_force_scale: 1.0
   force_cap: 12.0
 

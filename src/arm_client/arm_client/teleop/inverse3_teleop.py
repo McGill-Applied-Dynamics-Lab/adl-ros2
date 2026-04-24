@@ -494,7 +494,10 @@ class Inverse3Device:
         """
         f_I3_base = self._T_BI3_OI3[:3, :3] @ force
 
-        self.i3_interface.apply_force(f_I3_base)
+        if self.enable_force_feedback:
+            self.i3_interface.apply_force(f_I3_base)
+        else:
+            self.i3_interface.apply_force(np.zeros(3))
 
 
 class Inverse3Teleop(BaseTeleop):
