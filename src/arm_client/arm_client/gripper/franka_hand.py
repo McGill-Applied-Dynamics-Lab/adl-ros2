@@ -400,7 +400,7 @@ class Gripper:
 
         result = result_future.result()
         if result.result.success:
-            self.node.get_logger().info(f"Action completed successfully")
+            # self.node.get_logger().info(f"Action completed successfully")
             return True
         else:
             self.node.get_logger().error(f"Action failed: {result.result.error}")

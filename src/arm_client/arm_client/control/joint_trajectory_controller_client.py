@@ -31,7 +31,7 @@ from control_msgs.action import FollowJointTrajectory
 from rclpy.action import ActionClient
 from rclpy.duration import Duration
 from rclpy.node import Node
-from trajectory_msgs.msg import JointTrajectoryPoint
+from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 
 from arm_client.planning.types import PlannedJointTrajectory
 
@@ -60,6 +60,10 @@ class JointTrajectoryControllerClient(ActionClient):
         self._goal = FollowJointTrajectory.Goal()
         namespace = self.node.get_namespace().strip("/")
         self._prefix = ""  # f"{namespace}_" if namespace else ""
+
+        self.trajectory_publisher = self.node.create_publisher(
+            JointTrajectory, "joint_trajectory_controller/joint_trajectory", 10
+        )
 
     def send_joint_config(
         self,
@@ -140,13 +144,13 @@ class JointTrajectoryControllerClient(ActionClient):
             point = JointTrajectoryPoint()
             point.time_from_start = Duration(seconds=int(t), nanoseconds=int((t % 1) * 1e9)).to_msg()
 
-            point.positions = list(position)
+            point.positions = [float(p) for p in position]
 
             if not np.isnan(vel).any():
-                point.velocities = list(vel)
+                point.velocities = [float(v) for v in vel]
 
             if not np.isnan(accel).any():
-                point.accelerations = list(accel)
+                point.accelerations = [float(a) for a in accel]
 
             self._goal.trajectory.points.append(point)
 
@@ -164,3 +168,44 @@ class JointTrajectoryControllerClient(ActionClient):
 
             self.node.get_logger().debug(f"Trajectory goal result: {future.result()}")
             return future.result()
+
+    def publish_joint_trajectory(
+        self,
+        joint_trajectory: PlannedJointTrajectory,
+    ) -> None:
+        """Publish a full joint trajectory directly to the topic (non-blocking splining).
+
+        Args:
+            joint_trajectory (PlannedJointTrajectory): The planned joint trajectory to sequence.
+        """
+        joint_names = joint_trajectory.joint_names
+
+        joint_positions = joint_trajectory.joint_positions
+        joint_velocities = joint_trajectory.joint_velocities
+        joint_accelerations = joint_trajectory.joint_accelerations
+        time_from_start = joint_trajectory.time_from_start
+
+        if len(joint_positions) != len(time_from_start):
+            raise ValueError("joint_positions and time_from_start must have the same length")
+        if len(joint_positions) == 0:
+            raise ValueError("joint_positions cannot be empty")
+
+        msg = JointTrajectory()
+        msg.joint_names = [self._prefix + joint_name for joint_name in joint_names]
+        msg.header.stamp = self.node.get_clock().now().to_msg()
+
+        for position, vel, accel, t in zip(joint_positions, joint_velocities, joint_accelerations, time_from_start):
+            point = JointTrajectoryPoint()
+            point.time_from_start = Duration(seconds=int(t), nanoseconds=int((t % 1) * 1e9)).to_msg()
+
+            point.positions = [float(p) for p in position]
+
+            if not np.isnan(vel).any():
+                point.velocities = [float(v) for v in vel]
+
+            if not np.isnan(accel).any():
+                point.accelerations = [float(a) for a in accel]
+
+            msg.points.append(point)
+
+        self.trajectory_publisher.publish(msg)
