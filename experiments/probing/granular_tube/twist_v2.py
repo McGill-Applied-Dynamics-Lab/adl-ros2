@@ -22,6 +22,10 @@ START_ORIENTATION = R.from_euler("xyz", [-180, 0, 0], degrees=True)
 SERIAL_PORT = "/dev/ttyACM0"  # <--- UPDATE THIS TO YOUR TEENSY PORT
 BAUD_RATE = 3000000
 
+# Baseline pressure acquisition (run once at startup)
+BASELINE_DURATION_SEC = 3.0
+TEENSY_SAMPLE_RATE_HZ = 10000.0
+
 # File paths
 PROJECT_ROOT = Path(__file__).resolve().parent
 PARAMETERS_FILE = PROJECT_ROOT / "results" / "grids" / "rotation_params.pkl"
@@ -132,20 +136,65 @@ def collect_teensy_data_streaming(ser, max_duration=10.0):
         return np.array([])
 
 
+def acquire_baseline(ser, duration_sec=BASELINE_DURATION_SEC):
+    """
+    Stream pressure data for `duration_sec` with no robot motion, then
+    return the raw samples and the per-sensor mean for baseline subtraction.
+    """
+    print(f"Acquiring {duration_sec:.1f}s of baseline pressure data...")
+    ser.reset_input_buffer()
+    ser.reset_output_buffer()
+
+    holder = []
+
+    def worker():
+        try:
+            holder.append(
+                collect_teensy_data_streaming(ser, max_duration=duration_sec + 5.0)
+            )
+        except Exception as e:
+            print(f"  Error in baseline collection thread: {e}")
+            holder.append(np.array([]))
+
+    th = threading.Thread(target=worker)
+    th.start()
+
+    time.sleep(0.1 + duration_sec)
+    ser.write(b"2")
+    time.sleep(0.1)
+    th.join(timeout=10.0)
+
+    baseline = holder[0] if holder else np.array([])
+    if baseline.size == 0:
+        print("  Warning: no baseline data received; using zero baseline.")
+        return baseline, np.zeros(2, dtype=np.float64)
+
+    baseline_mean = baseline.astype(np.float64).mean(axis=0)
+    print(
+        f"  Baseline collected: {baseline.shape[0]} samples, "
+        f"means = ({baseline_mean[0]:.2f}, {baseline_mean[1]:.2f})"
+    )
+    return baseline, baseline_mean
+
+
 def generate_plot(
-    run_idx, angle, speed, ts_fwd, angles_fwd, ts_rev, angles_rev, press_full
+    run_idx, angle, speed, ts_fwd, angles_fwd, ts_rev, angles_rev, press_full,
+    baseline_mean=np.zeros(2, dtype=np.float64),
 ):
-    """Generates and saves a dual-axis plot of pressures and robot angle."""
+    """Generates and saves a dual-axis plot of (baseline-subtracted) pressures and robot angle."""
     fig, ax1 = plt.subplots(figsize=(10, 6))
 
-    t_teensy = np.arange(len(press_full)) / 10000.0
+    t_teensy = np.arange(len(press_full)) / TEENSY_SAMPLE_RATE_HZ
 
     color1 = "tab:blue"
     color2 = "tab:orange"
     ax1.set_xlabel("Time (s)")
-    ax1.set_ylabel("Pressure Sensor ADC (12-bit)", color="k")
-    ax1.plot(t_teensy, press_full[:, 0], color=color1, alpha=0.7, label="Sensor 1 (A7)")
-    ax1.plot(t_teensy, press_full[:, 1], color=color2, alpha=0.7, label="Sensor 2 (A5)")
+    ax1.set_ylabel("Pressure ADC - baseline (12-bit counts)", color="k")
+    if len(press_full) > 0:
+        p1 = press_full[:, 0].astype(np.float64) - baseline_mean[0]
+        p2 = press_full[:, 1].astype(np.float64) - baseline_mean[1]
+        ax1.plot(t_teensy, p1, color=color1, alpha=0.7, label="Sensor 1 (A7, baseline-sub)")
+        ax1.plot(t_teensy, p2, color=color2, alpha=0.7, label="Sensor 2 (A5, baseline-sub)")
     ax1.tick_params(axis="y", labelcolor="k")
     ax1.grid(True, linestyle="--", alpha=0.5)
 
@@ -417,12 +466,33 @@ def main():
             "pressures_full_cycle": [],
             "target_angles": [],
             "target_speeds": [],
+            "baseline_pressures": np.array([]),
+            "baseline_mean": np.zeros(2, dtype=np.float64),
         }
 
     if start_idx >= num_points:
         print(f"All {num_points} rotation pairs have already been collected.")
         robot.shutdown()
         return
+
+    # Acquire baseline pressure once at startup (or reuse saved baseline on resume).
+    saved_baseline = exp_dict.get("baseline_pressures", np.array([]))
+    if isinstance(saved_baseline, np.ndarray) and saved_baseline.size > 0:
+        baseline_mean = np.asarray(
+            exp_dict.get(
+                "baseline_mean", saved_baseline.astype(np.float64).mean(axis=0)
+            )
+        )
+        print(
+            f"Reusing saved baseline ({saved_baseline.shape[0]} samples, "
+            f"means = ({baseline_mean[0]:.2f}, {baseline_mean[1]:.2f}))."
+        )
+    else:
+        baseline, baseline_mean = acquire_baseline(ser)
+        exp_dict["baseline_pressures"] = baseline
+        exp_dict["baseline_mean"] = baseline_mean
+        with open(RESULTS_FILE, "wb") as f:
+            pickle.dump(exp_dict, f)
 
     for i in range(start_idx, num_points):
         angle = planned_angles[i]
@@ -483,7 +553,8 @@ def main():
                 pickle.dump(exp_dict, f)
 
             generate_plot(
-                i + 1, angle, speed, ts_fwd, angles_fwd, ts_rev, angles_rev, press_full
+                i + 1, angle, speed, ts_fwd, angles_fwd, ts_rev, angles_rev, press_full,
+                baseline_mean=baseline_mean,
             )
             print(f"\t-> Saved data and plot for Run {i + 1} successfully.")
 

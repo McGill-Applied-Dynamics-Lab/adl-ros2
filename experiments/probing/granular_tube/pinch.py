@@ -13,35 +13,46 @@ from arm_client.gripper.franka_hand import Gripper, GripperConfig
 from arm_client.planning.types import CartesianWaypoint, PlannedJointTrajectory
 
 # TODO:
-# - [ ] pinch to depth (random)
-# - [ ] serial read
-# - [ ] record/saving (height, angle, caretsian pose, gripper position)
-# - [ ] recover (crash) (see other scripts)
+# - [x] pinch to depth (random)
+# - [-] serial read
+# - [-] record/saving (height, angle, caretsian pose, gripper position)
+# - [-] recover (crash) (see other scripts)
 # - [x] threading for IK
-# - [ ] Fix max speed
+# - [?] Fix max speed
 
 # Experiment Setup
-TUBE_CENTER_POS = np.array([0.40, 0])  # center of tube (x, y), (m)
-OUTER_RADIUS = 0.0  # Distance from fingers center to tube center
-TUBE_LENGTH = 0.10
-TUBE_DIAMETER = 0.05
-MOVE_SPEED = 0.01  # (m/s)
-MOVE_SPEED_ROT = 0.2  # (rad/s)
-Z_MIN = 0.20  # minimum sensor height from table (m)
+TUBE_CENTER_POS = np.array(
+    [
+        0.4913,
+        0.0373,
+    ]
+)  # center of tube (x, y), (m)
+OUTER_RADIUS = 0.025  # Distance from fingers center to tube center
+TUBE_LENGTH = 0.040  # update set X gripper width lower than the actual tube height
+TUBE_DIAMETER = 0.040
+GRIPPER_THICKNESS = 0.024  # probe thickness (m)
+MOVE_SPEED = 0.025  # (m/s)
+MOVE_SPEED_ROT = 0.20  # (rad/s)
+Z_MIN = 0.19  # minimum sensor height from table (m)
 
 SAFE_ORI = R.from_euler(
     "xyz", [-180, 90, -90], degrees=True
 )  # [-180,90,90]: Facing along -y, [-180,90, -90]: Facing along +y
-SAFE_POS = np.array([0.40, 0.2, 0.30])  # safe starting location
-START_POS = np.array([0.40, -0.10, Z_MIN])  # start location
+SAFE_POS = np.array([0.48, -0.15, Z_MIN + 0.05])  # safe starting location
 PROJECT_ROOT = Path(__file__).resolve().parent
 
 # Experiment Configurations
 NUM_PROBES = 50  # Number of probing points
 
-ANGLE_RANGE = [-45, 45]  # minimum and maximum angles (deg), 0 is gripper facing along +y
-PINCH_DEPTH_RANGE = [0.005, 0.02]  # .5cm to 2cm (distance pushed by one finger)
-PINCH_SPEED_RANGE = [0.01, 0.08]  # 1 to 8 cm/s
+ANGLE_RANGE = [
+    -45,
+    45,
+]  # minimum and maximum angles (deg), 0 is gripper facing along +y
+PINCH_DEPTH_RANGE = [
+    0.01,
+    TUBE_DIAMETER / 2,
+]  # .5cm to 2cm (distance pushed by one finger)
+PINCH_SPEED_RANGE = [0.005, 0.08]  # 1 to 8 cm/s
 
 PINCH_TIME = 1.0  # Time to wait after closing gripper
 SETTLE_SEC = 0.1  # Wait time after moves (s)
@@ -57,7 +68,9 @@ gripper_cfg = GripperConfig(
 )
 
 
-def move_waypoints(start_rad, end_rad, start_height, end_height) -> tuple[float, Sequence[CartesianWaypoint]]:
+def move_waypoints(
+    start_rad, end_rad, start_height, end_height
+) -> tuple[float, Sequence[CartesianWaypoint]]:
     """
     Generate trajectory between consecutive pinch locations.
 
@@ -119,7 +132,16 @@ def coord_to_pose(angle, height) -> Pose:
     return Pose(np.array([x, y, z]), R.from_euler("z", angle, degrees=False) * SAFE_ORI)
 
 
-def planner_worker(robot, angles, heights, start_angle, start_height, start_joint_cfg, plan_queue, abort_event):
+def planner_worker(
+    robot,
+    angles,
+    heights,
+    start_angle,
+    start_height,
+    start_joint_cfg,
+    plan_queue,
+    abort_event,
+):
     """Background thread to pre-compute joint trajectories."""
     last_angle = start_angle
     last_height = start_height
@@ -130,7 +152,9 @@ def planner_worker(robot, angles, heights, start_angle, start_height, start_join
             break
 
         # print(f"[Planner] Planning for coordinate {i + 1}/{len(angles)}")
-        traj_duration, waypoints = move_waypoints(last_angle, target_angle, last_height, target_height)
+        traj_duration, waypoints = move_waypoints(
+            last_angle, target_angle, last_height, target_height
+        )
 
         try:
             joint_traj = robot.plan_joint_trajectory(
@@ -180,9 +204,12 @@ def main():
     robot.controller_switcher_client.switch_controller("joint_trajectory_controller")
 
     success = gripper.open(speed=0.05)  # Custom speed
-    success = gripper.set_target(0.00, speed=0.08)  # Custom speed
+    # success = gripper.set_target(0.00, speed=0.08)  # Custom speed / fully open gripper
 
     gripper.value
+
+    # Move to SAFE_POS
+    robot.move_to(pose=Pose(SAFE_POS, SAFE_ORI), speed=MOVE_SPEED)  # **new**
 
     while True:
         # --- Go to start position (angle, height) = (0, 0)
@@ -194,9 +221,11 @@ def main():
         print("FR3 Pinch Experiment")
         print("=================================")
 
-        print(f"\nMoving to start position (angle: {np.degrees(last_angle):.2f}°, height: {last_height:.2f}m)")
+        print(
+            f"\nMoving to start position (angle: {np.degrees(last_angle):.2f}°, height: {last_height:.2f}m)"
+        )
         try:
-            robot.move_to(pose=start_pose)
+            robot.move_to(pose=start_pose, speed=MOVE_SPEED)
             gripper_success = gripper.open(speed=0.05)  # Custom speed
 
         except Exception as e:
@@ -209,17 +238,34 @@ def main():
         print("Robot initialization complete.")
 
         # --- Compute the random probing points
-        angles = np.radians(np.random.uniform(low=ANGLE_RANGE[0], high=ANGLE_RANGE[1], size=(NUM_PROBES,)))
+        angles = np.radians(
+            np.random.uniform(
+                low=ANGLE_RANGE[0], high=ANGLE_RANGE[1], size=(NUM_PROBES,)
+            )
+        )
         heights = np.random.uniform(low=0, high=1.0, size=(NUM_PROBES,)) * TUBE_LENGTH
-        pinch_depths = np.random.uniform(low=PINCH_DEPTH_RANGE[0], high=PINCH_DEPTH_RANGE[1], size=(NUM_PROBES,))
-        pinch_vels = np.random.uniform(low=PINCH_SPEED_RANGE[0], high=PINCH_SPEED_RANGE[1], size=(NUM_PROBES,))
+        pinch_depths = np.random.uniform(
+            low=PINCH_DEPTH_RANGE[0], high=PINCH_DEPTH_RANGE[1], size=(NUM_PROBES,)
+        )
+        pinch_vels = np.random.uniform(
+            low=PINCH_SPEED_RANGE[0], high=PINCH_SPEED_RANGE[1], size=(NUM_PROBES,)
+        )
 
         plan_queue = queue.Queue(maxsize=QUEUE_SIZE)
         abort_event = threading.Event()
 
         planner_thread = threading.Thread(
             target=planner_worker,
-            args=(robot, angles, heights, last_angle, last_height, last_joint_cfg, plan_queue, abort_event),
+            args=(
+                robot,
+                angles,
+                heights,
+                last_angle,
+                last_height,
+                last_joint_cfg,
+                plan_queue,
+                abort_event,
+            ),
             daemon=True,
         )
         planner_thread.start()
@@ -240,22 +286,48 @@ def main():
 
                 joint_traj = item
 
+                delta = np.array(joint_traj.joint_positions[0]) - robot.q
+                print(
+                    f"\tStart mismatch (rad): max={np.max(np.abs(delta)):.5f}, "
+                    f"per-joint={np.array2string(delta, precision=5, suppress_small=True)}"
+                )
+
                 print(f"\tExecuting move...")
                 robot.follow_joint_trajectory(joint_traj, blocking=True)
 
                 print(f"\tPinching...")
-                depth_target = TUBE_DIAMETER - 2 * pinch_depths[i]
+                depth_target = TUBE_DIAMETER + 2 * (GRIPPER_THICKNESS - pinch_depths[i])
+
+                w_before_close = gripper.value
+                t_call = time.perf_counter()
+                print(
+                    f"\t[gripper] close cmd: target={depth_target:.4f} m, "
+                    f"speed={pinch_vels[i]:.4f} m/s, width_before={w_before_close}"
+                )
                 gripper_success = gripper.set_target(depth_target, speed=pinch_vels[i])
+                t_close = time.perf_counter() - t_call
+                w_after_close = gripper.value
+                print(
+                    f"\t[gripper] close ret={gripper_success} in {t_close:.3f}s, "
+                    f"width_after={w_after_close}"
+                )
 
                 if not gripper_success:
                     print("Gripper failed to close.")
                     raise RuntimeError("Failed to close gripper.")
 
-                gripper_val = gripper.value
-                print(f"\tGripper value: {gripper_val}")
                 time.sleep(PINCH_TIME)
 
-                gripper.open(speed=0.1)
+                w_before_open = gripper.value
+                t_call = time.perf_counter()
+                print(f"\t[gripper] open cmd: speed=0.1, width_before={w_before_open}")
+                open_success = gripper.open(speed=0.1)
+                t_open = time.perf_counter() - t_call
+                w_after_open = gripper.value
+                print(
+                    f"\t[gripper] open  ret={open_success} in {t_open:.3f}s, "
+                    f"width_after={w_after_open}"
+                )
                 time.sleep(SETTLE_SEC)
 
                 plan_queue.task_done()
@@ -274,7 +346,7 @@ def main():
                         break
 
                 print("Moving back to safe position and restarting...")
-                robot.move_to(pose=Pose(SAFE_POS, SAFE_ORI))
+                robot.move_to(pose=Pose(SAFE_POS, SAFE_ORI), speed=MOVE_SPEED)
                 time.sleep(SETTLE_SEC)
                 planner_thread.join(timeout=2.0)
                 break
@@ -287,7 +359,7 @@ def main():
 
     # Move back to safe position
     print("Returning to safe pos...")
-    robot.move_to(pose=Pose(SAFE_POS, SAFE_ORI))
+    robot.move_to(pose=Pose(SAFE_POS, SAFE_ORI), speed=MOVE_SPEED)
     time.sleep(SETTLE_SEC)
 
     print("Shutting down...")
