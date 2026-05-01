@@ -126,19 +126,9 @@
     "python.testing.unittestEnabled": false,
     "python.testing.pytestEnabled": true,
     "python.testing.autoTestDiscoverOnSaveEnabled": false,
-    "terminal.integrated.profiles.linux": {
-        "pixi-humble": {
-            "path": "bash",
-            "args": [
-                "--rcfile",
-                "${workspaceFolder}/.vscode/activate-env.sh"
-            ]
-        },
-        "bash (plain)": {
-            "path": "bash"
-        }
+    "terminal.integrated.env.linux": {
+        "BASH_ENV": "${workspaceFolder}/install_humble/setup.bash"
     },
-    "terminal.integrated.defaultProfile.linux": "pixi-humble",
     //
     "ros.distro": "humble",
     // Spell Right
