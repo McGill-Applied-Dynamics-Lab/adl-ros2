@@ -17,8 +17,11 @@ from PyQt5.QtCore import QThread, pyqtSignal, pyqtSlot
 
 
 class SerialWorker(QThread):
-    # Signal to send NumPy arrays (chunk1, chunk2) to the main GUI thread
-    data_ready = pyqtSignal(np.ndarray, np.ndarray)
+    # Signal to send (chunk1, chunk2, chunk_rate_hz, dt_since_last_us) to the GUI thread.
+    # See teensy_tx.ino for the wire format of each 'C' chunk:
+    #   uint32 chunk_size + chunk_size*uint16 ch1 + chunk_size*uint16 ch2
+    #     + float32 chunk_rate_hz + uint32 dt_since_last_us
+    data_ready = pyqtSignal(np.ndarray, np.ndarray, float, int)
 
     def __init__(self, port, baudrate=3000000):
         super().__init__()
@@ -52,20 +55,29 @@ class SerialWorker(QThread):
 
                     elif marker == b"C":
                         size_bytes = self.read_exact(4)
-                        if len(size_bytes) == 4:
-                            chunk_size = struct.unpack("<I", size_bytes)[0]
+                        if len(size_bytes) != 4:
+                            continue
+                        chunk_size = struct.unpack("<I", size_bytes)[0]
 
-                            ch1_bytes = self.read_exact(chunk_size * 2)
-                            ch2_bytes = self.read_exact(chunk_size * 2)
+                        ch1_bytes = self.read_exact(chunk_size * 2)
+                        ch2_bytes = self.read_exact(chunk_size * 2)
+                        rate_bytes = self.read_exact(4)
+                        dt_bytes = self.read_exact(4)
 
-                            if (
-                                len(ch1_bytes) == chunk_size * 2
-                                and len(ch2_bytes) == chunk_size * 2
-                            ):
-                                ch1_data = np.frombuffer(ch1_bytes, dtype=np.uint16)
-                                ch2_data = np.frombuffer(ch2_bytes, dtype=np.uint16)
+                        if (
+                            len(ch1_bytes) == chunk_size * 2
+                            and len(ch2_bytes) == chunk_size * 2
+                            and len(rate_bytes) == 4
+                            and len(dt_bytes) == 4
+                        ):
+                            ch1_data = np.frombuffer(ch1_bytes, dtype=np.uint16)
+                            ch2_data = np.frombuffer(ch2_bytes, dtype=np.uint16)
+                            chunk_rate_hz = struct.unpack("<f", rate_bytes)[0]
+                            dt_since_last_us = struct.unpack("<I", dt_bytes)[0]
 
-                                self.data_ready.emit(ch1_data, ch2_data)
+                            self.data_ready.emit(
+                                ch1_data, ch2_data, float(chunk_rate_hz), int(dt_since_last_us)
+                            )
 
                     elif marker == b"E":
                         total_bytes = self.read_exact(4)
@@ -131,6 +143,8 @@ class MainWindow(QMainWindow):
         control_layout.addWidget(self.btn_start)
         control_layout.addWidget(self.btn_stop)
         control_layout.addStretch()
+        self.rate_label = QLabel("Rate: — Hz")
+        control_layout.addWidget(self.rate_label)
         layout.addLayout(control_layout)
 
         pg.setConfigOptions(antialias=True)
@@ -184,9 +198,19 @@ class MainWindow(QMainWindow):
         self.btn_stop.setEnabled(False)
         self.port_input.setEnabled(True)
 
-    @pyqtSlot(np.ndarray, np.ndarray)
-    def update_plot(self, new_ch1, new_ch2):
+    @pyqtSlot(np.ndarray, np.ndarray, float, int)
+    def update_plot(self, new_ch1, new_ch2, chunk_rate_hz, dt_since_last_us):
         chunk_len = len(new_ch1)
+
+        # Show the firmware's per-chunk rate + inter-chunk gap so it's obvious
+        # the new packet format is being parsed; use last-known rate if this
+        # chunk had too few samples to compute one (chunk_rate_hz reported as 0).
+        if chunk_rate_hz > 0:
+            self.last_rate_hz = chunk_rate_hz
+        if getattr(self, "last_rate_hz", 0) > 0:
+            self.rate_label.setText(
+                f"Rate: {self.last_rate_hz:.1f} Hz  (dt={dt_since_last_us / 1000:.1f} ms)"
+            )
 
         # 2. Calibration Phase Logic
         if self.calibrating:

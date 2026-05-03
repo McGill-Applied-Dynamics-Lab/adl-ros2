@@ -5,10 +5,10 @@ from pathlib import Path
 import numpy as np
 
 # Defaults match the experiment ranges expected by pinch_main.py.
-DEFAULT_N_SAMPLES = 500
+DEFAULT_N_SAMPLES = 10
 AZIMUTH_RANGE_RAD = [-np.pi / 4, np.pi / 4]  # full revolution around the tube
 NORMALIZED_HEIGHT_RANGE = [0.0, 1.0]  # scaled by TUBE_LENGTH in pinch_main.py
-PINCH_DEPTH_RANGE_M = [0.01, 0.020]  # one-finger push (m); upper ~ TUBE_DIAMETER/2
+PINCH_DEPTH_RANGE_M = [0.015, 0.025]  # one-finger push (m); upper ~ TUBE_DIAMETER/2
 PINCH_SPEED_RANGE_MPS = [0.005, 0.08]  # gripper closing speed (m/s)
 
 DEFAULT_OUTPUT = (

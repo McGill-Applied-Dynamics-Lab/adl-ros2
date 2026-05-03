@@ -18,14 +18,15 @@ from arm_client.gripper.franka_hand import Gripper, GripperConfig
 from arm_client.planning.types import CartesianWaypoint
 
 # ===================== Experiment Setup =====================
-TUBE_CENTER_POS = np.array([0.4913, 0.0373])  # (x, y), m
+TUBE_CENTER_POS = np.array([0.487, 0.0436])  # (x, y), m
 OUTER_RADIUS = 0.025  # Distance from fingers center to tube center (m)
 TUBE_LENGTH = 0.040  # set lower than the actual tube height (m)
 TUBE_DIAMETER = 0.040  # m
-GRIPPER_THICKNESS = 0.024  # probe thickness (m)
-MOVE_SPEED = 0.01  # (m/s)
-MOVE_SPEED_ROT = 0.2  # (rad/s)
-Z_MIN = 0.19  # minimum sensor height from table (m)
+PROBE_WIDTH = 0.024  # probe width (m)
+PAD_WIDTH = 0.0095  # nominal Franka gripper pad width (m)
+MOVE_SPEED = 0.075  # (m/s)
+MOVE_SPEED_ROT = 0.20  # (rad/s)
+Z_MIN = 0.20  # minimum sensor height from table (m)
 
 SAFE_ORI = R.from_euler("xyz", [-180, 90, -90], degrees=True)
 SAFE_POS = np.array([0.48, -0.15, Z_MIN + 0.05])
@@ -35,21 +36,24 @@ SAFE_POS = np.array([0.48, -0.15, Z_MIN + 0.05])
 # pinch speeds — are loaded from PARAMETERS_FILE; generate them with
 # `python generate_pinch_parameters.py`.)
 
-PINCH_TIME = 1.0  # Hold time after gripper reaches target (s)
-SETTLE_SEC = 0.1  # Wait time after moves (s)
+PINCH_TIME = 0.0  # Hold time after gripper reaches target (s)
+SETTLE_SEC = 0.5  # Wait time after moves (s)
 
 # Trajectory configurations
 QUEUE_SIZE = 3
 TRAJ_N_POINTS = 10
 
 # Gripper recording rate while pinching (s between samples)
-GRIPPER_POLL_DT = 0.005
+GRIPPER_POLL_DT = 1 / 30
 
 # Baseline pressure acquisition (run once at startup)
-BASELINE_DURATION_SEC = 3.0
+BASELINE_DURATION_SEC = 2.0
 
-# Teensy sample rate (Hz) — used to compute pressure timestamps for plotting
-TEENSY_SAMPLE_RATE_HZ = 10000.0
+# Teensy sample rate (Hz) — fallback only. The firmware estimates its own rate
+# in setup() and appends it to every chunk packet, so the host normally just
+# reads it off the wire. This constant is used only when the firmware never
+# reports one (e.g. very old firmware) so timestamps still get produced.
+TEENSY_SAMPLE_RATE_HZ_FALLBACK = 10000.0
 
 gripper_cfg = GripperConfig(
     max_width=0.08,
@@ -64,7 +68,7 @@ BAUD_RATE = 3000000
 # ===================== File Paths =====================
 PROJECT_ROOT = Path(__file__).resolve().parent
 PARAMETERS_FILE = PROJECT_ROOT / "results" / "grids" / "pinch_params.pkl"
-RESULTS_FILE = PROJECT_ROOT / "results" / "pinch_main.pkl"
+RESULTS_FILE = PROJECT_ROOT / "results" / "pinch_test.pkl"
 PLOTS_DIR = PROJECT_ROOT / "results" / "plots_pinch_main"
 
 
@@ -83,14 +87,32 @@ def collect_teensy_data_streaming(ser, max_duration=15.0):
     """
     Collect Teensy pressure sensor data via streaming chunks.
 
-    Reads chunks of data as they arrive from the Teensy, avoiding buffer overflow.
-    The main thread should call ser.write(b"2") to end collection.
+    Reads chunks as they arrive from the Teensy, avoiding USB-CDC buffer
+    overflow. The main thread should call ser.write(b"2") to end collection.
+
+    Each 'C' chunk carries (see teensy_tx.ino for the wire format):
+        - chunk_size                                          (uint32)
+        - chunk_size uint16 samples for channel 1
+        - chunk_size uint16 samples for channel 2
+        - chunk_rate_hz: intra-chunk sample rate              (float32)
+        - dt_since_last_us: first-sample-of-this-chunk minus
+          first-sample-of-prev-chunk (or stream-start for k=0) (uint32)
+
+    Per-sample timestamps are reconstructed from these as:
+        t_chunk_start[k] = t_chunk_start[k-1] + dt_since_last_us[k] / 1e6
+        t_sample[k][j]   = t_chunk_start[k] + j / chunk_rate_hz[k]
+    Then anchored so the first sample's timestamp is 0.
 
     Returns:
-        numpy array of shape (N, 2) with pressure readings.
+        (data, timestamps):
+            data (np.ndarray, shape (N, 2)): pressure readings.
+            timestamps (np.ndarray, shape (N,)): seconds, anchored at 0.
     """
     all_samples_1 = []
     all_samples_2 = []
+    all_timestamps = []
+    cum_chunk_start_s = 0.0
+    last_known_rate = None
     start_time = time.perf_counter()
 
     try:
@@ -105,34 +127,56 @@ def collect_teensy_data_streaming(ser, max_duration=15.0):
                     continue
 
                 elif marker == b"C":
-                    chunk_size_bytes = read_exact_bytes(ser, 4)
-                    chunk_size = int.from_bytes(chunk_size_bytes, byteorder="little")
-
+                    chunk_size = int.from_bytes(
+                        read_exact_bytes(ser, 4), byteorder="little"
+                    )
                     chunk_data_1 = read_exact_bytes(ser, chunk_size * 2)
                     chunk_data_2 = read_exact_bytes(ser, chunk_size * 2)
+                    rate_bytes = read_exact_bytes(ser, 4)
+                    dt_us = int.from_bytes(read_exact_bytes(ser, 4), byteorder="little")
 
                     samples_1 = np.frombuffer(chunk_data_1, dtype=np.uint16)
                     samples_2 = np.frombuffer(chunk_data_2, dtype=np.uint16)
+                    chunk_rate_hz = float(
+                        np.frombuffer(rate_bytes, dtype=np.float32)[0]
+                    )
+
+                    cum_chunk_start_s += dt_us * 1e-6
+
+                    if chunk_rate_hz > 0:
+                        last_known_rate = chunk_rate_hz
+                    effective_rate = (
+                        last_known_rate
+                        if last_known_rate is not None
+                        else TEENSY_SAMPLE_RATE_HZ_FALLBACK
+                    )
+                    period = 1.0 / effective_rate
+                    chunk_ts = cum_chunk_start_s + np.arange(chunk_size) * period
 
                     all_samples_1.extend(samples_1)
                     all_samples_2.extend(samples_2)
+                    all_timestamps.append(chunk_ts)
 
                 elif marker == b"E":
-                    total_bytes = read_exact_bytes(ser, 4)
-                    total_count = int.from_bytes(total_bytes, byteorder="little")
+                    total_count = int.from_bytes(
+                        read_exact_bytes(ser, 4), byteorder="little"
+                    )
                     print(f"  Received {total_count} samples from Teensy")
                     break
             else:
                 time.sleep(0.001)
 
         if len(all_samples_1) > 0:
-            return np.column_stack([all_samples_1, all_samples_2])
+            data = np.column_stack([all_samples_1, all_samples_2])
+            timestamps = np.concatenate(all_timestamps)
+            timestamps = timestamps - timestamps[0]  # anchor first sample at t=0
+            return data, timestamps
         else:
-            return np.array([])
+            return np.array([]), np.array([])
 
     except Exception as e:
         print(f"Error in streaming data collection: {e}")
-        return np.array([])
+        return np.array([]), np.array([])
 
 
 # ===================== Geometry / planner (from pinch.py) =====================
@@ -255,7 +299,7 @@ def acquire_baseline(ser, duration_sec=BASELINE_DURATION_SEC):
             )
         except Exception as e:
             print(f"  Error in baseline collection thread: {e}")
-            holder.append(np.array([]))
+            holder.append((np.array([]), np.array([])))
 
     th = threading.Thread(target=worker)
     th.start()
@@ -267,7 +311,8 @@ def acquire_baseline(ser, duration_sec=BASELINE_DURATION_SEC):
     time.sleep(0.1)
     th.join(timeout=10.0)
 
-    baseline = holder[0] if holder else np.array([])
+    baseline = holder[0][0] if holder else np.array([])
+
     if baseline.size == 0:
         print("  Warning: no baseline data received; using zero baseline.")
         return baseline, np.zeros(2, dtype=np.float64)
@@ -280,19 +325,39 @@ def acquire_baseline(ser, duration_sec=BASELINE_DURATION_SEC):
     return baseline, baseline_mean
 
 
-def generate_plot(probe_idx, angle, height, pinch_depth, pinch_speed,
-                  ts_gripper, gripper_widths, pressures, baseline_mean):
+def generate_plot(
+    probe_idx,
+    angle,
+    height,
+    pinch_depth,
+    pinch_speed,
+    ts_gripper,
+    gripper_widths,
+    pressures,
+    baseline_mean,
+    pressure_timestamps,
+):
     """Save a dual-axis plot: baseline-subtracted pressures + gripper width vs time."""
     fig, ax1 = plt.subplots(figsize=(10, 6))
 
     if pressures.size > 0:
-        t_press = np.arange(pressures.shape[0]) / TEENSY_SAMPLE_RATE_HZ
+        t_press = pressure_timestamps
         p1 = pressures[:, 0].astype(np.float64) - baseline_mean[0]
         p2 = pressures[:, 1].astype(np.float64) - baseline_mean[1]
-        ax1.plot(t_press, p1, color="tab:blue", alpha=0.7,
-                 label="Sensor 1 (baseline-subtracted)")
-        ax1.plot(t_press, p2, color="tab:orange", alpha=0.7,
-                 label="Sensor 2 (baseline-subtracted)")
+        ax1.plot(
+            t_press,
+            p1,
+            color="tab:blue",
+            alpha=0.7,
+            label="Sensor 1 (baseline-subtracted)",
+        )
+        ax1.plot(
+            t_press,
+            p2,
+            color="tab:orange",
+            alpha=0.7,
+            label="Sensor 2 (baseline-subtracted)",
+        )
 
     ax1.set_xlabel("Time (s)")
     ax1.set_ylabel("Pressure ADC - baseline (12-bit counts)", color="k")
@@ -301,8 +366,13 @@ def generate_plot(probe_idx, angle, height, pinch_depth, pinch_speed,
 
     ax2 = ax1.twinx()
     if len(ts_gripper) > 0:
-        ax2.plot(np.array(ts_gripper), np.array(gripper_widths) * 1000.0,
-                 color="tab:red", linewidth=2.5, label="Gripper width (mm)")
+        ax2.plot(
+            np.array(ts_gripper),
+            np.array(gripper_widths) * 1000.0,
+            color="tab:red",
+            linewidth=2.5,
+            label="Gripper width (mm)",
+        )
     ax2.set_ylabel("Gripper width (mm)", color="tab:red")
     ax2.tick_params(axis="y", labelcolor="tab:red")
 
@@ -333,6 +403,9 @@ def execute_pinch(gripper, pinch_depth, pinch_speed, ser):
         ts (list[float]):              gripper sample timestamps (s, t0 = pinch start)
         gripper_widths (list[float]):  gripper widths at each ts
         pressures (np.ndarray):        (N, 2) pressure ADC samples covering the cycle
+        pressure_timestamps (np.ndarray): (N,) per-sample timestamps in seconds,
+            anchored at 0 = first pressure sample, reconstructed from the
+            firmware's per-chunk rate + dt-since-last-chunk metadata.
     """
     ser.reset_input_buffer()
     ser.reset_output_buffer()
@@ -347,19 +420,21 @@ def execute_pinch(gripper, pinch_depth, pinch_speed, ser):
             pressure_list.append(collect_teensy_data_streaming(ser, max_duration=15.0))
         except Exception as e:
             print(f"  Error in Teensy collection thread: {e}")
-            pressure_list.append(np.array([]))
+            pressure_list.append((np.array([]), np.array([])))
 
     teensy_thread = threading.Thread(target=collect_teensy_in_thread)
     teensy_thread.start()
     time.sleep(0.1)  # let streaming actually start before we begin moving
 
-    depth_target = TUBE_DIAMETER + 2 * (GRIPPER_THICKNESS - pinch_depth)
+    depth_target = TUBE_DIAMETER + 2 * (PROBE_WIDTH - PAD_WIDTH - pinch_depth)
 
     close_result = {"success": False}
 
     def gripper_close_worker():
         try:
-            close_result["success"] = gripper.set_target(depth_target, speed=pinch_speed)
+            close_result["success"] = gripper.set_target(
+                depth_target, speed=pinch_speed
+            )
         except Exception as e:
             close_result["error"] = e
 
@@ -411,14 +486,17 @@ def execute_pinch(gripper, pinch_depth, pinch_speed, ser):
     time.sleep(0.1)
 
     teensy_thread.join(timeout=15.0)
-    pressures = pressure_list[0] if len(pressure_list) > 0 else np.array([])
+    if pressure_list:
+        pressures, pressure_timestamps = pressure_list[0]
+    else:
+        pressures, pressure_timestamps = np.array([]), np.array([])
 
     time.sleep(SETTLE_SEC)
 
     if not close_result.get("success", False):
         raise RuntimeError("Gripper failed to close to target")
 
-    return ts_all, gripper_widths_all, pressures
+    return ts_all, gripper_widths_all, pressures, pressure_timestamps
 
 
 # ===================== Parameter / results persistence =====================
@@ -476,6 +554,7 @@ def load_or_init_results():
         "ts_gripper": [],
         "gripper_widths": [],
         "pressures": [],
+        "pressure_timestamps": [],
         "baseline_pressures": np.array([]),
         "baseline_mean": np.zeros(2, dtype=np.float64),
     }
@@ -522,10 +601,15 @@ def main():
         print(f"Resuming from probe {start_idx + 1} / {num_points}")
 
     # Acquire baseline pressure once at startup (or reuse saved baseline on resume).
+    # Per-probe pressure timestamps are reconstructed by the streaming reader
+    # from per-chunk firmware metadata, so no global sample-rate handling is
+    # needed here.
     saved_baseline = exp_dict.get("baseline_pressures", np.array([]))
     if isinstance(saved_baseline, np.ndarray) and saved_baseline.size > 0:
         baseline_mean = np.asarray(
-            exp_dict.get("baseline_mean", saved_baseline.astype(np.float64).mean(axis=0))
+            exp_dict.get(
+                "baseline_mean", saved_baseline.astype(np.float64).mean(axis=0)
+            )
         )
         print(
             f"Reusing saved baseline ({saved_baseline.shape[0]} samples, "
@@ -549,7 +633,7 @@ def main():
     robot.controller_switcher_client.switch_controller("joint_trajectory_controller")
 
     gripper.open(speed=0.05)
-    robot.move_to(pose=Pose(SAFE_POS, SAFE_ORI))
+    robot.move_to(pose=Pose(SAFE_POS, SAFE_ORI), speed=MOVE_SPEED)
 
     # ---- Outer loop: in-program restart on failure ----
     while start_idx < num_points:
@@ -564,7 +648,7 @@ def main():
             f"Moving to start (angle: {np.degrees(last_angle):.2f}°, height: {last_height:.2f}m)"
         )
         try:
-            robot.move_to(pose=start_pose)
+            robot.move_to(pose=start_pose, speed=MOVE_SPEED)
             gripper.open(speed=0.05)
         except Exception as e:
             print(f"Failed to move to start position: {e}. Retrying in 2s...")
@@ -611,7 +695,7 @@ def main():
                 robot.follow_joint_trajectory(joint_traj, blocking=True)
 
                 print("\tPinching + recording...")
-                ts, widths, pressures = execute_pinch(
+                ts, widths, pressures, pressure_timestamps = execute_pinch(
                     gripper=gripper,
                     pinch_depth=float(pinch_depths[i]),
                     pinch_speed=float(pinch_speeds[i]),
@@ -625,6 +709,7 @@ def main():
                 exp_dict["ts_gripper"].append(np.array(ts))
                 exp_dict["gripper_widths"].append(np.array(widths))
                 exp_dict["pressures"].append(pressures)
+                exp_dict["pressure_timestamps"].append(pressure_timestamps)
 
                 with open(RESULTS_FILE, "wb") as f:
                     pickle.dump(exp_dict, f)
@@ -639,6 +724,7 @@ def main():
                     gripper_widths=widths,
                     pressures=pressures,
                     baseline_mean=baseline_mean,
+                    pressure_timestamps=pressure_timestamps,
                 )
 
                 print(
@@ -664,7 +750,7 @@ def main():
 
                 print("Moving back to safe position and restarting...")
                 try:
-                    robot.move_to(pose=Pose(SAFE_POS, SAFE_ORI))
+                    robot.move_to(pose=Pose(SAFE_POS, SAFE_ORI), speed=MOVE_SPEED)
                 except Exception as move_err:
                     print(f"  (safe move failed: {move_err})")
                 time.sleep(SETTLE_SEC)
@@ -690,7 +776,7 @@ def main():
 
     print("Returning to safe pos...")
     try:
-        robot.move_to(pose=Pose(SAFE_POS, SAFE_ORI))
+        robot.move_to(pose=Pose(SAFE_POS, SAFE_ORI), speed=MOVE_SPEED)
     except Exception as e:
         print(f"  (safe move failed: {e})")
     time.sleep(SETTLE_SEC)

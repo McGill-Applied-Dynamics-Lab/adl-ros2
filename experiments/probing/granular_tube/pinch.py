@@ -30,7 +30,8 @@ TUBE_CENTER_POS = np.array(
 OUTER_RADIUS = 0.025  # Distance from fingers center to tube center
 TUBE_LENGTH = 0.040  # update set X gripper width lower than the actual tube height
 TUBE_DIAMETER = 0.040
-GRIPPER_THICKNESS = 0.024  # probe thickness (m)
+PROBE_WIDTH = 0.024  # probe width (m)
+PAD_WIDTH = 0.0095  # nominal Franka gripper pad width (m)
 MOVE_SPEED = 0.025  # (m/s)
 MOVE_SPEED_ROT = 0.20  # (rad/s)
 Z_MIN = 0.19  # minimum sensor height from table (m)
@@ -52,7 +53,7 @@ PINCH_DEPTH_RANGE = [
     0.01,
     TUBE_DIAMETER / 2,
 ]  # .5cm to 2cm (distance pushed by one finger)
-PINCH_SPEED_RANGE = [0.005, 0.08]  # 1 to 8 cm/s
+PINCH_SPEED_RANGE = [0.01, 0.08]  # 1 to 8 cm/s
 
 PINCH_TIME = 1.0  # Time to wait after closing gripper
 SETTLE_SEC = 0.1  # Wait time after moves (s)
@@ -204,7 +205,7 @@ def main():
     robot.controller_switcher_client.switch_controller("joint_trajectory_controller")
 
     success = gripper.open(speed=0.05)  # Custom speed
-    # success = gripper.set_target(0.00, speed=0.08)  # Custom speed / fully open gripper
+    success = gripper.set_target(0.040, speed=0.08)  # Custom speed / fully open gripper
 
     gripper.value
 
@@ -296,7 +297,9 @@ def main():
                 robot.follow_joint_trajectory(joint_traj, blocking=True)
 
                 print(f"\tPinching...")
-                depth_target = TUBE_DIAMETER + 2 * (GRIPPER_THICKNESS - pinch_depths[i])
+                depth_target = TUBE_DIAMETER + 2 * (
+                    PROBE_WIDTH - PAD_WIDTH - pinch_depths[i]
+                )
 
                 w_before_close = gripper.value
                 t_call = time.perf_counter()
