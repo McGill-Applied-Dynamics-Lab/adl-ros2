@@ -35,7 +35,7 @@ if success:
     print(f"Gripper width after opening: {gripper.value:.4f} m")
 
 print("\nSetting target width to 0.04 m...")
-success = gripper.set_target(0.04)
+success = gripper.set_target(0.06)
 print(f"Set target action {'succeeded' if success else 'failed'}")
 
 if success:

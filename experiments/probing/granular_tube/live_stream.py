@@ -76,7 +76,10 @@ class SerialWorker(QThread):
                             dt_since_last_us = struct.unpack("<I", dt_bytes)[0]
 
                             self.data_ready.emit(
-                                ch1_data, ch2_data, float(chunk_rate_hz), int(dt_since_last_us)
+                                ch1_data,
+                                ch2_data,
+                                float(chunk_rate_hz),
+                                int(dt_since_last_us),
                             )
 
                     elif marker == b"E":
@@ -106,13 +109,18 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Teensy 10kHz Dual-Channel Plotter")
-        self.resize(1000, 600)
+        self.resize(1000, 400)
 
         # Buffer settings
         self.sample_rate = 10000
-        self.window_size = self.sample_rate * 2  # 2 seconds of history
+        self.window_size = int(self.sample_rate * 1.00)  # 2 seconds of history
         self.y1_data = np.zeros(self.window_size)
         self.y2_data = np.zeros(self.window_size)
+
+        # Plot Y-range (post-calibration). Plotted values are baseline-subtracted
+        # ADC counts, so set to (0, limit) to show only positive deflections.
+        self.y_min = 0
+        self.y_max = 300
 
         # Calibration settings
         self.calibration_seconds = 2.0
@@ -228,8 +236,8 @@ class MainWindow(QMainWindow):
                     f"Calibration complete! Baselines: CH1={self.baseline_ch1:.1f}, CH2={self.baseline_ch2:.1f}"
                 )
 
-                # Switch plot to a tighter relative Y-range based around 0
-                self.plot_widget.setYRange(-500, 500)
+                # Switch plot to the configured positive Y-range
+                self.plot_widget.setYRange(self.y_min, self.y_max)
 
         # 3. Vectorized Subtraction (with safety casting)
         if not self.calibrating:

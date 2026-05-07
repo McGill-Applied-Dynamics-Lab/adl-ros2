@@ -24,7 +24,18 @@ BAUD_RATE = 3000000
 
 # Baseline pressure acquisition (run once at startup)
 BASELINE_DURATION_SEC = 3.0
-TEENSY_SAMPLE_RATE_HZ = 10000.0
+
+# Teensy sample rate (Hz) — fallback only. The firmware estimates its own rate
+# in setup() and appends it (plus a per-chunk rate + dt_since_last_us) to every
+# chunk packet, so the host normally just reads the cadence off the wire and
+# reconstructs per-sample timestamps. This constant is used only when the
+# firmware never reports one (e.g. very old firmware) so timestamps still
+# get produced.
+TEENSY_SAMPLE_RATE_HZ_FALLBACK = 10000.0
+
+# Display-only smoothing for the pressure plot. Saved data in the pickle is
+# always raw; this only smooths what gets drawn. At ~10 kHz, 51 samples ≈ 5 ms.
+PLOT_SMOOTH_WINDOW = 51
 
 # File paths
 PROJECT_ROOT = Path(__file__).resolve().parent
@@ -43,50 +54,39 @@ def read_exact_bytes(ser, num_bytes):
     return bytes(data)
 
 
-def fetch_teensy_dump(ser):
-    """Fetches high-speed raw binary data from the Teensy."""
-    while True:
-        if ser.in_waiting > 0:
-            char = ser.read(1)
-            if char == b"S":
-                break
-
-    count_bytes = read_exact_bytes(ser, 4)
-    num_samples = int.from_bytes(count_bytes, byteorder="little")
-
-    bytes_per_buffer = num_samples * 2
-
-    buf1_raw = read_exact_bytes(ser, bytes_per_buffer)
-    buf2_raw = read_exact_bytes(ser, bytes_per_buffer)
-
-    buf1 = np.frombuffer(buf1_raw, dtype=np.uint16)
-    buf2 = np.frombuffer(buf2_raw, dtype=np.uint16)
-
-    ser.readline()
-
-    return np.column_stack((buf1, buf2))
-
-
 def collect_teensy_data_streaming(ser, max_duration=10.0):
     """
     Collect Teensy pressure sensor data via streaming chunks.
 
-    Reads chunks of data as they arrive from the Teensy, avoiding buffer overflow.
-    Call ser.write(b"2") to end collection.
+    Reads chunks as they arrive from the Teensy, avoiding USB-CDC buffer
+    overflow. The main thread should call ser.write(b"2") to end collection.
 
-    Args:
-        ser: Serial connection to Teensy
-        max_duration: Maximum collection time (seconds)
+    Each 'C' chunk carries (see teensy_tx.ino for the wire format):
+        - chunk_size                                          (uint32)
+        - chunk_size uint16 samples for channel 1
+        - chunk_size uint16 samples for channel 2
+        - chunk_rate_hz: intra-chunk sample rate              (float32)
+        - dt_since_last_us: first-sample-of-this-chunk minus
+          first-sample-of-prev-chunk (or stream-start for k=0) (uint32)
+
+    Per-sample timestamps are reconstructed from these as:
+        t_chunk_start[k] = t_chunk_start[k-1] + dt_since_last_us[k] / 1e6
+        t_sample[k][j]   = t_chunk_start[k] + j / chunk_rate_hz[k]
+    Then anchored so the first sample's timestamp is 0.
 
     Returns:
-        numpy array of shape (N, 2) with pressure readings
+        (data, timestamps):
+            data (np.ndarray, shape (N, 2)): pressure readings.
+            timestamps (np.ndarray, shape (N,)): seconds, anchored at 0.
     """
     all_samples_1 = []
     all_samples_2 = []
+    all_timestamps = []
+    cum_chunk_start_s = 0.0
+    last_known_rate = None
     start_time = time.perf_counter()
 
     try:
-        # Start streaming
         ser.write(b"1")
         time.sleep(0.1)
 
@@ -94,46 +94,62 @@ def collect_teensy_data_streaming(ser, max_duration=10.0):
             if ser.in_waiting > 0:
                 marker = ser.read(1)
 
-                if marker == b"B":  # Streaming mode start marker
+                if marker == b"B":
                     continue
 
-                elif marker == b"C":  # Chunk marker
-                    # Read chunk size (4 bytes)
-                    chunk_size_bytes = read_exact_bytes(ser, 4)
-                    chunk_size = int.from_bytes(chunk_size_bytes, byteorder="little")
-
-                    # Read chunk data for both sensors
-                    chunk_data_1 = read_exact_bytes(
-                        ser, chunk_size * 2
-                    )  # 2 bytes per sample
+                elif marker == b"C":
+                    chunk_size = int.from_bytes(
+                        read_exact_bytes(ser, 4), byteorder="little"
+                    )
+                    chunk_data_1 = read_exact_bytes(ser, chunk_size * 2)
                     chunk_data_2 = read_exact_bytes(ser, chunk_size * 2)
+                    rate_bytes = read_exact_bytes(ser, 4)
+                    dt_us = int.from_bytes(
+                        read_exact_bytes(ser, 4), byteorder="little"
+                    )
 
-                    # Convert to uint16 arrays
                     samples_1 = np.frombuffer(chunk_data_1, dtype=np.uint16)
                     samples_2 = np.frombuffer(chunk_data_2, dtype=np.uint16)
+                    chunk_rate_hz = float(
+                        np.frombuffer(rate_bytes, dtype=np.float32)[0]
+                    )
+
+                    cum_chunk_start_s += dt_us * 1e-6
+
+                    if chunk_rate_hz > 0:
+                        last_known_rate = chunk_rate_hz
+                    effective_rate = (
+                        last_known_rate
+                        if last_known_rate is not None
+                        else TEENSY_SAMPLE_RATE_HZ_FALLBACK
+                    )
+                    period = 1.0 / effective_rate
+                    chunk_ts = cum_chunk_start_s + np.arange(chunk_size) * period
 
                     all_samples_1.extend(samples_1)
                     all_samples_2.extend(samples_2)
+                    all_timestamps.append(chunk_ts)
 
-                elif marker == b"E":  # End marker
-                    # Read total count
-                    total_bytes = read_exact_bytes(ser, 4)
-                    total_count = int.from_bytes(total_bytes, byteorder="little")
+                elif marker == b"E":
+                    total_count = int.from_bytes(
+                        read_exact_bytes(ser, 4), byteorder="little"
+                    )
                     print(f"  ✓ Received {total_count} samples from Teensy")
                     break
             else:
                 time.sleep(0.001)
 
-        # Combine into 2D array
         if len(all_samples_1) > 0:
-            pressures = np.column_stack([all_samples_1, all_samples_2])
-            return pressures
+            data = np.column_stack([all_samples_1, all_samples_2])
+            timestamps = np.concatenate(all_timestamps)
+            timestamps = timestamps - timestamps[0]  # anchor first sample at t=0
+            return data, timestamps
         else:
-            return np.array([])
+            return np.array([]), np.array([])
 
     except Exception as e:
         print(f"Error in streaming data collection: {e}")
-        return np.array([])
+        return np.array([]), np.array([])
 
 
 def acquire_baseline(ser, duration_sec=BASELINE_DURATION_SEC):
@@ -154,7 +170,7 @@ def acquire_baseline(ser, duration_sec=BASELINE_DURATION_SEC):
             )
         except Exception as e:
             print(f"  Error in baseline collection thread: {e}")
-            holder.append(np.array([]))
+            holder.append((np.array([]), np.array([])))
 
     th = threading.Thread(target=worker)
     th.start()
@@ -164,7 +180,8 @@ def acquire_baseline(ser, duration_sec=BASELINE_DURATION_SEC):
     time.sleep(0.1)
     th.join(timeout=10.0)
 
-    baseline = holder[0] if holder else np.array([])
+    # Discard timestamps; baseline only needs the per-sensor mean.
+    baseline = holder[0][0] if holder else np.array([])
     if baseline.size == 0:
         print("  Warning: no baseline data received; using zero baseline.")
         return baseline, np.zeros(2, dtype=np.float64)
@@ -179,20 +196,27 @@ def acquire_baseline(ser, duration_sec=BASELINE_DURATION_SEC):
 
 def generate_plot(
     run_idx, angle, speed, ts_fwd, angles_fwd, ts_rev, angles_rev, press_full,
+    pressure_timestamps,
     baseline_mean=np.zeros(2, dtype=np.float64),
 ):
     """Generates and saves a dual-axis plot of (baseline-subtracted) pressures and robot angle."""
     fig, ax1 = plt.subplots(figsize=(10, 6))
-
-    t_teensy = np.arange(len(press_full)) / TEENSY_SAMPLE_RATE_HZ
 
     color1 = "tab:blue"
     color2 = "tab:orange"
     ax1.set_xlabel("Time (s)")
     ax1.set_ylabel("Pressure ADC - baseline (12-bit counts)", color="k")
     if len(press_full) > 0:
+        t_teensy = pressure_timestamps
         p1 = press_full[:, 0].astype(np.float64) - baseline_mean[0]
         p2 = press_full[:, 1].astype(np.float64) - baseline_mean[1]
+
+        # Display-only smoothing: simple moving average. Saved data stays raw.
+        if PLOT_SMOOTH_WINDOW > 1 and p1.size >= PLOT_SMOOTH_WINDOW:
+            kernel = np.ones(PLOT_SMOOTH_WINDOW, dtype=np.float64) / PLOT_SMOOTH_WINDOW
+            p1 = np.convolve(p1, kernel, mode="same")
+            p2 = np.convolve(p2, kernel, mode="same")
+
         ax1.plot(t_teensy, p1, color=color1, alpha=0.7, label="Sensor 1 (A7, baseline-sub)")
         ax1.plot(t_teensy, p2, color=color2, alpha=0.7, label="Sensor 2 (A5, baseline-sub)")
     ax1.tick_params(axis="y", labelcolor="k")
@@ -288,14 +312,21 @@ def execute_wrist_rotation_pair(
     # Thread-safe lists for Teensy data
     pressure_list = []
 
+    # Bound the streaming window by the worst-case cycle time so slow rotations
+    # don't get clipped: forward + reverse trajectory durations + 5 s margin
+    # for action handshake / final flush.
+    per_traj_duration_s = abs(target_angle_rad) / max(speed_val, 1e-6)
+    teensy_max_duration_s = 2.0 * per_traj_duration_s + 5.0
+
     def collect_teensy_in_thread():
         """Thread target: collect Teensy data during execution."""
         try:
-            pressure = collect_teensy_data_streaming(ser, max_duration=10.0)
-            pressure_list.append(pressure)
+            pressure_list.append(
+                collect_teensy_data_streaming(ser, max_duration=teensy_max_duration_s)
+            )
         except Exception as e:
             print(f"  Error in Teensy collection thread: {e}")
-            pressure_list.append(np.array([]))
+            pressure_list.append((np.array([]), np.array([])))
 
     # Start Teensy collection thread
     teensy_thread = threading.Thread(target=collect_teensy_in_thread)
@@ -336,8 +367,11 @@ def execute_wrist_rotation_pair(
     time.sleep(0.1)
 
     # Wait for Teensy collection to complete
-    teensy_thread.join(timeout=15.0)
-    pressures_full_cycle = pressure_list[0] if len(pressure_list) > 0 else np.array([])
+    teensy_thread.join(timeout=teensy_max_duration_s)
+    if pressure_list:
+        pressures_full_cycle, pressure_timestamps_full = pressure_list[0]
+    else:
+        pressures_full_cycle, pressure_timestamps_full = np.array([]), np.array([])
 
     time.sleep(SETTLE_SEC)
 
@@ -393,6 +427,7 @@ def execute_wrist_rotation_pair(
         forces_rev,
         torques_rev,
         pressures_full_cycle,
+        pressure_timestamps_full,
     )
 
 
@@ -464,6 +499,7 @@ def main():
             "forces_reverse": [],
             "torques_reverse": [],
             "pressures_full_cycle": [],
+            "pressure_timestamps_full_cycle": [],
             "target_angles": [],
             "target_speeds": [],
             "baseline_pressures": np.array([]),
@@ -527,6 +563,7 @@ def main():
                 frc_rev,
                 trq_rev,
                 press_full,
+                press_ts_full,
             ) = execute_wrist_rotation_pair(
                 robot=robot, target_angle_rad=angle, speed_val=speed, ser=ser
             )
@@ -546,6 +583,7 @@ def main():
             exp_dict["torques_reverse"].append(trq_rev)
 
             exp_dict["pressures_full_cycle"].append(press_full)
+            exp_dict.setdefault("pressure_timestamps_full_cycle", []).append(press_ts_full)
             exp_dict["target_angles"].append(angle)
             exp_dict["target_speeds"].append(speed)
 
@@ -554,6 +592,7 @@ def main():
 
             generate_plot(
                 i + 1, angle, speed, ts_fwd, angles_fwd, ts_rev, angles_rev, press_full,
+                pressure_timestamps=press_ts_full,
                 baseline_mean=baseline_mean,
             )
             print(f"\t-> Saved data and plot for Run {i + 1} successfully.")

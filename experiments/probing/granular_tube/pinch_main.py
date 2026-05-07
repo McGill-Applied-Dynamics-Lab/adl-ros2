@@ -18,15 +18,15 @@ from arm_client.gripper.franka_hand import Gripper, GripperConfig
 from arm_client.planning.types import CartesianWaypoint
 
 # ===================== Experiment Setup =====================
-TUBE_CENTER_POS = np.array([0.487, 0.0436])  # (x, y), m
-OUTER_RADIUS = 0.025  # Distance from fingers center to tube center (m)
-TUBE_LENGTH = 0.040  # set lower than the actual tube height (m)
+TUBE_CENTER_POS = np.array([0.4859, 0.03656])  # (x, y), m
+OUTER_RADIUS = 0.060  # Distance from fingers center to tube center (m)
+TUBE_LENGTH = 0.0675  # set lower than the actual tube height (m)
 TUBE_DIAMETER = 0.040  # m
 PROBE_WIDTH = 0.024  # probe width (m)
 PAD_WIDTH = 0.0095  # nominal Franka gripper pad width (m)
-MOVE_SPEED = 0.075  # (m/s)
+MOVE_SPEED = 0.0500  # (m/s)
 MOVE_SPEED_ROT = 0.20  # (rad/s)
-Z_MIN = 0.20  # minimum sensor height from table (m)
+Z_MIN = 0.1925  # minimum sensor height from table (m)
 
 SAFE_ORI = R.from_euler("xyz", [-180, 90, -90], degrees=True)
 SAFE_POS = np.array([0.48, -0.15, Z_MIN + 0.05])
@@ -36,8 +36,8 @@ SAFE_POS = np.array([0.48, -0.15, Z_MIN + 0.05])
 # pinch speeds — are loaded from PARAMETERS_FILE; generate them with
 # `python generate_pinch_parameters.py`.)
 
-PINCH_TIME = 0.0  # Hold time after gripper reaches target (s)
-SETTLE_SEC = 0.5  # Wait time after moves (s)
+PINCH_TIME = 0.5  # Hold time after gripper reaches target (s)
+SETTLE_SEC = 0.1  # Wait time after moves (s)
 
 # Trajectory configurations
 QUEUE_SIZE = 3
@@ -55,10 +55,18 @@ BASELINE_DURATION_SEC = 2.0
 # reports one (e.g. very old firmware) so timestamps still get produced.
 TEENSY_SAMPLE_RATE_HZ_FALLBACK = 10000.0
 
+# Display-only smoothing for the pressure plot. Saved data in the pickle is
+# always raw; this only smooths what gets drawn. At ~10 kHz, 51 samples ≈ 5 ms.
+PLOT_SMOOTH_WINDOW = 51
+
 gripper_cfg = GripperConfig(
     max_width=0.08,
     min_width=0.0,
     default_speed=0.01,
+    # Slow pinches: a full-stroke Move at e.g. 0.001 m/s is 80 s, well past the
+    # 10 s default. Bump action_timeout so the blocking gripper client doesn't
+    # return False on long but otherwise healthy moves.
+    action_timeout=90.0,
 )
 
 # ===================== Teensy Configuration =====================
@@ -68,7 +76,7 @@ BAUD_RATE = 3000000
 # ===================== File Paths =====================
 PROJECT_ROOT = Path(__file__).resolve().parent
 PARAMETERS_FILE = PROJECT_ROOT / "results" / "grids" / "pinch_params.pkl"
-RESULTS_FILE = PROJECT_ROOT / "results" / "pinch_test.pkl"
+RESULTS_FILE = PROJECT_ROOT / "results" / "pinch_100_set_3_nylon.pkl"
 PLOTS_DIR = PROJECT_ROOT / "results" / "plots_pinch_main"
 
 
@@ -342,21 +350,30 @@ def generate_plot(
 
     if pressures.size > 0:
         t_press = pressure_timestamps
-        p1 = pressures[:, 0].astype(np.float64) - baseline_mean[0]
-        p2 = pressures[:, 1].astype(np.float64) - baseline_mean[1]
+        # Column 0 = Teensy A7 (pin 20 wiring) = Bottom sensor.
+        # Column 1 = Teensy A5 (pin 19 wiring) = Top sensor.
+        p_bottom = pressures[:, 0].astype(np.float64) - baseline_mean[0]
+        p_top = pressures[:, 1].astype(np.float64) - baseline_mean[1]
+
+        # Display-only smoothing: simple moving average. Saved data stays raw.
+        if PLOT_SMOOTH_WINDOW > 1 and p_bottom.size >= PLOT_SMOOTH_WINDOW:
+            kernel = np.ones(PLOT_SMOOTH_WINDOW, dtype=np.float64) / PLOT_SMOOTH_WINDOW
+            p_bottom = np.convolve(p_bottom, kernel, mode="same")
+            p_top = np.convolve(p_top, kernel, mode="same")
+
         ax1.plot(
             t_press,
-            p1,
+            p_top,
             color="tab:blue",
             alpha=0.7,
-            label="Sensor 1 (baseline-subtracted)",
+            label="Top (baseline-subtracted)",
         )
         ax1.plot(
             t_press,
-            p2,
+            p_bottom,
             color="tab:orange",
             alpha=0.7,
-            label="Sensor 2 (baseline-subtracted)",
+            label="Bottom (baseline-subtracted)",
         )
 
     ax1.set_xlabel("Time (s)")
@@ -399,7 +416,12 @@ def execute_pinch(gripper, pinch_depth, pinch_speed, ser):
     Run a single pinch cycle (close -> hold -> open) while streaming
     pressure data from the Teensy and recording gripper width over time.
 
+    Before the pinch begins, BASELINE_DURATION_SEC of stationary sensor data
+    are collected; this is returned alongside the pinch data so plotting can
+    do per-probe baseline subtraction (no global baseline session required).
+
     Returns:
+        baseline (np.ndarray):         (N_b, 2) raw ADC samples taken with no motion
         ts (list[float]):              gripper sample timestamps (s, t0 = pinch start)
         gripper_widths (list[float]):  gripper widths at each ts
         pressures (np.ndarray):        (N, 2) pressure ADC samples covering the cycle
@@ -407,6 +429,9 @@ def execute_pinch(gripper, pinch_depth, pinch_speed, ser):
             anchored at 0 = first pressure sample, reconstructed from the
             firmware's per-chunk rate + dt-since-last-chunk metadata.
     """
+    # Per-probe baseline: 2 s of stationary samples, no robot/gripper motion.
+    baseline, _ = acquire_baseline(ser)
+
     ser.reset_input_buffer()
     ser.reset_output_buffer()
 
@@ -415,9 +440,18 @@ def execute_pinch(gripper, pinch_depth, pinch_speed, ser):
 
     pressure_list = []
 
+    # Bound the streaming window by the worst-case cycle time so slow pinches
+    # don't get clipped: full-stroke close (max_width / pinch_speed) + hold +
+    # full-stroke open + a 5 s margin for action handshake / final flush.
+    teensy_max_duration_s = (
+        2.0 * gripper_cfg.max_width / max(pinch_speed, 1e-6) + PINCH_TIME + 5.0
+    )
+
     def collect_teensy_in_thread():
         try:
-            pressure_list.append(collect_teensy_data_streaming(ser, max_duration=15.0))
+            pressure_list.append(
+                collect_teensy_data_streaming(ser, max_duration=teensy_max_duration_s)
+            )
         except Exception as e:
             print(f"  Error in Teensy collection thread: {e}")
             pressure_list.append((np.array([]), np.array([])))
@@ -433,7 +467,7 @@ def execute_pinch(gripper, pinch_depth, pinch_speed, ser):
     def gripper_close_worker():
         try:
             close_result["success"] = gripper.set_target(
-                depth_target, speed=pinch_speed
+                depth_target / 2, speed=pinch_speed  # **new** divide by 2
             )
         except Exception as e:
             close_result["error"] = e
@@ -466,7 +500,9 @@ def execute_pinch(gripper, pinch_depth, pinch_speed, ser):
 
     def gripper_open_worker():
         try:
-            open_result["success"] = gripper.open(speed=0.1)
+            open_result["success"] = gripper.set_target(
+                gripper_cfg.max_width, speed=pinch_speed
+            )
         except Exception as e:
             open_result["error"] = e
 
@@ -485,7 +521,7 @@ def execute_pinch(gripper, pinch_depth, pinch_speed, ser):
     ser.write(b"2")
     time.sleep(0.1)
 
-    teensy_thread.join(timeout=15.0)
+    teensy_thread.join(timeout=teensy_max_duration_s)
     if pressure_list:
         pressures, pressure_timestamps = pressure_list[0]
     else:
@@ -496,7 +532,7 @@ def execute_pinch(gripper, pinch_depth, pinch_speed, ser):
     if not close_result.get("success", False):
         raise RuntimeError("Gripper failed to close to target")
 
-    return ts_all, gripper_widths_all, pressures, pressure_timestamps
+    return baseline, ts_all, gripper_widths_all, pressures, pressure_timestamps
 
 
 # ===================== Parameter / results persistence =====================
@@ -553,10 +589,17 @@ def load_or_init_results():
         "target_pinch_speeds": [],
         "ts_gripper": [],
         "gripper_widths": [],
-        "pressures": [],
+        # Pressure samples split per sensor. Wiring:
+        #   Top sensor    = Teensy A5 (pin 19)
+        #   Bottom sensor = Teensy A7 (pin 20)
+        # Each entry is one 1-D ndarray of raw ADC counts for that probe.
+        "pressures_top": [],
+        "pressures_bottom": [],
         "pressure_timestamps": [],
-        "baseline_pressures": np.array([]),
-        "baseline_mean": np.zeros(2, dtype=np.float64),
+        # Per-probe pre-pinch baseline (BASELINE_DURATION_SEC of stationary
+        # samples), one 1-D ndarray entry per probe per sensor.
+        "baselines_top": [],
+        "baselines_bottom": [],
     }
     return exp_dict, 0
 
@@ -600,27 +643,8 @@ def main():
     if start_idx > 0:
         print(f"Resuming from probe {start_idx + 1} / {num_points}")
 
-    # Acquire baseline pressure once at startup (or reuse saved baseline on resume).
-    # Per-probe pressure timestamps are reconstructed by the streaming reader
-    # from per-chunk firmware metadata, so no global sample-rate handling is
-    # needed here.
-    saved_baseline = exp_dict.get("baseline_pressures", np.array([]))
-    if isinstance(saved_baseline, np.ndarray) and saved_baseline.size > 0:
-        baseline_mean = np.asarray(
-            exp_dict.get(
-                "baseline_mean", saved_baseline.astype(np.float64).mean(axis=0)
-            )
-        )
-        print(
-            f"Reusing saved baseline ({saved_baseline.shape[0]} samples, "
-            f"means = ({baseline_mean[0]:.2f}, {baseline_mean[1]:.2f}))."
-        )
-    else:
-        baseline, baseline_mean = acquire_baseline(ser)
-        exp_dict["baseline_pressures"] = baseline
-        exp_dict["baseline_mean"] = baseline_mean
-        with open(RESULTS_FILE, "wb") as f:
-            pickle.dump(exp_dict, f)
+    # Per-probe baselines are now collected inside execute_pinch (2 s of
+    # stationary samples just before each pinch); no global baseline session.
 
     # ---- Robot + gripper ----
     robot = Robot(namespace="fr3")
@@ -695,11 +719,32 @@ def main():
                 robot.follow_joint_trajectory(joint_traj, blocking=True)
 
                 print("\tPinching + recording...")
-                ts, widths, pressures, pressure_timestamps = execute_pinch(
+                baseline, ts, widths, pressures, pressure_timestamps = execute_pinch(
                     gripper=gripper,
                     pinch_depth=float(pinch_depths[i]),
                     pinch_speed=float(pinch_speeds[i]),
                     ser=ser,
+                )
+
+                # Per-probe baseline mean (plot-only). Saved baseline data is raw.
+                if baseline.size > 0:
+                    baseline_mean = baseline.astype(np.float64).mean(axis=0)
+                else:
+                    baseline_mean = np.zeros(2, dtype=np.float64)
+
+                # Split (N, 2) into named per-sensor 1-D arrays for saving.
+                # Column 0 = A7 = Bottom; Column 1 = A5 = Top.
+                pressures_bottom = (
+                    pressures[:, 0] if pressures.size else np.array([], dtype=np.uint16)
+                )
+                pressures_top = (
+                    pressures[:, 1] if pressures.size else np.array([], dtype=np.uint16)
+                )
+                baselines_bottom = (
+                    baseline[:, 0] if baseline.size else np.array([], dtype=np.uint16)
+                )
+                baselines_top = (
+                    baseline[:, 1] if baseline.size else np.array([], dtype=np.uint16)
                 )
 
                 exp_dict["target_angles"].append(float(angles[i]))
@@ -708,8 +753,11 @@ def main():
                 exp_dict["target_pinch_speeds"].append(float(pinch_speeds[i]))
                 exp_dict["ts_gripper"].append(np.array(ts))
                 exp_dict["gripper_widths"].append(np.array(widths))
-                exp_dict["pressures"].append(pressures)
+                exp_dict.setdefault("pressures_top", []).append(pressures_top)
+                exp_dict.setdefault("pressures_bottom", []).append(pressures_bottom)
                 exp_dict["pressure_timestamps"].append(pressure_timestamps)
+                exp_dict.setdefault("baselines_top", []).append(baselines_top)
+                exp_dict.setdefault("baselines_bottom", []).append(baselines_bottom)
 
                 with open(RESULTS_FILE, "wb") as f:
                     pickle.dump(exp_dict, f)

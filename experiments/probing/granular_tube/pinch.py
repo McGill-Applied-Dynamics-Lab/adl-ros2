@@ -21,20 +21,15 @@ from arm_client.planning.types import CartesianWaypoint, PlannedJointTrajectory
 # - [?] Fix max speed
 
 # Experiment Setup
-TUBE_CENTER_POS = np.array(
-    [
-        0.4913,
-        0.0373,
-    ]
-)  # center of tube (x, y), (m)
-OUTER_RADIUS = 0.025  # Distance from fingers center to tube center
-TUBE_LENGTH = 0.040  # update set X gripper width lower than the actual tube height
+TUBE_CENTER_POS = np.array([0.4859, 0.03656])
+OUTER_RADIUS = 0.065  # Distance from fingers center to tube center
+TUBE_LENGTH = 0.0675  # update set X gripper width lower than the actual tube height
 TUBE_DIAMETER = 0.040
 PROBE_WIDTH = 0.024  # probe width (m)
 PAD_WIDTH = 0.0095  # nominal Franka gripper pad width (m)
-MOVE_SPEED = 0.025  # (m/s)
-MOVE_SPEED_ROT = 0.20  # (rad/s)
-Z_MIN = 0.19  # minimum sensor height from table (m)
+MOVE_SPEED = 0.05  # (m/s)
+MOVE_SPEED_ROT = 0.10  # (rad/s)
+Z_MIN = 0.1925  # minimum sensor height from table (m)
 
 SAFE_ORI = R.from_euler(
     "xyz", [-180, 90, -90], degrees=True
@@ -47,11 +42,11 @@ NUM_PROBES = 50  # Number of probing points
 
 ANGLE_RANGE = [
     -45,
-    45,
+    0,
 ]  # minimum and maximum angles (deg), 0 is gripper facing along +y
 PINCH_DEPTH_RANGE = [
-    0.01,
-    TUBE_DIAMETER / 2,
+    0.005,
+    0.018,
 ]  # .5cm to 2cm (distance pushed by one finger)
 PINCH_SPEED_RANGE = [0.01, 0.08]  # 1 to 8 cm/s
 
@@ -205,7 +200,7 @@ def main():
     robot.controller_switcher_client.switch_controller("joint_trajectory_controller")
 
     success = gripper.open(speed=0.05)  # Custom speed
-    success = gripper.set_target(0.040, speed=0.08)  # Custom speed / fully open gripper
+    # success = gripper.set_target(0.040, speed=0.08)  # Custom speed / fully open gripper
 
     gripper.value
 
@@ -244,7 +239,7 @@ def main():
                 low=ANGLE_RANGE[0], high=ANGLE_RANGE[1], size=(NUM_PROBES,)
             )
         )
-        heights = np.random.uniform(low=0, high=1.0, size=(NUM_PROBES,)) * TUBE_LENGTH
+        heights = np.random.uniform(low=0.0, high=1.0, size=(NUM_PROBES,)) * TUBE_LENGTH
         pinch_depths = np.random.uniform(
             low=PINCH_DEPTH_RANGE[0], high=PINCH_DEPTH_RANGE[1], size=(NUM_PROBES,)
         )
@@ -307,7 +302,9 @@ def main():
                     f"\t[gripper] close cmd: target={depth_target:.4f} m, "
                     f"speed={pinch_vels[i]:.4f} m/s, width_before={w_before_close}"
                 )
-                gripper_success = gripper.set_target(depth_target, speed=pinch_vels[i])
+                gripper_success = gripper.set_target(
+                    depth_target / 2, speed=pinch_vels[i]
+                )
                 t_close = time.perf_counter() - t_call
                 w_after_close = gripper.value
                 print(
@@ -323,8 +320,13 @@ def main():
 
                 w_before_open = gripper.value
                 t_call = time.perf_counter()
-                print(f"\t[gripper] open cmd: speed=0.1, width_before={w_before_open}")
-                open_success = gripper.open(speed=0.1)
+                print(
+                    f"\t[gripper] open cmd: target={gripper_cfg.max_width:.4f} m, "
+                    f"speed={pinch_vels[i]:.4f} m/s, width_before={w_before_open}"
+                )
+                open_success = gripper.set_target(
+                    gripper_cfg.max_width, speed=pinch_vels[i]
+                )
                 t_open = time.perf_counter() - t_call
                 w_after_open = gripper.value
                 print(
