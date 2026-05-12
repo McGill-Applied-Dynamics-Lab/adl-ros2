@@ -32,9 +32,7 @@ inverse3:
 
 robot:
   namespace: fr3
-  controller_name: joint_trajectory_controller
-  trajectory_length: 5
-  trajectory_dt: 0.1
+  controller_name: osc_pd_controller
 
 model:
   urdf_package: franka_rim

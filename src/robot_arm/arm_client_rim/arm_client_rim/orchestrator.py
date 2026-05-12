@@ -8,6 +8,7 @@ import time
 import numpy as np
 from arm_client.robot import Pose, Robot
 from arm_client.teleop.inverse3_teleop import Inverse3Device
+from scipy.spatial.transform import Rotation
 
 from .adapters import ExperimentLogger, ModelEstimatorAdapter, TeleopInterfaceAdapter
 from .config import RIMTeleopConfig
@@ -64,10 +65,22 @@ class RIMTeleopOrchestrator:
         }
 
     def start(self) -> None:
-        # Initialize the robot
-        self._robot.wait_until_ready()
-        self._robot.controller_switcher_client.switch_controller(self.cfg.robot.controller_name)
-        self._home_pose = self._robot.end_effector_pose.copy()
+        if self.cfg.dry_run:
+            self._robot.node.get_logger().warn("DRY RUN: skipping robot init and controller switch.")
+            self._home_pose = Pose(
+                position=np.array([0.4, 0.0, 0.5]),
+                orientation=Rotation.identity(),
+            )
+            # Seed the RIM with a valid model at zero config so all loops produce real data.
+            n = self.model_adapter._model.nv
+            q0 = np.zeros(n)
+            synthetic = self.model_adapter.compute_at(q0, q0.copy(), q0.copy())
+            rim = self.rim_calc.compute(synthetic)
+            self.delay_rim.update_rim(rim)
+        else:
+            self._robot.wait_until_ready()
+            self._robot.controller_switcher_client.switch_controller(self.cfg.robot.controller_name)
+            self._home_pose = self._robot.end_effector_pose.copy()
 
         self.haply.start()
         self.model_adapter.start()
@@ -100,24 +113,30 @@ class RIMTeleopOrchestrator:
             return self._robot.end_effector_pose.orientation
         return self._home_pose.orientation
 
-    def _send_axis_target(self, axis: int, target_axis_value: float) -> None:
-        current_pose = self._robot.end_effector_pose
-        target_position = current_pose.position.copy()
-        target_position[axis] = target_axis_value
+    def _send_osc_command(self, axis: int, rim_x: float, interface_force_1d: np.ndarray) -> None:
+        """Publish RIM proxy position as OSC target pose and inject feedforward coupling force.
 
-        traj_msg = self._robot.build_online_planning_step_trajectory(
-            target_position=target_position,
-            target_orientation=self._home_orientation,
-            trajectory_length=self.cfg.robot.trajectory_length,
-            dt=self.cfg.robot.trajectory_dt,
-        )
-        self._robot.send_joint_trajectory(traj_msg)
+        target_pose tracks the RIM proxy along the interface axis while holding
+        the other two axes at the home position.
+
+        Feedforward = -λi (paper eq. 20).  delay_rim returns K*(x_rim - x_h) = -λi,
+        so we pass it directly without sign inversion.
+        """
+        target_position = self._home_pose.position.copy()
+        target_position[axis] = rim_x
+        self._robot.set_target(position=target_position)
+
+        feedforward = np.zeros(3)
+        feedforward[axis] = float(interface_force_1d[0])
+        self._robot.set_target_wrench(force=feedforward, torque=np.zeros(3))
 
     def set_deadman(self, active: bool) -> None:
         """Set deadman state. When inactive, command and force outputs are gated off."""
         self._deadman_active = active
 
     def _is_robot_state_fresh(self, now: float) -> bool:
+        if self.cfg.dry_run:
+            return True
         stamps = self._robot.get_state_update_times()
         timeout = self.cfg.safety.stale_state_timeout_s
 
@@ -246,12 +265,16 @@ class RIMTeleopOrchestrator:
                 rim = self.rim_calc.compute(model)
                 self.delay_rim.update_rim(rim)
                 rim_x, _ = self.delay_rim.get_rim_state()
-                # if rim_x is not None and self._safety_allows_output(now):
-                #     self._send_axis_target(axis=self._axis, target_axis_value=float(rim_x[0]))
+                interface_force = self.delay_rim.get_interface_force()
+
+                if rim_x is not None and self._safety_allows_output(now) and not self.cfg.dry_run:
+                    self._send_osc_command(self._axis, float(rim_x[0]), interface_force)
+
                 self.logger.log_sample(
                     "control",
                     {
                         "rim_x": rim_x,
+                        "interface_force": interface_force,
                         "model_stamp_s": model.stamp_s,
                     },
                     timestamp_s=now,

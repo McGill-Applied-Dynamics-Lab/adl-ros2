@@ -11,7 +11,21 @@ import threading
 import time
 from typing import Any, Protocol
 
+import numpy as np
 import foxglove
+from foxglove import messages as fg_msgs
+
+
+def _to_json_bytes(obj: Any) -> bytes:
+    def _default(v: Any) -> Any:
+        if isinstance(v, np.ndarray):
+            return v.tolist()
+        if isinstance(v, np.floating):
+            return float(v)
+        if isinstance(v, np.integer):
+            return int(v)
+        raise TypeError(f"Not JSON serializable: {type(v)}")
+    return json.dumps(obj, default=_default).encode()
 
 from ..config import FileSinkConfig, FoxgloveSinkConfig, LoggingConfig, RIMTeleopConfig
 
@@ -32,6 +46,135 @@ class _NullSink:
     def publish(self, sample: dict[str, Any]) -> None:
         del sample
         return
+
+
+_PB_ENCODING = "protobuf"
+
+
+def _to_fg_timestamp(ts_s: float | None) -> fg_msgs.Timestamp:
+    ts = float(time.time() if ts_s is None else ts_s)
+    sec = int(ts)
+    nsec = int((ts - sec) * 1e9)
+    return fg_msgs.Timestamp(sec=sec, nsec=nsec)
+
+
+def _to_vector3(values: Any) -> fg_msgs.Vector3 | None:
+    if not isinstance(values, (list, tuple)) or len(values) < 3:
+        return None
+    try:
+        return fg_msgs.Vector3(x=float(values[0]), y=float(values[1]), z=float(values[2]))
+    except Exception:
+        return None
+
+
+def _to_quaternion_xyzw(values: Any) -> fg_msgs.Quaternion | None:
+    if not isinstance(values, (list, tuple)) or len(values) < 4:
+        return None
+    try:
+        return fg_msgs.Quaternion(x=float(values[0]), y=float(values[1]), z=float(values[2]), w=float(values[3]))
+    except Exception:
+        return None
+
+
+def _typed_records_for_sample(sample: dict[str, Any], topic_prefix: str) -> list[tuple[str, foxglove.Schema, bytes]]:
+    """Build typed Foxglove records for selected streams."""
+    stream = str(sample.get("stream", "samples"))
+    values = sample.get("values", {})
+    if not isinstance(values, dict):
+        return []
+
+    ts = _to_fg_timestamp(sample.get("ts"))
+    prefix = topic_prefix.rstrip("/")
+
+    if stream == "robot/joint_states":
+        names = values.get("name", [])
+        positions = values.get("position", [])
+        velocities = values.get("velocity", [])
+        efforts = values.get("effort", [])
+
+        if not isinstance(names, list):
+            return []
+
+        joints: list[fg_msgs.JointState] = []
+        for i, name in enumerate(names):
+            p = float(positions[i]) if isinstance(positions, list) and i < len(positions) else None
+            v = float(velocities[i]) if isinstance(velocities, list) and i < len(velocities) else None
+            e = float(efforts[i]) if isinstance(efforts, list) and i < len(efforts) else None
+            joints.append(fg_msgs.JointState(name=str(name), position=p, velocity=v, effort=e))
+
+        msg = fg_msgs.JointStates(timestamp=ts, joints=joints)
+        return [
+            (
+                f"{prefix}/{stream}",
+                fg_msgs.JointStates.get_schema(),
+                msg.encode(),
+            )
+        ]
+
+    if stream == "robot/end_effector/pose":
+        position = _to_vector3(values.get("position"))
+        orientation = _to_quaternion_xyzw(values.get("orientation_xyzw"))
+        if position is None or orientation is None:
+            return []
+
+        msg = fg_msgs.PoseInFrame(
+            timestamp=ts,
+            frame_id=str(values.get("frame_id", "")),
+            pose=fg_msgs.Pose(position=position, orientation=orientation),
+        )
+        return [
+            (
+                f"{prefix}/{stream}",
+                fg_msgs.PoseInFrame.get_schema(),
+                msg.encode(),
+            )
+        ]
+
+    if stream == "robot/end_effector/velocity":
+        linear = _to_vector3(values.get("linear"))
+        angular = _to_vector3(values.get("angular"))
+        records: list[tuple[str, foxglove.Schema, bytes]] = []
+        if linear is not None:
+            records.append(
+                (
+                    f"{prefix}/{stream}/linear",
+                    fg_msgs.Vector3.get_schema(),
+                    linear.encode(),
+                )
+            )
+        if angular is not None:
+            records.append(
+                (
+                    f"{prefix}/{stream}/angular",
+                    fg_msgs.Vector3.get_schema(),
+                    angular.encode(),
+                )
+            )
+        return records
+
+    if stream == "robot/end_effector/force":
+        force = _to_vector3(values.get("force"))
+        torque = _to_vector3(values.get("torque"))
+        records: list[tuple[str, foxglove.Schema, bytes]] = []
+        if force is not None:
+            records.append(
+                (
+                    f"{prefix}/{stream}/force",
+                    fg_msgs.Vector3.get_schema(),
+                    force.encode(),
+                )
+            )
+        if torque is not None:
+            records.append(
+                (
+                    f"{prefix}/{stream}/torque",
+                    fg_msgs.Vector3.get_schema(),
+                    torque.encode(),
+                )
+            )
+        return records
+
+    return []
 
 
 # def _foxglove_message_from_sample(sample: dict[str, Any]) -> dict[str, Any]:
@@ -121,15 +264,28 @@ class _FileSink:
 
         import foxglove
 
+        log_time = int(float(sample.get("ts", time.time())) * 1e9)
+
+        # Publish typed records for known robot telemetry streams.
+        for topic, schema, payload in _typed_records_for_sample(sample, topic_prefix="/rim"):
+            typed_channel = self._channels.get(topic)
+            if typed_channel is None:
+                typed_channel = foxglove.Channel(
+                    topic,
+                    schema=schema,
+                    message_encoding=_PB_ENCODING,
+                    context=self._context,
+                )
+                self._channels[topic] = typed_channel
+            typed_channel.log(payload, log_time=log_time)
+
         stream = str(sample.get("stream", "samples"))
         topic = f"/rim/{stream}"
         channel = self._channels.get(topic)
         if channel is None:
             channel = foxglove.Channel(topic, message_encoding="json", context=self._context)
             self._channels[topic] = channel
-
-        log_time = int(float(sample.get("ts", time.time())) * 1e9)
-        channel.log(sample, log_time=log_time)
+        channel.log(_to_json_bytes(sample), log_time=log_time)
 
         now = time.perf_counter()
         if now >= self._next_flush:
@@ -187,6 +343,21 @@ class _FoxgloveSink:
         if self._server is None or self._context is None:
             return
 
+        log_time = int(float(sample.get("ts", time.time())) * 1e9)
+
+        # Publish typed records for known robot telemetry streams.
+        for topic, schema, payload in _typed_records_for_sample(sample, topic_prefix=self.cfg.topic_prefix):
+            typed_channel = self._channels.get(topic)
+            if typed_channel is None:
+                typed_channel = foxglove.Channel(
+                    topic,
+                    schema=schema,
+                    message_encoding=_PB_ENCODING,
+                    context=self._context,
+                )
+                self._channels[topic] = typed_channel
+            typed_channel.log(payload, log_time=log_time)
+
         stream = str(sample.get("stream", "samples"))
         topic = f"{self.cfg.topic_prefix.rstrip('/')}/{stream}"
         channel = self._channels.get(topic)
@@ -194,10 +365,8 @@ class _FoxgloveSink:
             channel = foxglove.Channel(topic, message_encoding="json", context=self._context)
             self._channels[topic] = channel
 
-        log_time = int(float(sample.get("ts", time.time())) * 1e9)
-
         vals = sample.get("values", {})
-        channel.log(self._flatten_dict(vals), log_time=log_time)
+        channel.log(_to_json_bytes(self._flatten_dict(vals)), log_time=log_time)
 
     def _flatten_dict(self, value: Any, prefix: str = "") -> dict[str, Any]:
         out: dict[str, Any] = {}

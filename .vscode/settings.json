@@ -154,5 +154,12 @@
     },
     "ROS2.distro": "humble",
     "python-envs.defaultEnvManager": "renan-r-santos.pixi-code:pixi",
-    "python-envs.defaultPackageManager": "renan-r-santos.pixi-code:pixi"
+    "python-envs.defaultPackageManager": "renan-r-santos.pixi-code:pixi",
+    "python-envs.pythonProjects": [
+        {
+            "path": ".",
+            "envManager": "renan-r-santos.pixi-code:pixi",
+            "packageManager": "renan-r-santos.pixi-code:pixi"
+        }
+    ]
 }

@@ -19,6 +19,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--control-rate", type=float, default=None, help="Robot command loop rate (Hz)")
     parser.add_argument("--rim-rate", type=float, default=None, help="RIM integration loop rate (Hz)")
     parser.add_argument("--haptic-rate", type=float, default=None, help="Haptic I/O loop rate (Hz)")
+    parser.add_argument("--dry-run", action="store_true", help="Skip robot init; test loops, logging, and I3 without arm")
     return parser.parse_args()
 
 
@@ -40,6 +41,8 @@ def main() -> None:
         cfg.rates.rim_rate_hz = args.rim_rate
     if args.haptic_rate is not None:
         cfg.rates.haptic_rate_hz = args.haptic_rate
+    if args.dry_run:
+        cfg.dry_run = True
 
     orchestrator = RIMTeleopOrchestrator(cfg)
 

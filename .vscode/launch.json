@@ -96,7 +96,8 @@
             "console": "integratedTerminal",
             "args": [
                 "--config",
-                "${workspaceFolder}/src/robot_arm/arm_client_rim/configs/rim_teleop_default.yaml"
+                "${workspaceFolder}/src/robot_arm/arm_client_rim/configs/rim_teleop_default.yaml",
+                "--dry-run"
             ],
             "pathMappings": [
                 // {

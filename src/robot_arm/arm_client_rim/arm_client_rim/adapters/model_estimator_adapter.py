@@ -164,6 +164,45 @@ class ModelEstimatorAdapter:
         with self._lock:
             self._latest = dyn
 
+    def compute_at(self, q: np.ndarray, dq: np.ndarray, tau: np.ndarray) -> DynModel:
+        """Compute and return a DynModel for a given joint state without reading from the robot.
+
+        Useful for dry-run mode to seed the RIM with a valid model at a known configuration.
+        """
+        pin.computeAllTerms(self._model, self._data, q, dq)
+        pin.updateFramePlacements(self._model, self._data)
+
+        j_ee = pin.computeFrameJacobian(self._model, self._data, q, self._ee_frame_id, pin.LOCAL_WORLD_ALIGNED)
+        j_dot_ee = pin.frameJacobianTimeVariation(
+            self._model, self._data, q, dq, self._ee_frame_id, pin.LOCAL_WORLD_ALIGNED
+        )
+
+        ai = self._di @ j_ee
+        ai_dot = self._di @ j_dot_ee
+        b_i = (ai_dot @ dq).reshape(1)
+
+        x_ee = self._data.oMf[self._ee_frame_id].translation
+        v_ee = j_ee[:3, :] @ dq
+
+        axis = int(np.argmax(self._di[0, :3]))
+        x_i = np.array([x_ee[axis]], dtype=float)
+        v_i = np.array([v_ee[axis]], dtype=float)
+
+        return DynModel(
+            n=self._model.nv,
+            m=1,
+            q=q.copy(),
+            q_dot=dq.copy(),
+            x_i=x_i,
+            v_i=v_i,
+            M=self._data.M.copy(),
+            c=(self._data.nle - self._data.g).copy(),
+            J_i=ai.copy(),
+            b_i=b_i.copy(),
+            tau_ext=tau.copy(),
+            stamp_s=time.time(),
+        )
+
     def latest(self) -> DynModel | None:
         with self._lock:
             return self._latest

@@ -103,6 +103,7 @@ class RIMTeleopConfig:
     robot: RobotRuntimeConfig = field(default_factory=RobotRuntimeConfig)
     model: ModelConfig = field(default_factory=ModelConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
+    dry_run: bool = False
 
 
 def _apply_nested_config(instance, values: dict) -> None:

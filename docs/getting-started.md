@@ -71,7 +71,6 @@ the server is already installed on the mini PC. If it's not the case follow the
                 HostName 192.168.1.2
                 User csirois
                 IdentityFile ~/.ssh/id_ed25519  # (1)!
-                ProxyJump cim-jump
                 ForwardX11 yes
                 ForwardX11Trusted yes
                 LocalForward 8443 10.69.54.223:443 # (2)!
@@ -83,11 +82,14 @@ the server is already installed on the mini PC. If it's not the case follow the
         - You can now connect to the Franka PC with:
         ```bash
         ssh franka-pc
+        # pwd: FrankaPC2024
         ``` 
 
-    ??? tip "SSH without the password"
+        <!-- TODO: #49 [docs] Instructions to install zsh fonts when ssh -->
 
+    ??? tip "SSH without the password"
         TODO...
+        <!-- # TODO: #48 Add ssh withouth password instructions -->
 
 
 ## 2. Start the Robot
@@ -109,11 +111,15 @@ the server is already installed on the mini PC. If it's not the case follow the
         ssh franka-pc
         ```
         - In your browser, open desk [https://localhost:8443/desk/](https://localhost:8443/desk/)
+  <!-- TODO: #47 [docs] Add securit risk screenshots -->
 
 3. Unlock the joints
+<!-- TODO: #46 Add picture -->
 
 4. Activate FCI
 
+admin
+frankaadmin
 
 ## 3. Test the robot
 See [Franka Server User Guide](./franka-server.md) for a comprehensive guides on the **Franka Server** 
