@@ -12,10 +12,9 @@ from scipy.spatial.transform import Rotation
 
 from .adapters import ExperimentLogger, ModelEstimatorAdapter, TeleopInterfaceAdapter
 from .config import RIMTeleopConfig
-from .delay_rim import DelayRIM
+from pyrim import DelayRIM, DynModel, RIMCalculator
+
 from .monitoring import LoopRateMonitor
-from .rim_compute import RIMCalculator
-from .rim_types import DynModel
 
 
 _AXIS_TO_INDEX = {"x": 0, "y": 1, "z": 2}

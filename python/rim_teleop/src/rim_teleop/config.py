@@ -1,6 +1,7 @@
 """Configuration dataclasses for RIM teleoperation runtime."""
 
 from dataclasses import dataclass, field, is_dataclass
+from importlib.resources import files
 
 import yaml
 
@@ -116,6 +117,11 @@ def _apply_nested_config(instance, values: dict) -> None:
             _apply_nested_config(current, value)
         else:
             setattr(instance, key, value)
+
+
+def default_config_path() -> str:
+    """Return the path to the bundled default config YAML."""
+    return str(files("rim_teleop") / "configs" / "rim_teleop_default.yaml")
 
 
 def load_config_from_yaml(file_path: str) -> RIMTeleopConfig:

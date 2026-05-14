@@ -231,7 +231,7 @@ class _FileSink:
         self._context = foxglove.Context()
         self._writer = foxglove.open_mcap(mcap_path, allow_overwrite=True, context=self._context)
         self._writer.write_metadata(
-            "arm_client_rim",
+            "rim_teleop",
             {
                 "created_at": metadata["created_at"],
                 "logger": "ExperimentLogger",
@@ -309,14 +309,14 @@ class _FoxgloveSink:
         try:
             import foxglove
         except Exception:
-            print("[arm_client_rim] foxglove package unavailable; foxglove_sink disabled.")
+            print("[rim_teleop] foxglove package unavailable; foxglove_sink disabled.")
             self._server = None
             return
 
         # Quickstart-style setup: explicit context + websocket sink attached to it.
         self._context = foxglove.Context()
         self._server = foxglove.start_server(
-            name="arm_client_rim",
+            name="rim_teleop",
             host=self.cfg.host,
             port=self.cfg.port,
             context=self._context,

@@ -14,7 +14,7 @@ from arm_client.robot import Robot
 
 from ..config import InterfaceConfig, ModelConfig
 from ..filters import LowPassFilter
-from ..rim_types import DynModel
+from pyrim import DynModel
 
 
 _AXIS_TO_INDEX = {"x": 0, "y": 1, "z": 2}
