@@ -1,7 +1,6 @@
 import numpy as np
 
-from arm_client_rim.rim_compute import RIMCalculator
-from arm_client_rim.rim_types import DynModel
+from pyrim import DynModel, RIMCalculator
 
 
 def test_rim_calculator_shapes():

@@ -1,4 +1,4 @@
-"""CLI entrypoint for arm_client_rim."""
+"""CLI entrypoint: run RIM bilateral teleoperation."""
 
 from __future__ import annotations
 
@@ -6,8 +6,8 @@ import argparse
 import signal
 import threading
 
-from arm_client_rim.config import RIMTeleopConfig, load_config_from_yaml
-from arm_client_rim.orchestrator import RIMTeleopOrchestrator
+from rim_teleop.config import RIMTeleopConfig, load_config_from_yaml
+from rim_teleop.orchestrator import RIMTeleopOrchestrator
 
 
 def _parse_args() -> argparse.Namespace:
