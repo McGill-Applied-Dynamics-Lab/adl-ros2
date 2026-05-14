@@ -2,7 +2,7 @@
 
 RIM-based bilateral haptic teleoperation for the Franka Research 3.
 
-Implements the DelayRIM algorithm from [*High-Fidelity Haptic Teleoperation in Robotics Simulation via Multi-Rate Reduced Interface Models*](https://doi.org/10.1109/LRA.2024.3505870) on real hardware. A 1 kHz inertial proxy (RIM) sits between the Haply Inverse3 haptic device and a 50 Hz OSC robot controller, resolving unilateral contacts locally at haptic rate without waiting for the control loop.
+Implements the DelayRIM algorithm from [*High-Fidelity Haptic Teleoperation in Robotics Simulation via Multi-Rate Reduced Interface Models*]() on real hardware. A 1 kHz inertial proxy (RIM) sits between the Haply Inverse3 haptic device and a 50 Hz OSC robot controller, resolving unilateral contacts locally at haptic rate without waiting for the control loop.
 
 ## Installation
 
