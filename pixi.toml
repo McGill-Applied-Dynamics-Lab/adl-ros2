@@ -82,6 +82,7 @@ orjson = ">=3.11.8,<4"
 
 [pypi-dependencies]
 adl-ros2 = { path = ".", editable = true }
+pyrim = { path = "python/pyrim", editable = true }
 colcon-ansi-colors = { git = "https://github.com/SimbeRobotics/colcon-ansi-colors" }
 pyroki = { git = "https://github.com/chungmin99/pyroki.git" }
 pyglet = ">=2.1.13, <3"

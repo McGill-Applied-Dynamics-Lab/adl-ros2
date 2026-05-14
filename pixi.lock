@@ -221,6 +221,7 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/c8/60/4ea0d6df0b497d51bf2ef87eaab0eb26f8bc3b3313c012da5df3383cced9/yourdfpy-0.0.60-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/53/60/7be26e610767316c028a2cbedb9a3beabdbe33e2182c373f71a1c0b88f36/zstandard-0.25.0-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl
       - pypi: ./
+      - pypi: ./python/pyrim
   humble:
     channels:
     - url: https://prefix.dev/robostack-humble/
@@ -1254,6 +1255,7 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/c8/60/4ea0d6df0b497d51bf2ef87eaab0eb26f8bc3b3313c012da5df3383cced9/yourdfpy-0.0.60-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/53/60/7be26e610767316c028a2cbedb9a3beabdbe33e2182c373f71a1c0b88f36/zstandard-0.25.0-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl
       - pypi: ./
+      - pypi: ./python/pyrim
 packages:
 - conda: https://conda.anaconda.org/conda-forge/linux-64/_openmp_mutex-4.5-20_gnu.conda
   build_number: 20
@@ -8226,6 +8228,13 @@ packages:
   - pkg:pypi/pyqt5-sip?source=hash-mapping
   size: 85800
   timestamp: 1759495565076
+- pypi: ./python/pyrim
+  name: pyrim
+  version: 0.1.0
+  sha256: b7b04e85519617e481028f8055fc5345625944987ebcb293b92daa4a0b7d0ff7
+  requires_dist:
+  - numpy
+  requires_python: '>=3.10'
 - pypi: git+https://github.com/chungmin99/pyroki.git#59aa21ffc766533c66d22ff38dd6717e176f19c8
   name: pyroki
   version: 0.0.0
