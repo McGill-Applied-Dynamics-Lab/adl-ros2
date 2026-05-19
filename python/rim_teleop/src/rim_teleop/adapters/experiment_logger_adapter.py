@@ -267,6 +267,7 @@ class _FileSink:
         log_time = int(float(sample.get("ts", time.time())) * 1e9)
 
         # Publish typed records for known robot telemetry streams.
+        typed_topics: set[str] = set()
         for topic, schema, payload in _typed_records_for_sample(sample, topic_prefix="/rim"):
             typed_channel = self._channels.get(topic)
             if typed_channel is None:
@@ -278,14 +279,16 @@ class _FileSink:
                 )
                 self._channels[topic] = typed_channel
             typed_channel.log(payload, log_time=log_time)
+            typed_topics.add(topic)
 
         stream = str(sample.get("stream", "samples"))
         topic = f"/rim/{stream}"
-        channel = self._channels.get(topic)
-        if channel is None:
-            channel = foxglove.Channel(topic, message_encoding="json", context=self._context)
-            self._channels[topic] = channel
-        channel.log(_to_json_bytes(sample), log_time=log_time)
+        if topic not in typed_topics:
+            channel = self._channels.get(topic)
+            if channel is None:
+                channel = foxglove.Channel(topic, message_encoding="json", context=self._context)
+                self._channels[topic] = channel
+            channel.log(_to_json_bytes(sample), log_time=log_time)
 
         now = time.perf_counter()
         if now >= self._next_flush:
@@ -346,6 +349,7 @@ class _FoxgloveSink:
         log_time = int(float(sample.get("ts", time.time())) * 1e9)
 
         # Publish typed records for known robot telemetry streams.
+        typed_topics: set[str] = set()
         for topic, schema, payload in _typed_records_for_sample(sample, topic_prefix=self.cfg.topic_prefix):
             typed_channel = self._channels.get(topic)
             if typed_channel is None:
@@ -357,16 +361,17 @@ class _FoxgloveSink:
                 )
                 self._channels[topic] = typed_channel
             typed_channel.log(payload, log_time=log_time)
+            typed_topics.add(topic)
 
         stream = str(sample.get("stream", "samples"))
         topic = f"{self.cfg.topic_prefix.rstrip('/')}/{stream}"
-        channel = self._channels.get(topic)
-        if channel is None:
-            channel = foxglove.Channel(topic, message_encoding="json", context=self._context)
-            self._channels[topic] = channel
-
-        vals = sample.get("values", {})
-        channel.log(_to_json_bytes(self._flatten_dict(vals)), log_time=log_time)
+        if topic not in typed_topics:
+            channel = self._channels.get(topic)
+            if channel is None:
+                channel = foxglove.Channel(topic, message_encoding="json", context=self._context)
+                self._channels[topic] = channel
+            vals = sample.get("values", {})
+            channel.log(_to_json_bytes(self._flatten_dict(vals)), log_time=log_time)
 
     def _flatten_dict(self, value: Any, prefix: str = "") -> dict[str, Any]:
         out: dict[str, Any] = {}
