@@ -146,7 +146,14 @@ class RIMTeleopOrchestrator:
     def _is_model_fresh(self, model: DynModel | None, now: float) -> bool:
         return model is not None and (now - model.stamp_s) < self.cfg.safety.stale_model_timeout_s
 
+    def _robot_state_allows_output(self, now: float) -> bool:
+        """Safety gate requiring only fresh robot state — used in direct (no-RIM) mode."""
+        if self.cfg.safety.deadman_required and not self._deadman_active:
+            return False
+        return self._is_robot_state_fresh(now)
+
     def _safety_allows_output(self, now: float) -> bool:
+        """Full safety gate: fresh robot state + fresh dynamics model."""
         if self.cfg.safety.deadman_required and not self._deadman_active:
             return False
         if not self._is_robot_state_fresh(now):
@@ -165,9 +172,18 @@ class RIMTeleopOrchestrator:
 
             self.delay_rim.add_leader_state(leader_pos, leader_vel)
             now = time.time()
-            force = (
-                self.delay_rim.get_interface_force() if self._safety_allows_output(now) else np.zeros(1, dtype=float)
-            )
+
+            ff_mode = self.cfg.interface.force_feedback
+            if ff_mode == "rim" and self._safety_allows_output(now):
+                force = self.delay_rim.get_interface_force()
+            elif ff_mode == "robot" and self._robot_state_allows_output(now):
+                try:
+                    wrench = self._robot.end_effector_wrench
+                    force = np.array([wrench["force"][self._axis]], dtype=float)
+                except RuntimeError:
+                    force = np.zeros(1, dtype=float)
+            else:
+                force = np.zeros(1, dtype=float)
             self.teleop_interface.set_interface_force(force)
 
             self.logger.log_sample(
@@ -258,22 +274,33 @@ class RIMTeleopOrchestrator:
                 # One or more robot streams unavailable yet.
                 pass
 
-            if self._is_model_fresh(model, now):
-                rim = self.rim_calc.compute(model)
-                self.delay_rim.update_rim(rim)
-                rim_x, _ = self.delay_rim.get_rim_state()
-                interface_force = self.delay_rim.get_interface_force()
+            if self.cfg.interface.rim_enabled:
+                if self._is_model_fresh(model, now):
+                    rim = self.rim_calc.compute(model)
+                    self.delay_rim.update_rim(rim)
+                    rim_x, _ = self.delay_rim.get_rim_state()
+                    interface_force = self.delay_rim.get_interface_force()
 
-                if rim_x is not None and self._safety_allows_output(now) and not self.cfg.dry_run:
-                    self._send_osc_command(self._axis, float(rim_x[0]), interface_force)
+                    if rim_x is not None and self._safety_allows_output(now) and not self.cfg.dry_run:
+                        self._send_osc_command(self._axis, float(rim_x[0]), interface_force)
+
+                    self.logger.log_sample(
+                        "control",
+                        {
+                            "rim_x": rim_x,
+                            "interface_force": interface_force,
+                            "model_stamp_s": model.stamp_s,
+                        },
+                        timestamp_s=now,
+                    )
+            else:
+                leader_pos, _ = self.teleop_interface.get_interface_state()
+                if self._robot_state_allows_output(now) and not self.cfg.dry_run:
+                    self._send_osc_command(self._axis, float(leader_pos[0]), np.zeros(1, dtype=float))
 
                 self.logger.log_sample(
                     "control",
-                    {
-                        "rim_x": rim_x,
-                        "interface_force": interface_force,
-                        "model_stamp_s": model.stamp_s,
-                    },
+                    {"leader_pos_direct": leader_pos},
                     timestamp_s=now,
                 )
             self._loop_monitors["control"].tick()

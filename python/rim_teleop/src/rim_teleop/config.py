@@ -30,6 +30,8 @@ class InterfaceConfig:
     contact_damping: float = 100.0
     force_scale: float = 1.0
     force_cap: float = 12.0
+    rim_enabled: bool = True
+    force_feedback: str = "rim"  # "none" | "robot" | "rim"
 
 
 @dataclass(kw_only=True)
