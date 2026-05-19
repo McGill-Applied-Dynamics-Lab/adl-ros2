@@ -2,17 +2,17 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict, is_dataclass
-from datetime import datetime
 import json
-from pathlib import Path
 import queue
 import threading
 import time
+from dataclasses import asdict, is_dataclass
+from datetime import datetime
+from pathlib import Path
 from typing import Any, Protocol
 
-import numpy as np
 import foxglove
+import numpy as np
 from foxglove import messages as fg_msgs
 
 
@@ -25,7 +25,9 @@ def _to_json_bytes(obj: Any) -> bytes:
         if isinstance(v, np.integer):
             return int(v)
         raise TypeError(f"Not JSON serializable: {type(v)}")
+
     return json.dumps(obj, default=_default).encode()
+
 
 from ..config import FileSinkConfig, FoxgloveSinkConfig, LoggingConfig, RIMTeleopConfig
 

@@ -11,6 +11,8 @@ from arm_client.teleop.inverse3_teleop import Inverse3Device
 from pyrim import DelayRIM, DynModel, RIMCalculator
 from scipy.spatial.transform import Rotation
 
+from arm_client import CONFIG_DIR
+
 from .adapters import ExperimentLogger, ModelEstimatorAdapter, TeleopInterfaceAdapter
 from .config import RIMTeleopConfig
 from .monitoring import LoopRateMonitor
@@ -74,6 +76,9 @@ class RIMTeleopOrchestrator:
         else:
             self._robot.wait_until_ready()
             self._robot.controller_switcher_client.switch_controller(self.cfg.robot.controller_name)
+            self._robot.osc_pd_controller_parameters_client.load_param_config(
+                file_path=CONFIG_DIR / "controllers" / "osc_pd" / "default.yaml"
+            )  # TODO: Specify param file in the config
             self._home_pose = self._robot.end_effector_pose.copy()
 
         self.haply = Inverse3Device(
