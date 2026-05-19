@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import threading
 import time
+from collections.abc import Callable
 
 import numpy as np
 from arm_client.robot import Pose, Robot
@@ -23,8 +24,13 @@ _AXIS_TO_INDEX = {"x": 0, "y": 1, "z": 2}
 class RIMTeleopOrchestrator:
     """Coordinates adapters and multi-rate loops in one Python process."""
 
-    def __init__(self, config: RIMTeleopConfig) -> None:
+    def __init__(
+        self,
+        config: RIMTeleopConfig,
+        setup_fn: Callable[[Robot], None] | None = None,
+    ) -> None:
         self.cfg = config
+        self._setup_fn = setup_fn
         self._axis = _AXIS_TO_INDEX[config.interface.axis]
 
         self._robot = Robot(namespace=config.robot.namespace)
@@ -75,6 +81,8 @@ class RIMTeleopOrchestrator:
             self.delay_rim.update_rim(rim)
         else:
             self._robot.wait_until_ready()
+            if self._setup_fn is not None:
+                self._setup_fn(self._robot)
             self._robot.controller_switcher_client.switch_controller(self.cfg.robot.controller_name)
             self._robot.osc_pd_controller_parameters_client.load_param_config(
                 file_path=CONFIG_DIR / "controllers" / "osc_pd" / "default.yaml"
