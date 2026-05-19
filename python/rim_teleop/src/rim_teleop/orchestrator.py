@@ -14,7 +14,7 @@ from scipy.spatial.transform import Rotation
 
 from arm_client import CONFIG_DIR
 
-from .adapters import ExperimentLogger, ModelEstimatorAdapter, TeleopInterfaceAdapter
+from .adapters import ExperimentLogger, RobotModelAdapter, TeleopInterfaceAdapter
 from .config import RIMTeleopConfig
 from .monitoring import LoopRateMonitor
 
@@ -38,12 +38,11 @@ class RIMTeleopOrchestrator:
             self._robot.configure_wrench_filter(config.robot.wrench_filter_alpha)
         self._home_pose: Pose | None = None
 
-        self.model_adapter = ModelEstimatorAdapter(
+        self.model_adapter = RobotModelAdapter(
             node=self._robot.node,
             robot=self._robot,
             model_cfg=config.model,
             interface_cfg=config.interface,
-            update_rate_hz=config.rates.model_rate_hz,
         )
 
         self.haply: Inverse3Device  # created in start() once home pose is known
@@ -81,6 +80,7 @@ class RIMTeleopOrchestrator:
             synthetic = self.model_adapter.compute_at(q0, q0.copy(), q0.copy())
             rim = self.rim_calc.compute(synthetic)
             self.delay_rim.update_rim(rim)
+
         else:
             self._robot.wait_until_ready()
             if self._setup_fn is not None:
@@ -98,7 +98,6 @@ class RIMTeleopOrchestrator:
         self.teleop_interface = TeleopInterfaceAdapter(device=self.haply, interface_cfg=self.cfg.interface)
 
         self.haply.start()
-        self.model_adapter.start()
         self.logger.start()
         self._running = True
         self._threads = [
@@ -118,7 +117,6 @@ class RIMTeleopOrchestrator:
         if self.teleop_interface.is_connected():
             self.teleop_interface.set_interface_force(np.zeros(1, dtype=float))
         self.haply.stop()
-        self.model_adapter.stop()
         self.logger.stop()
         self._robot.shutdown()
 
@@ -231,12 +229,14 @@ class RIMTeleopOrchestrator:
         next_tick = time.perf_counter()
         while self._running:
             x_rim, v_rim = self.delay_rim.step()
+            interface_force = self.delay_rim.get_interface_force()
             if x_rim is not None and v_rim is not None:
                 self.logger.log_sample(
                     "rim",
                     {
                         "x_rim": x_rim,
                         "v_rim": v_rim,
+                        "interface_force": interface_force,
                     },
                 )
             self._loop_monitors["rim"].tick()
@@ -247,7 +247,6 @@ class RIMTeleopOrchestrator:
         dt = 1.0 / self.cfg.rates.control_rate_hz
         next_tick = time.perf_counter()
         while self._running:
-            model = self.model_adapter.latest()
             now = time.time()
 
             # Always log robot telemetry at control-loop rate for Foxglove.
@@ -300,7 +299,8 @@ class RIMTeleopOrchestrator:
                 pass
 
             if self.cfg.interface.rim_enabled:
-                if self._is_model_fresh(model, now):
+                model = self.model_adapter.compute()
+                if model is not None:
                     rim = self.rim_calc.compute(model)
                     self.delay_rim.update_rim(rim)
                     rim_x, _ = self.delay_rim.get_rim_state()
@@ -315,6 +315,17 @@ class RIMTeleopOrchestrator:
                             "rim_x": rim_x,
                             "interface_force": interface_force,
                             "model_stamp_s": model.stamp_s,
+                        },
+                        timestamp_s=now,
+                    )
+                    self.logger.log_sample(
+                        "rim_model",
+                        {
+                            "M_eff": rim.M_eff,
+                            "z_i": rim.z_i,
+                            "f_eff": rim.f_eff,
+                            "x": rim.x,
+                            "v": rim.v,
                         },
                         timestamp_s=now,
                     )

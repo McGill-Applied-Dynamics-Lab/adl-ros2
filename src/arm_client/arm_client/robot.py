@@ -9,6 +9,7 @@ import numpy as np
 import rclpy
 import rclpy.executors
 from builtin_interfaces.msg import Duration
+from franka_msgs.msg import FrankaRobotState
 from geometry_msgs.msg import PoseStamped, TwistStamped, WrenchStamped
 from numpy.typing import NDArray
 from rclpy.callback_groups import ReentrantCallbackGroup
@@ -173,6 +174,7 @@ class Robot:
         self._current_wrench = None  # added current wrench
         self._current_wrench_filtered: dict | None = None
         self._wrench_filter_alpha: float | None = None
+        self._tau_ext_current: np.ndarray | None = None
 
         self._last_pose_update_time: float | None = None
         self._last_joint_update_time: float | None = None
@@ -225,6 +227,14 @@ class Robot:
             WrenchStamped,
             self.config.current_wrench_topic,
             self._callback_monitor.monitor(f"{namespace.capitalize()} Current Wrench", self._callback_current_wrench),
+            qos_profile_sensor_data,
+            callback_group=ReentrantCallbackGroup(),
+        )
+        # Franka robot state — provides tau_ext_hat_filtered (momentum observer external torque estimate)
+        self.node.create_subscription(
+            FrankaRobotState,
+            self.config.franka_robot_state_topic,
+            self._callback_monitor.monitor(f"{namespace.capitalize()} Robot State", self._callback_robot_state),
             qos_profile_sensor_data,
             callback_group=ReentrantCallbackGroup(),
         )
@@ -455,6 +465,22 @@ class Robot:
         return self._tau_current.copy()
 
     @property
+    def external_joint_torques(self) -> NDArray:
+        """Get the external joint torques from the Franka momentum observer (tau_ext_hat_filtered).
+
+        These are the contact/external torques only — gravity, friction, and control torques
+        are excluded. Use this (not tau) as tau_ext in the RIM DynModel.
+
+        Raises:
+            RuntimeError: If FrankaRobotState has not been received yet.
+        """
+        if self._tau_ext_current is None:
+            raise RuntimeError(
+                "External joint torques not yet received from franka_robot_state_broadcaster."
+            )
+        return self._tau_ext_current.copy()
+
+    @property
     def tau_target(self) -> NDArray:
         """Get the target joint torques of the robot.
 
@@ -654,6 +680,12 @@ class Robot:
         self._last_wrench_update_time = time.time()
         if self._target_wrench is None:
             self._target_wrench = self._current_wrench.copy()
+
+    def _callback_robot_state(self, msg: FrankaRobotState) -> None:
+        efforts = msg.tau_ext_hat_filtered.effort
+        n = self.nq
+        if len(efforts) >= n:
+            self._tau_ext_current = np.array(efforts[:n], dtype=float)
 
     def _callback_current_pose(self, msg: PoseStamped):
         """Update the current pose from a ROS message.

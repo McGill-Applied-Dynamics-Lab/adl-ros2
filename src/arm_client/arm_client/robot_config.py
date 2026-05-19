@@ -48,6 +48,7 @@ class RobotConfig:
     current_wrench_topic: str = (
         "/fr3/franka_robot_state_broadcaster/external_wrench_in_base_frame"  # added current wrench topic
     )
+    franka_robot_state_topic: str = "/fr3/franka_robot_state_broadcaster/robot_state"
 
     publish_frequency: float = 50.0
     time_to_home: float = 5.0

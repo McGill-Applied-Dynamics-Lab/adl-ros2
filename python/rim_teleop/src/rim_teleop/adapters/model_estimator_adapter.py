@@ -19,8 +19,8 @@ from ..filters import LowPassFilter
 _AXIS_TO_INDEX = {"x": 0, "y": 1, "z": 2}
 
 
-class ModelEstimatorAdapter:
-    """Compute dynamic model terms periodically from latest robot state."""
+class RobotModelAdapter:
+    """Compute dynamic model terms of the robot arm from its state."""
 
     def __init__(
         self,
@@ -28,12 +28,9 @@ class ModelEstimatorAdapter:
         robot: Robot,
         model_cfg: ModelConfig,
         interface_cfg: InterfaceConfig,
-        update_rate_hz: float,
     ) -> None:
         self._node = node
         self._robot = robot
-        self._update_rate_hz = update_rate_hz
-        self._dt = 1.0 / update_rate_hz
         self._frame_name = model_cfg.ee_frame_name
         self._robot_joint_names = list(self._robot.config.joint_names)
 
@@ -55,12 +52,9 @@ class ModelEstimatorAdapter:
 
         self._f_q = LowPassFilter(model_cfg.filter_alpha_q)
         self._f_dq = LowPassFilter(model_cfg.filter_alpha_q_dot)
-        self._f_tau = LowPassFilter(model_cfg.filter_alpha_tau)
 
         self._latest: DynModel | None = None
         self._lock = threading.Lock()
-        self._running = False
-        self._thread: threading.Thread | None = None
 
     def _build_model_matching_robot_dof(self, full_model: pin.Model) -> pin.Model:
         """Build a model whose DOF matches the `Robot` joint state vectors.
@@ -96,34 +90,26 @@ class ModelEstimatorAdapter:
         )
         return reduced_model
 
-    def start(self) -> None:
-        self._running = True
-        self._thread = threading.Thread(target=self._run_loop, daemon=True)
-        self._thread.start()
+    def compute(self) -> DynModel | None:
+        """Compute dynamics from current robot state and return the model.
 
-    def stop(self) -> None:
-        self._running = False
-        if self._thread and self._thread.is_alive():
-            self._thread.join(timeout=2.0)
-
-    def _run_loop(self) -> None:
-        next_tick = time.perf_counter()
-        while self._running:
-            self._compute_once()
-            next_tick += self._dt
-            time.sleep(max(0.0, next_tick - time.perf_counter()))
-
-    def _compute_once(self) -> None:
+        Returns None if robot state is not yet available.
+        Called directly by the control loop — no internal thread.
+        """
         try:
             q_robot = self._f_q.update(self._robot.q)
             dq_robot = self._f_dq.update(self._robot.dq)
-            tau_robot = self._f_tau.update(self._robot.tau)
         except RuntimeError:
-            return
+            return None
 
         q = q_robot[self._model_order_from_robot]
         dq = dq_robot[self._model_order_from_robot]
-        tau = tau_robot[self._model_order_from_robot]
+
+        try:
+            tau_ext_robot = self._robot.external_joint_torques
+            tau_ext = tau_ext_robot[self._model_order_from_robot]
+        except RuntimeError:
+            tau_ext = None  # f_eff = 0 until FrankaRobotState arrives
 
         pin.computeAllTerms(self._model, self._data, q, dq)
         pin.updateFramePlacements(self._model, self._data)
@@ -156,12 +142,13 @@ class ModelEstimatorAdapter:
             c=(self._data.nle - self._data.g).copy(),
             J_i=ai.copy(),
             b_i=b_i.copy(),
-            tau_ext=tau.copy(),
+            tau_ext=tau_ext.copy() if tau_ext is not None else None,
             stamp_s=time.time(),
         )
 
         with self._lock:
             self._latest = dyn
+        return dyn
 
     def compute_at(self, q: np.ndarray, dq: np.ndarray, tau: np.ndarray) -> DynModel:
         """Compute and return a DynModel for a given joint state without reading from the robot.

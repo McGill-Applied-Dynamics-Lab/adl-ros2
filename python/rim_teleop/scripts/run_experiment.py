@@ -27,8 +27,8 @@ def experiment_setup(robot: Robot) -> None:
     robot.controller_switcher_client.switch_controller("joint_trajectory_controller")
 
     start_position = np.array([0.3, 0.0, 0.15])
-    current_orientation = robot.end_effector_pose.orientation
-    start_pose = Pose(position=start_position, orientation=current_orientation)
+    start_orientation = Rotation.from_euler("xyz", [-180, 0, 0], degrees=True)
+    start_pose = Pose(position=start_position, orientation=start_orientation)
 
     robot.move_to(pose=start_pose)
 
