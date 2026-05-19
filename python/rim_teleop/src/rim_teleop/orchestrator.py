@@ -8,14 +8,12 @@ import time
 import numpy as np
 from arm_client.robot import Pose, Robot
 from arm_client.teleop.inverse3_teleop import Inverse3Device
+from pyrim import DelayRIM, DynModel, RIMCalculator
 from scipy.spatial.transform import Rotation
 
 from .adapters import ExperimentLogger, ModelEstimatorAdapter, TeleopInterfaceAdapter
 from .config import RIMTeleopConfig
-from pyrim import DelayRIM, DynModel, RIMCalculator
-
 from .monitoring import LoopRateMonitor
-
 
 _AXIS_TO_INDEX = {"x": 0, "y": 1, "z": 2}
 

@@ -86,18 +86,18 @@
             }
         },
         {
-            "name": "Python Debugger: launch_rim_teleop",
+            "name": "Python Debugger: rim_teleop",
             "type": "debugpy",
             "request": "launch",
-            "program": "${workspaceFolder}/src/robot_arm/arm_client_rim/scripts/launch_rim_teleop.py",
+            "program": "${workspaceFolder}/python/rim_teleop/src/rim_teleop/main.py",
             "python": "${workspaceFolder}/.pixi/envs/humble/bin/python",
             // "preLaunchTask": "gen-vscode-env",
             "envFile": "${workspaceFolder}/.vscode/.env.humble",
-            "console": "integratedTerminal",
+            "console": "internalConsole",
             "args": [
                 "--config",
-                "${workspaceFolder}/src/robot_arm/arm_client_rim/configs/rim_teleop_default.yaml",
-                "--dry-run"
+                "${workspaceFolder}/python/rim_teleop/src/rim_teleop/configs/rim_teleop_default.yaml",
+                // "--dry-run"
             ],
             "pathMappings": [
                 // {
@@ -108,18 +108,18 @@
                 //     "localRoot": "${workspaceFolder}/src",
                 //     "remoteRoot": "/home/athena/csirois/git/adl-ros2/install_humble"
                 // },
-                {
-                    "localRoot": "${workspaceFolder}/src/robot_arm/arm_client_rim",
-                    "remoteRoot": "/home/athena/csirois/git/adl-ros2/build_humble/arm_client_rim"
-                },
-                {
-                    "localRoot": "${workspaceFolder}/src/robot_arm/arm_client_rim",
-                    "remoteRoot": "/home/athena/csirois/git/adl-ros2/install_humble/arm_client_rim"
-                },
-                {
-                    "localRoot": "${workspaceFolder}/",
-                    "remoteRoot": "/home/athena/csirois/git/adl-ros2/"
-                }
+                // {
+                //     "localRoot": "${workspaceFolder}/src/robot_arm/arm_client_rim",
+                //     "remoteRoot": "/home/athena/csirois/git/adl-ros2/build_humble/arm_client_rim"
+                // },
+                // {
+                //     "localRoot": "${workspaceFolder}/src/robot_arm/arm_client_rim",
+                //     "remoteRoot": "/home/athena/csirois/git/adl-ros2/install_humble/arm_client_rim"
+                // },
+                // {
+                //     "localRoot": "${workspaceFolder}/",
+                //     "remoteRoot": "/home/athena/csirois/git/adl-ros2/"
+                // }
             ]
         },
     ]
