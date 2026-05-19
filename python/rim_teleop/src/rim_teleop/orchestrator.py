@@ -36,11 +36,8 @@ class RIMTeleopOrchestrator:
             update_rate_hz=config.rates.model_rate_hz,
         )
 
-        self.haply = Inverse3Device(
-            initial_robot_position=np.zeros(3),
-            config=config.inverse3,
-        )
-        self.teleop_interface = TeleopInterfaceAdapter(device=self.haply, interface_cfg=config.interface)
+        self.haply: Inverse3Device  # created in start() once home pose is known
+        self.teleop_interface: TeleopInterfaceAdapter  # created in start()
 
         self.rim_calc = RIMCalculator()
         self.delay_rim = DelayRIM(
@@ -78,6 +75,12 @@ class RIMTeleopOrchestrator:
             self._robot.wait_until_ready()
             self._robot.controller_switcher_client.switch_controller(self.cfg.robot.controller_name)
             self._home_pose = self._robot.end_effector_pose.copy()
+
+        self.haply = Inverse3Device(
+            initial_robot_position=self._home_pose.position.copy(),
+            config=self.cfg.inverse3,
+        )
+        self.teleop_interface = TeleopInterfaceAdapter(device=self.haply, interface_cfg=self.cfg.interface)
 
         self.haply.start()
         self.model_adapter.start()

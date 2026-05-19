@@ -436,13 +436,12 @@ class Inverse3Device:
         self._v_i3_base = vel
 
         T_OI3_BI3 = invert_homogeneous_transform(self._T_BI3_OI3)
-        T_robot_OI3 = invert_homogeneous_transform(self._T_OI3_robot)
 
         # Update position/velocity states in origin and robot frames
         self._p_i3_origin = self._transform_point(T_OI3_BI3, self._p_i3_base)
         self._v_i3_origin = self._transform_vector(T_OI3_BI3, self._v_i3_base)
 
-        self._p_robot = self._p_i3_origin * self.scale
+        self._p_robot = self._p_i3_origin * self.scale + self._robot_initial_pos
         self._v_robot = self._v_i3_origin * self.scale
 
     @property
