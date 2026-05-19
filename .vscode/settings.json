@@ -1,5 +1,7 @@
 {
     "python.defaultInterpreterPath": "${workspaceFolder}/.pixi/envs/humble/bin/python",
+    "python.envFile": "${workspaceFolder}/.vscode/.env.humble",
+    "python.terminal.activateEnvInCurrentTerminal": true,
     "python.autoComplete.extraPaths": [
         "${workspaceFolder}/src",
         "${workspaceFolder}/build_humble",
@@ -129,6 +131,17 @@
     "terminal.integrated.env.linux": {
         "BASH_ENV": "${workspaceFolder}/install_humble/setup.bash"
     },
+    "terminal.integrated.profiles.linux": {
+        "pixi-humble": {
+            "path": "bash",
+            "args": ["--rcfile", "${workspaceFolder}/.vscode/pixi-terminal-init.sh"],
+            "env": {
+                "PIXI_MANIFEST": "${workspaceFolder}/pixi.toml"
+            },
+            "icon": "rocket"
+        }
+    },
+    "terminal.integrated.defaultProfile.linux": "pixi-humble",
     //
     "ros.distro": "humble",
     // Spell Right

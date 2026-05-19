@@ -76,7 +76,7 @@ BAUD_RATE = 3000000
 # ===================== File Paths =====================
 PROJECT_ROOT = Path(__file__).resolve().parent
 PARAMETERS_FILE = PROJECT_ROOT / "results" / "grids" / "pinch_params.pkl"
-RESULTS_FILE = PROJECT_ROOT / "results" / "pinch_100_set_3_nylon.pkl"
+RESULTS_FILE = PROJECT_ROOT / "results" / "pinch_100_set_5_hard.pkl"
 PLOTS_DIR = PROJECT_ROOT / "results" / "plots_pinch_main"
 
 

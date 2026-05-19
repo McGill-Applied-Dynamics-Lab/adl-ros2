@@ -75,9 +75,13 @@ make = "*"
 pkg-config = "*"
 ninja = "*"
 numpy = "<=2, <=2.4.3"
+scikit-learn = ">=1.4,<2"
+pyqtgraph = ">=0.13,<0.14"
+pyqt = ">=5.15,<6"
 colcon-common-extensions = ">=0.3.0,<0.4"
 colcon-mixin = ">=0.2.3,<0.3"
 zensical = ">=0.0.32,<0.0.33"
+pyserial = ">=3.5,<4"
 
 [pypi-dependencies]
 adl-ros2 = { path = ".", editable = true }

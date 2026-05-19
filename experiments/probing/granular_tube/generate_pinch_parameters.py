@@ -5,7 +5,7 @@ from pathlib import Path
 import numpy as np
 
 # Defaults match the experiment ranges expected by pinch_main.py.
-DEFAULT_N_SAMPLES = 500
+DEFAULT_N_SAMPLES = 400
 AZIMUTH_RANGE_RAD = [-np.pi / 4, np.pi / 4]  # full revolution around the tube
 NORMALIZED_HEIGHT_RANGE = [0.0, 1.0]  # scaled by TUBE_LENGTH in pinch_main.py
 PINCH_DEPTH_RANGE_M = [0.0050, 0.0180]  # one-finger push (m); upper ~ TUBE_DIAMETER/2
