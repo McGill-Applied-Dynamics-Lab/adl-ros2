@@ -143,7 +143,8 @@ class RIMTeleopOrchestrator:
 
         feedforward = np.zeros(3)
         feedforward[axis] = float(interface_force_1d[0])
-        # self._robot.set_target_wrench(force=feedforward, torque=np.zeros(3)) # TODO: Set wrench
+        # Step 4: enable once osc_pd_controller on franka-server supports feedforward wrench injection.
+        # self._robot.set_target_wrench(force=feedforward, torque=np.zeros(3))
 
     def set_deadman(self, active: bool) -> None:
         """Set deadman state. When inactive, command and force outputs are gated off."""

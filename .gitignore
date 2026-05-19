@@ -27,6 +27,7 @@ log/
 
 # Agents
 .github/plans/
+.claude/worktrees
 
 # Data
 **/test/results/**

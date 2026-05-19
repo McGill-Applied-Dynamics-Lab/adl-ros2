@@ -11,9 +11,9 @@ interface:
   contact_surface: 0.0
   contact_stiffness: 10000.0
   contact_damping: 100.0
-  rim_enabled: false
+  rim_enabled: true
   force_scale: 0.1
-  force_feedback: robot  # "none" | "robot" | "rim"
+  force_feedback: none  # "none" | "robot" | "rim"
 
 safety:
   stale_state_timeout_s: 0.2
