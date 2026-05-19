@@ -167,7 +167,7 @@ class MainWindow(QMainWindow):
         # Plot Y-range (post-calibration). Plotted values are baseline-subtracted
         # ADC counts, so set to (0, limit) to show only positive deflections.
         self.y_min = 0
-        self.y_max = 100
+        self.y_max = 250
 
         # Calibration settings
         self.calibration_seconds = 2.0

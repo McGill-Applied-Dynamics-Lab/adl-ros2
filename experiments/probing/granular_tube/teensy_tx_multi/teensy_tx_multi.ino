@@ -9,7 +9,7 @@ uint16_t chunk3[CHUNK_SIZE];
 
 void setup() {
   Serial.begin(3000000);
-  analogReadResolution(RES); // Caveat: as you noted last turn, the setup-time estimate runs without chunk-send overhead, so it'll report ~10 kHz rather than the slightly-lower true streaming rate (~9.7–9.9 kHz). If that bias matters, the cleanest follow-up is to instead update the firmware to maintain a running rate during streaming (total_count / (micros() - stream_start)) and stamp that into each chunk — same wire format, the rate just converges to truth as the stream progresses. Let me know if you want that next.
+  analogReadResolution(RES);
   analogReadAveraging(AVG);
   analogReference(0);
   Serial.println("Ready");
