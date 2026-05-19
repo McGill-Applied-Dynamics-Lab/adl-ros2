@@ -1,13 +1,13 @@
-import time
-import numpy as np
 import asyncio
-import websockets
-import orjson
-from typing import Tuple, Dict, Any, Optional
 import threading
+import time
 from dataclasses import dataclass, field
-from scipy.spatial.transform import Rotation as R
+from typing import Any, Dict, Optional, Tuple
 
+import numpy as np
+import orjson
+import websockets
+from scipy.spatial.transform import Rotation as R
 
 from arm_client.teleop.base_teleop import BaseTeleop
 

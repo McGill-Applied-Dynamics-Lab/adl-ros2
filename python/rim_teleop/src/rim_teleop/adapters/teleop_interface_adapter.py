@@ -5,10 +5,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import numpy as np
-
-from ..config import InterfaceConfig
 from arm_client.teleop.inverse3_teleop import Inverse3Device
 
+from ..config import InterfaceConfig
 
 _AXIS_TO_INDEX = {"x": 0, "y": 1, "z": 2}
 
@@ -40,6 +39,7 @@ class TeleopInterfaceAdapter:
 
     def get_interface_state(self) -> tuple[np.ndarray, np.ndarray]:
         """Return reduced interface position and velocity, both shape (1,)."""
+        # Get state of I3 in robot frame
         position_robot = np.asarray(self.device.position_robot, dtype=float).reshape(3)
         velocity_robot = np.asarray(self.device.velocity_robot, dtype=float).reshape(3)
 

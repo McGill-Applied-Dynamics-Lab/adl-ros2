@@ -11,8 +11,8 @@ interface:
   contact_surface: 0.0
   contact_stiffness: 10000.0
   contact_damping: 100.0
-  rim_enabled: true
-  force_feedback: rim  # "none" | "robot" | "rim"
+  rim_enabled: false
+  force_feedback: none  # "none" | "robot" | "rim"
 
 safety:
   stale_state_timeout_s: 0.2
@@ -26,7 +26,7 @@ inverse3:
   i3_origin: [0.0, -0.17, 0.16]
   i3_origin_rpy: [0.0, 0.0, 90.0]
   i3_origin_rpy_degrees: true
-  center_on_start: false
+  center_on_start: true
 
   enable_force_feedback: false
   interface_force_scale: 1.0

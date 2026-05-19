@@ -125,7 +125,7 @@ class RIMTeleopOrchestrator:
 
         feedforward = np.zeros(3)
         feedforward[axis] = float(interface_force_1d[0])
-        self._robot.set_target_wrench(force=feedforward, torque=np.zeros(3))
+        # self._robot.set_target_wrench(force=feedforward, torque=np.zeros(3)) # TODO: Set wrench
 
     def set_deadman(self, active: bool) -> None:
         """Set deadman state. When inactive, command and force outputs are gated off."""
