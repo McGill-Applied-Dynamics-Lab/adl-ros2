@@ -267,8 +267,8 @@ class _FileSink:
         log_time = int(float(sample.get("ts", time.time())) * 1e9)
 
         # Publish typed records for known robot telemetry streams.
-        typed_topics: set[str] = set()
-        for topic, schema, payload in _typed_records_for_sample(sample, topic_prefix="/rim"):
+        typed_records = list(_typed_records_for_sample(sample, topic_prefix="/rim"))
+        for topic, schema, payload in typed_records:
             typed_channel = self._channels.get(topic)
             if typed_channel is None:
                 typed_channel = foxglove.Channel(
@@ -279,11 +279,10 @@ class _FileSink:
                 )
                 self._channels[topic] = typed_channel
             typed_channel.log(payload, log_time=log_time)
-            typed_topics.add(topic)
 
-        stream = str(sample.get("stream", "samples"))
-        topic = f"/rim/{stream}"
-        if topic not in typed_topics:
+        if not typed_records:
+            stream = str(sample.get("stream", "samples"))
+            topic = f"/rim/{stream}"
             channel = self._channels.get(topic)
             if channel is None:
                 channel = foxglove.Channel(topic, message_encoding="json", context=self._context)
@@ -349,8 +348,8 @@ class _FoxgloveSink:
         log_time = int(float(sample.get("ts", time.time())) * 1e9)
 
         # Publish typed records for known robot telemetry streams.
-        typed_topics: set[str] = set()
-        for topic, schema, payload in _typed_records_for_sample(sample, topic_prefix=self.cfg.topic_prefix):
+        typed_records = list(_typed_records_for_sample(sample, topic_prefix=self.cfg.topic_prefix))
+        for topic, schema, payload in typed_records:
             typed_channel = self._channels.get(topic)
             if typed_channel is None:
                 typed_channel = foxglove.Channel(
@@ -361,11 +360,10 @@ class _FoxgloveSink:
                 )
                 self._channels[topic] = typed_channel
             typed_channel.log(payload, log_time=log_time)
-            typed_topics.add(topic)
 
-        stream = str(sample.get("stream", "samples"))
-        topic = f"{self.cfg.topic_prefix.rstrip('/')}/{stream}"
-        if topic not in typed_topics:
+        if not typed_records:
+            stream = str(sample.get("stream", "samples"))
+            topic = f"{self.cfg.topic_prefix.rstrip('/')}/{stream}"
             channel = self._channels.get(topic)
             if channel is None:
                 channel = foxglove.Channel(topic, message_encoding="json", context=self._context)
