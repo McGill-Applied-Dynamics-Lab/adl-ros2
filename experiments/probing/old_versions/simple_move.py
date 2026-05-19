@@ -1,11 +1,11 @@
 # %%
-import matplotlib.pyplot as plt
-import numpy as np
-from scipy.spatial.transform import Rotation as R
-
 import time
 
+import matplotlib.pyplot as plt
+import numpy as np
 from arm_client.robot import Robot
+from scipy.spatial.transform import Rotation as R
+
 from arm_client import CONFIG_DIR
 
 robot = Robot(namespace="fr3")
@@ -13,7 +13,7 @@ robot.wait_until_ready()
 
 # %%
 print(robot.end_effector_pose)
-print(robot.end_effector_wrench)  # added to print initial wrench
+print(robot.end_effector_external_wrench)  # added to print initial wrench
 
 robot.controller_switcher_client.switch_controller("osc_pd_controller")
 robot.osc_pd_controller_parameters_client.load_param_config(

@@ -1,14 +1,14 @@
-import time
-import threading
-import numpy as np
-import serial
 import pickle
-import matplotlib.pyplot as plt
+import threading
+import time
 from pathlib import Path
 
-from scipy.spatial.transform import Rotation as R
-from arm_client.robot import Pose, Robot
+import matplotlib.pyplot as plt
+import numpy as np
+import serial
 from arm_client.planning.waypoints import generate_linear_waypoints
+from arm_client.robot import Pose, Robot
+from scipy.spatial.transform import Rotation as R
 
 # Configuration
 SETTLE_SEC = 1.00
@@ -60,9 +60,7 @@ def fetch_teensy_dump(ser):
     return np.column_stack((buf1, buf2))
 
 
-def generate_plot(
-    run_idx, angle, speed, ts_fwd, angles_fwd, ts_rev, angles_rev, press_full
-):
+def generate_plot(run_idx, angle, speed, ts_fwd, angles_fwd, ts_rev, angles_rev, press_full):
     """Generates and saves a dual-axis plot of pressures and robot angle."""
     fig, ax1 = plt.subplots(figsize=(10, 6))
 
@@ -88,9 +86,7 @@ def generate_plot(
     t_start_rev = t_robot_fwd[-1] if len(t_robot_fwd) > 0 else 0
     t_robot_rev = np.array(ts_rev) + t_start_rev
 
-    ax2.plot(
-        t_robot_fwd, angles_fwd_deg, color=color3, linewidth=2.5, label="Angle (Fwd)"
-    )
+    ax2.plot(t_robot_fwd, angles_fwd_deg, color=color3, linewidth=2.5, label="Angle (Fwd)")
     ax2.plot(
         t_robot_rev,
         angles_rev_deg,
@@ -106,9 +102,7 @@ def generate_plot(
     ax1.legend(lines_1 + lines_2, labels_1 + labels_2, loc="upper left")
 
     angle_deg = np.degrees(angle)
-    plt.title(
-        f"Run {run_idx}: Target Angle = {angle_deg:.1f}°, Speed Param = {speed:.3f}"
-    )
+    plt.title(f"Run {run_idx}: Target Angle = {angle_deg:.1f}°, Speed Param = {speed:.3f}")
     plt.tight_layout()
 
     filepath = PLOTS_DIR / f"run_{run_idx:03d}.png"
@@ -116,9 +110,7 @@ def generate_plot(
     plt.close(fig)
 
 
-def execute_wrist_rotation_pair(
-    robot: Robot, target_angle_rad: float, speed_val: float, ser: serial.Serial
-):
+def execute_wrist_rotation_pair(robot: Robot, target_angle_rad: float, speed_val: float, ser: serial.Serial):
     # ================= 1. TRAJECTORY PLANNING =================
     # Start pose
     start_pose = robot.end_effector_pose.copy()
@@ -180,7 +172,7 @@ def execute_wrist_rotation_pair(
     while exec_thread.is_alive():
         try:
             pose = robot.end_effector_pose
-            wrench = robot.end_effector_wrench
+            wrench = robot.end_effector_external_wrench
 
             ts_all.append(time.perf_counter() - t0)
             angles_all.append(robot.q[6])
@@ -340,9 +332,7 @@ def main():
         angle_deg = np.degrees(angle)
 
         print("\n" + "=" * 60)
-        print(
-            f"RUN {i + 1} / {num_points}  |  TARGET ANGLE: {angle_deg:.2f}°  |  SPEED PARAM: {speed:.3f}"
-        )
+        print(f"RUN {i + 1} / {num_points}  |  TARGET ANGLE: {angle_deg:.2f}°  |  SPEED PARAM: {speed:.3f}")
         print("=" * 60)
 
         try:
@@ -366,9 +356,7 @@ def main():
                 frc_rev,
                 trq_rev,
                 press_full,
-            ) = execute_wrist_rotation_pair(
-                robot=robot, target_angle_rad=angle, speed_val=speed, ser=ser
-            )
+            ) = execute_wrist_rotation_pair(robot=robot, target_angle_rad=angle, speed_val=speed, ser=ser)
 
             exp_dict["ts_forward"].append(ts_fwd)
             exp_dict["joint7_angles_forward"].append(angles_fwd)
@@ -391,9 +379,7 @@ def main():
             with open(RESULTS_FILE, "wb") as f:
                 pickle.dump(exp_dict, f)
 
-            generate_plot(
-                i + 1, angle, speed, ts_fwd, angles_fwd, ts_rev, angles_rev, press_full
-            )
+            generate_plot(i + 1, angle, speed, ts_fwd, angles_fwd, ts_rev, angles_rev, press_full)
             print(f"\t-> Saved data and plot for Run {i + 1} successfully.")
 
         except Exception as e:

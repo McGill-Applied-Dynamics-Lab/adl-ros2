@@ -1,20 +1,19 @@
-import time
-import numpy as np
+import pickle
 import threading
+import time
 from collections import deque
 from pathlib import Path
-import pickle
 
+import numpy as np
 import rclpy
+from arm_client.robot import Pose, Robot, Twist
+from msg import AcousticPacket
 from rclpy.node import Node
 from scipy.signal import butter, filtfilt
-from msg import AcousticPacket
-
 from scipy.spatial.transform import Rotation as R
-from arm_client.robot import Robot, Pose, Twist
-from arm_client import CONFIG_DIR
 from waveguide_gripper_grid_generator import fetch_landmarks
 
+from arm_client import CONFIG_DIR
 
 # ----------------------- Robot probing params -----------------------
 SETTLE_SEC = 2.00
@@ -46,6 +45,7 @@ class AcousticRecorderNode(Node):
     Subscribes to /acoustic/raw, processes each packet (DC remove + pulse align),
     and buffers packets with perf_counter timestamps so they can align with robot samples.
     """
+
     def __init__(self, topic="/acoustic/raw", max_packets=20000):
         super().__init__("acoustic_recorder_node")
         self.sub_ = self.create_subscription(AcousticPacket, topic, self._cb, 10)
@@ -91,7 +91,7 @@ class AcousticRecorderNode(Node):
             to_plot = aligned[:PLOT_LEN]
         else:
             to_plot = np.zeros(PLOT_LEN, dtype=float)
-            to_plot[:aligned.size] = aligned
+            to_plot[: aligned.size] = aligned
 
         return np.abs(to_plot).astype(np.float32)
 
@@ -120,7 +120,7 @@ class AcousticRecorderNode(Node):
             if not self._seg_active:
                 return {"t0_perf": None, "packets": []}
 
-            pkts = list(self._buf)[self._seg_start_len:]
+            pkts = list(self._buf)[self._seg_start_len :]
             t0 = float(self._seg_t0)
 
             for p in pkts:
@@ -217,7 +217,7 @@ def probe(
         if now > t_end:
             break
 
-        ee_force = robot.end_effector_wrench["force"].copy()
+        ee_force = robot.end_effector_external_wrench["force"].copy()
         ee_pose = robot.end_effector_pose.copy()
 
         trel = now - t0_perf
@@ -351,16 +351,20 @@ def main():
 
             acoustic_data = ac_node.stop_segment()
 
-            exp_dict["probes"].append({
-                "grid_xy_gripper": [float(xg), float(yg)],
-                "grid_xy_world": [float(x), float(y)],
-                "t0_perf": float(t0_perf),
-                "robot": robot_data,
-                "acoustic": acoustic_data,
-            })
+            exp_dict["probes"].append(
+                {
+                    "grid_xy_gripper": [float(xg), float(yg)],
+                    "grid_xy_world": [float(x), float(y)],
+                    "t0_perf": float(t0_perf),
+                    "robot": robot_data,
+                    "acoustic": acoustic_data,
+                }
+            )
 
-            print(f"\tProbe complete. Robot samples: {len(robot_data['t_rel'])}, "
-                  f"Acoustic packets: {len(acoustic_data['packets'])}")
+            print(
+                f"\tProbe complete. Robot samples: {len(robot_data['t_rel'])}, "
+                f"Acoustic packets: {len(acoustic_data['packets'])}"
+            )
 
         # Return home
         print("\nReturning home...")

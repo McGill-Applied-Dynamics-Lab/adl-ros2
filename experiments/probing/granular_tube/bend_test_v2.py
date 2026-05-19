@@ -1,20 +1,20 @@
 #!/usr/bin/env python3
 """Modernized bend test using trajectory planning and execution with data collection and visualization."""
 
-import time
-import numpy as np
-from pathlib import Path
 import pickle
 import threading
+import time
+from pathlib import Path
 
 import matplotlib
+import numpy as np
 
 matplotlib.use("Agg")  # Use non-GUI backend to avoid Qt issues
 import matplotlib.pyplot as plt
+from arm_client.planning.waypoints import generate_spherical_waypoints
+from arm_client.robot import Pose, Robot
 from scipy.spatial.transform import Rotation as R
 
-from arm_client.robot import Robot, Pose
-from arm_client.planning.waypoints import generate_spherical_waypoints
 from arm_client import CONFIG_DIR
 
 # --- Configuration ---
@@ -48,7 +48,7 @@ def collect_trajectory_data(robot: Robot, duration: float, freq: float = 100.0) 
     while time.perf_counter() - start_time < duration:
         try:
             pose = robot.end_effector_pose
-            wrench = robot.end_effector_wrench
+            wrench = robot.end_effector_external_wrench
 
             t = time.perf_counter() - start_time
             data["timestamps"].append(t)
@@ -124,9 +124,7 @@ def plot_results(data: dict, expected_waypoints: list = None):
 
     ax1.set_xlabel("Time (s)", fontsize=11)
     ax1.set_ylabel("Position (m)", fontsize=11)
-    ax1.set_title(
-        "End-Effector Position: Actual vs Expected", fontsize=12, fontweight="bold"
-    )
+    ax1.set_title("End-Effector Position: Actual vs Expected", fontsize=12, fontweight="bold")
     ax1.legend(fontsize=9)
     ax1.grid(True, alpha=0.3)
 
@@ -135,9 +133,7 @@ def plot_results(data: dict, expected_waypoints: list = None):
     if expected_waypoints is not None and len(ee_positions) > 0:
         # Interpolate expected positions to match actual timestamps
         expected_positions = np.array([p.position for p in expected_waypoints])
-        expected_times = np.linspace(
-            timestamps[0], timestamps[-1], len(expected_positions)
-        )
+        expected_times = np.linspace(timestamps[0], timestamps[-1], len(expected_positions))
 
         # Interpolate each axis separately
         expected_x = np.interp(timestamps, expected_times, expected_positions[:, 0])
@@ -149,9 +145,7 @@ def plot_results(data: dict, expected_waypoints: list = None):
         ax2.plot(timestamps, position_error[:, 0], "r-", label="X error", linewidth=2)
         ax2.plot(timestamps, position_error[:, 1], "g-", label="Y error", linewidth=2)
         ax2.plot(timestamps, position_error[:, 2], "b-", label="Z error", linewidth=2)
-        ax2.set_title(
-            "Position Error: Expected - Actual", fontsize=12, fontweight="bold"
-        )
+        ax2.set_title("Position Error: Expected - Actual", fontsize=12, fontweight="bold")
     else:
         ax2.text(0.5, 0.5, "No expected waypoints provided", ha="center", va="center")
         ax2.set_title("Position Error (N/A)", fontsize=12, fontweight="bold")
@@ -225,9 +219,7 @@ def main():
 
     print("-" * 60)
     print("BEND TEST V2 (Modernized with Trajectory Planning)")
-    print(
-        f"Radius: {RADIUS}m | Polar Angle: {POLAR_ANGLE_DEG}° | Duration: {EXECUTION_TIME}s"
-    )
+    print(f"Radius: {RADIUS}m | Polar Angle: {POLAR_ANGLE_DEG}° | Duration: {EXECUTION_TIME}s")
     print("-" * 60)
 
     try:

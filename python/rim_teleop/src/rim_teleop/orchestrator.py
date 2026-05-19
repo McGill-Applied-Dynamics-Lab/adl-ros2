@@ -34,6 +34,8 @@ class RIMTeleopOrchestrator:
         self._axis = _AXIS_TO_INDEX[config.interface.axis]
 
         self._robot = Robot(namespace=config.robot.namespace)
+        if config.robot.wrench_filter_alpha is not None:
+            self._robot.configure_wrench_filter(config.robot.wrench_filter_alpha)
         self._home_pose: Pose | None = None
 
         self.model_adapter = ModelEstimatorAdapter(
@@ -192,26 +194,32 @@ class RIMTeleopOrchestrator:
             ff_mode = self.cfg.interface.force_feedback
             if ff_mode == "rim" and self._safety_allows_output(now):
                 force = self.delay_rim.get_interface_force()
+
             elif ff_mode == "robot" and self._robot_state_allows_output(now):
                 try:
-                    wrench = self._robot.end_effector_wrench
-                    force = np.array([wrench["force"][self._axis]], dtype=float)
+                    force = np.array([self._robot.end_effector_external_wrench["force"][self._axis]], dtype=float)
                 except RuntimeError:
                     force = np.zeros(1, dtype=float)
+
             else:
                 force = np.zeros(1, dtype=float)
+
             self.teleop_interface.set_interface_force(force)
 
-            self.logger.log_sample(
-                "haptic",
-                {
-                    "leader_pos": leader_pos,
-                    "leader_vel": leader_vel,
-                    "force_cmd": force,
-                    "deadman_active": self._deadman_active,
-                },
-                timestamp_s=now,
-            )
+            haptic_log: dict = {
+                "leader_pos": leader_pos,
+                "leader_vel": leader_vel,
+                "force_cmd": force,
+                "deadman_active": self._deadman_active,
+            }
+            if ff_mode == "robot":
+                try:
+                    haptic_log["force_raw"] = np.array(
+                        [self._robot.end_effector_external_wrench_raw["force"][self._axis]], dtype=float
+                    )
+                except RuntimeError:
+                    pass
+            self.logger.log_sample("haptic", haptic_log, timestamp_s=now)
 
             self._loop_monitors["haptic"].tick()
             next_tick += dt
@@ -248,7 +256,7 @@ class RIMTeleopOrchestrator:
                 tau = self._robot.tau
                 ee_pose = self._robot.end_effector_pose
                 ee_twist = self._robot.end_effector_twist
-                ee_wrench = self._robot.end_effector_wrench
+                ee_wrench = self._robot.end_effector_external_wrench
 
                 self.logger.log_sample(
                     "robot/joint_states",

@@ -6,11 +6,12 @@ This script demonstrates:
 2. Trajectory mode: Follow a sinusoidal motion in Z axis
 """
 
-import numpy as np
 import time
-import matplotlib.pyplot as plt
 
-from arm_client.robot import Robot, Pose, Twist
+import matplotlib.pyplot as plt
+import numpy as np
+from arm_client.robot import Pose, Robot, Twist
+
 from arm_client import CONFIG_DIR
 
 # Initialize robot
@@ -41,7 +42,7 @@ print("Moving to start position: [0.4, 0.0, 0.5]")
 start_position = np.array([0.4, 0.0, 0.5])
 current_orientation = robot.end_effector_pose.orientation
 
-robot.set_target(position=start_position)
+robot.move_to(position=start_position)
 print("  Waiting for robot to reach target...")
 time.sleep(3.0)  # Give time for trajectory to complete
 
@@ -121,7 +122,7 @@ ee_forces = []
 print("  Trajectory sent! Waiting for execution to complete...")
 start_time = time.time()
 while robot.wait_for_trajectory_completion(duration, timeout_margin=0.5):
-    ee_force = robot.end_effector_wrench["force"]
+    ee_force = robot.end_effector_external_wrench["force"]
     ee_pose = robot.end_effector_pose
     time_stamp = time.time() - start_time
 

@@ -1,8 +1,9 @@
+import pickle
 import time
+from pathlib import Path
+
 import numpy as np
 from arm_client.robot import Robot
-from pathlib import Path
-import pickle
 
 # Configuration
 SETTLE_SEC = 1.00  # wait time after moves (s)
@@ -14,9 +15,7 @@ PARAMETERS_FILE = PROJECT_ROOT / "results" / "grids" / "rotation_params.pkl"
 RESULTS_FILE = PROJECT_ROOT / "results" / "TEST.pkl"
 
 
-def execute_wrist_rotation_pair(
-    robot: Robot, target_angle_rad: float, speed_rad_s: float
-):
+def execute_wrist_rotation_pair(robot: Robot, target_angle_rad: float, speed_rad_s: float):
     """
     Execute a forward rotation of the wrist (joint 7) followed by reverse rotation.
 
@@ -72,13 +71,11 @@ def execute_wrist_rotation_pair(
     # Trigger Teensy sampling
     # ...
 
-    while (
-        time.perf_counter() - t0_fwd
-    ) < duration_per_direction + DELAY_SEC:  # record data during delay
+    while (time.perf_counter() - t0_fwd) < duration_per_direction + DELAY_SEC:  # record data during delay
         elapsed = time.perf_counter() - t0_fwd
         current_q = robot.q.copy()
         current_j7 = current_q[6]
-        ee_wrench = robot.end_effector_wrench
+        ee_wrench = robot.end_effector_external_wrench
 
         ts_fwd.append(elapsed)
         angles_fwd.append(current_j7)  # absolute angle
@@ -113,7 +110,7 @@ def execute_wrist_rotation_pair(
         elapsed = time.perf_counter() - t0_rev
         current_q = robot.q.copy()
         current_j7 = current_q[6]
-        ee_wrench = robot.end_effector_wrench
+        ee_wrench = robot.end_effector_external_wrench
 
         ts_rev.append(elapsed)
         angles_rev.append(current_j7)  # absolute angle
@@ -231,10 +228,8 @@ def main():
         try:
             # Perform Forward and Reverse Rotation
             print("\tExecuting forward + reverse rotation...")
-            (ts_fwd, angles_fwd, torques_fwd, ts_rev, angles_rev, torques_rev) = (
-                execute_wrist_rotation_pair(
-                    robot=robot, target_angle_rad=angle, speed_rad_s=speed
-                )
+            (ts_fwd, angles_fwd, torques_fwd, ts_rev, angles_rev, torques_rev) = execute_wrist_rotation_pair(
+                robot=robot, target_angle_rad=angle, speed_rad_s=speed
             )
 
             # Store results

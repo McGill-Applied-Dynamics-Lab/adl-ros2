@@ -12,29 +12,31 @@ interface:
   contact_stiffness: 10000.0
   contact_damping: 100.0
   rim_enabled: false
-  force_feedback: none  # "none" | "robot" | "rim"
+  force_scale: 0.1
+  force_feedback: robot  # "none" | "robot" | "rim"
 
 safety:
   stale_state_timeout_s: 0.2
   stale_model_timeout_s: 0.25
   deadman_required: false
 
+# Config of the Inverse 3 device
 inverse3:
   uri: ws://localhost:10001
   interface_axis: z
-  scale: 1.0
+  scale: 1.0  # Position scale
   i3_origin: [0.0, -0.17, 0.16]
   i3_origin_rpy: [0.0, 0.0, 90.0]
   i3_origin_rpy_degrees: true
   center_on_start: true
-
-  enable_force_feedback: false
-  interface_force_scale: 1.0
+  enable_force_feedback: true
+  interface_force_scale: 0.1 
   force_cap: 12.0
 
 robot:
   namespace: fr3
   controller_name: osc_pd_controller
+  wrench_filter_alpha: 0.1  # IIR alpha [0,1]; 1.0 = no filtering; ~17 Hz cutoff at 1 kHz update rate
 
 model:
   urdf_package: franka_rim

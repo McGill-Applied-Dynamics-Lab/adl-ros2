@@ -89,14 +89,15 @@
             "name": "Python Debugger: rim_teleop",
             "type": "debugpy",
             "request": "launch",
-            "program": "${workspaceFolder}/python/rim_teleop/src/rim_teleop/main.py",
+            // "program": "${workspaceFolder}/python/rim_teleop/src/rim_teleop/main.py",
+            "program": "${workspaceFolder}/python/rim_teleop/scripts/run_experiment.py",
             "python": "${workspaceFolder}/.pixi/envs/humble/bin/python",
             // "preLaunchTask": "gen-vscode-env",
             "envFile": "${workspaceFolder}/.vscode/.env.humble",
             "console": "internalConsole",
             "args": [
                 "--config",
-                "${workspaceFolder}/python/rim_teleop/src/rim_teleop/configs/rim_teleop_default.yaml",
+                "${workspaceFolder}/python/rim_teleop/configs/rim_teleop_default.yaml",
                 // "--dry-run"
             ],
             "pathMappings": [

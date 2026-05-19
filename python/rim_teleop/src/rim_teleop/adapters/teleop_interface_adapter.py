@@ -55,7 +55,9 @@ class TeleopInterfaceAdapter:
         )
 
     def set_interface_force(self, force: np.ndarray) -> None:
-        """Map reduced force (shape (1,)) to 3D robot-frame/device-frame force."""
+        """Send the interface force to the device.
+        Scales it and map it to the correct frame for the I3.
+        """
         f = np.asarray(force, dtype=float).reshape(-1)
         if f.size == 0:
             scalar = 0.0

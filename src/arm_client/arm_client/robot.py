@@ -1,6 +1,7 @@
 """Provides a client to control the franka robot. It is the easiest way to control the robot using ROS2."""
 
 import threading
+import time
 from dataclasses import dataclass
 from typing import Any, List, Sequence
 
@@ -8,7 +9,7 @@ import numpy as np
 import rclpy
 import rclpy.executors
 from builtin_interfaces.msg import Duration
-from geometry_msgs.msg import PoseStamped, WrenchStamped, TwistStamped
+from geometry_msgs.msg import PoseStamped, TwistStamped, WrenchStamped
 from numpy.typing import NDArray
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.node import Node
@@ -26,8 +27,6 @@ from arm_client.planning.waypoints import generate_linear_waypoints
 from arm_client.robot_config import FR3Config, RobotConfig
 from arm_client.utils.callback_monitor import CallbackMonitor
 from arm_interfaces.msg import CartesianTrajectory
-
-import time
 
 
 @dataclass
@@ -172,6 +171,8 @@ class Robot:
         self._target_wrench = None
         self._target_twist = None
         self._current_wrench = None  # added current wrench
+        self._current_wrench_filtered: dict | None = None
+        self._wrench_filter_alpha: float | None = None
 
         self._last_pose_update_time: float | None = None
         self._last_joint_update_time: float | None = None
@@ -290,6 +291,7 @@ class Robot:
         """Lazy-loaded Pyroki robot instance."""
         if not hasattr(self, "_pyroki_robot"):
             import pyroki as pk
+
             from arm_client.planning.ik_pyroki import load_fr3_urdf
 
             self._pyroki_robot = pk.Robot.from_urdf(load_fr3_urdf())
@@ -318,17 +320,48 @@ class Robot:
         return self._current_pose.copy()
 
     @property
-    def end_effector_wrench(self) -> dict:
-        """Get the current wrench applied at the end effector.
+    def end_effector_external_wrench(self) -> dict:
+        """Get the external wrench at the end effector, filtered if a filter is configured.
+
+        Returns the low-pass filtered wrench when configure_wrench_filter() has been called
+        and data is available; otherwise returns the raw wrench.
+
+        Read from `self.config.current_wrench_topic` (default: "/fr3/franka_robot_state_broadcaster/external_wrench_in_base_frame")
 
         Returns:
-            dict: The current wrench applied at the end effector, or None if not available.
+            dict: External wrench with 'force' and 'torque' numpy arrays.
+        """
+        if self._current_wrench is None:
+            raise RuntimeError(
+                "The robot has not received any wrenches yet. Run wait_until_ready() before running anything else."
+            )
+        if self._wrench_filter_alpha is not None and self._current_wrench_filtered is not None:
+            return self._current_wrench_filtered.copy()
+        return self._current_wrench.copy()
+
+    @property
+    def end_effector_external_wrench_raw(self) -> dict:
+        """Get the raw (unfiltered) external wrench at the end effector.
+
+        Returns:
+            dict: Raw wrench with 'force' and 'torque' numpy arrays.
         """
         if self._current_wrench is None:
             raise RuntimeError(
                 "The robot has not received any wrenches yet. Run wait_until_ready() before running anything else."
             )
         return self._current_wrench.copy()
+
+    def configure_wrench_filter(self, alpha: float) -> None:
+        """Configure a first-order IIR low-pass filter for end_effector_external_wrench.
+
+        Args:
+            alpha: Weight on the new measurement in [0, 1].
+                   1.0 = no filtering (pass-through); smaller values give heavier smoothing.
+                   Typical: 0.1 ≈ 17 Hz cutoff at 1 kHz update rate.
+        """
+        self._wrench_filter_alpha = float(np.clip(alpha, 0.0, 1.0))
+        self._current_wrench_filtered = None
 
     @property
     def end_effector_twist(self) -> Twist:
@@ -603,6 +636,21 @@ class Robot:
             msg (WrenchStamped): ROS message containing the current wrench.
         """
         self._current_wrench = self._wrench_msg_to_wrench(msg)
+
+        # Flip the franka convention, so it's the external wrench
+        self._current_wrench["force"] = -self._current_wrench["force"]
+        self._current_wrench["torque"] = -self._current_wrench["torque"]
+
+        if self._wrench_filter_alpha is not None:
+            a = self._wrench_filter_alpha
+            if self._current_wrench_filtered is None:
+                self._current_wrench_filtered = self._current_wrench.copy()
+            else:
+                self._current_wrench_filtered = {
+                    "force": a * self._current_wrench["force"] + (1.0 - a) * self._current_wrench_filtered["force"],
+                    "torque": a * self._current_wrench["torque"] + (1.0 - a) * self._current_wrench_filtered["torque"],
+                }
+
         self._last_wrench_update_time = time.time()
         if self._target_wrench is None:
             self._target_wrench = self._current_wrench.copy()

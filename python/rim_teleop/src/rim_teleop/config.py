@@ -51,6 +51,7 @@ class RobotRuntimeConfig:
     controller_name: str = "joint_trajectory_controller"
     trajectory_length: int = 5
     trajectory_dt: float = 0.1
+    wrench_filter_alpha: float | None = None  # IIR alpha [0,1]; None disables filtering
 
 
 @dataclass(kw_only=True)
