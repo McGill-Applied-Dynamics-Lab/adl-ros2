@@ -28,6 +28,7 @@ def generate_grid(x_extent, y_extent, nx, ny):
 
     return train, test
 
+
 def random_generate_grid(x_extent, y_extent, num_points):
     """
     Randomly generate grid within set bounds.
@@ -39,8 +40,8 @@ def random_generate_grid(x_extent, y_extent, num_points):
     x_random = np.random.uniform(0, x_extent, num_points)
     y_random = np.random.uniform(0, y_extent, num_points)
     # Split data evenly into train/test sets
-    train = np.vstack([x_random[:int(num_points/2)], y_random[:int(num_points/2)]])
-    test = np.vstack([x_random[int(num_points/2):], y_random[int(num_points/2):]])
+    train = np.vstack([x_random[: int(num_points / 2)], y_random[: int(num_points / 2)]])
+    test = np.vstack([x_random[int(num_points / 2) :], y_random[int(num_points / 2) :]])
     return train, test
 
 
@@ -76,28 +77,28 @@ if __name__ == "__main__":
     if not LANDMARK_FILE.exists():
         raise FileNotFoundError(f"Landmark file not found: {LANDMARK_FILE}")
     PROBE_DIAMETER = 0.016  # (m)
-    ADD_OFFSET = 0.005 # (m)
+    ADD_OFFSET = 0.005  # (m)
     X_SHIFT = 0.010 + PROBE_DIAMETER / 2 + ADD_OFFSET  # (m)
     Y_SHIFT = 0.010 + PROBE_DIAMETER / 2 + ADD_OFFSET  # (m)
-    X_EXTENT = 0.10 - PROBE_DIAMETER - 2*ADD_OFFSET # (m)
-    Y_EXTENT = 0.10 - PROBE_DIAMETER - 2*ADD_OFFSET # (m)
+    X_EXTENT = 0.10 - PROBE_DIAMETER - 2 * ADD_OFFSET  # (m)
+    Y_EXTENT = 0.10 - PROBE_DIAMETER - 2 * ADD_OFFSET  # (m)
     grids = {}  # dictionary to hold grids
 
-    GRID_TYPE = 'random' # 'uniform'
-    if GRID_TYPE == 'uniform':
-        train_, test_ = generate_grid(
-            x_extent=X_EXTENT, y_extent=Y_EXTENT, nx=10, ny=10
-        )  # generate rectangular grid
-    elif GRID_TYPE == 'random':
+    GRID_TYPE = "random"  # 'uniform'
+    if GRID_TYPE == "uniform":
+        train_, test_ = generate_grid(x_extent=X_EXTENT, y_extent=Y_EXTENT, nx=10, ny=10)  # generate rectangular grid
+    elif GRID_TYPE == "random":
         train_, test_ = random_generate_grid(
-            x_extent=X_EXTENT, y_extent=Y_EXTENT, num_points=1000 # change num. points here
+            x_extent=X_EXTENT,
+            y_extent=Y_EXTENT,
+            num_points=1000,  # change num. points here
         )  # generate rectangular grid
     temp_train = train_.copy()
-    temp_train[0, :] += PROBE_DIAMETER/2 + ADD_OFFSET
-    temp_train[1, :] += PROBE_DIAMETER/2 + ADD_OFFSET
+    temp_train[0, :] += PROBE_DIAMETER / 2 + ADD_OFFSET
+    temp_train[1, :] += PROBE_DIAMETER / 2 + ADD_OFFSET
     temp_test = test_.copy()
-    temp_test[0, :] += PROBE_DIAMETER/2 + ADD_OFFSET
-    temp_test[1, :] += PROBE_DIAMETER/2 + ADD_OFFSET
+    temp_test[0, :] += PROBE_DIAMETER / 2 + ADD_OFFSET
+    temp_test[1, :] += PROBE_DIAMETER / 2 + ADD_OFFSET
     temp_train = temp_train.T
     temp_test = temp_test.T
     grids["SENSOR_FRAME"] = {"train": temp_train, "test": temp_test}
@@ -149,8 +150,8 @@ if __name__ == "__main__":
     times_train = np.random.uniform(TIME_RANGE[0], TIME_RANGE[1], size=len(train))
     depths_test = np.random.uniform(DEPTH_RANGE[0], DEPTH_RANGE[1], size=len(test))
     times_test = np.random.uniform(TIME_RANGE[0], TIME_RANGE[1], size=len(test))
-    grids['DEPTHS'] = {"train": depths_train, "test": depths_test}
-    grids['PLUNGE_TIMES'] = {"train": times_train, "test": times_test}
+    grids["DEPTHS"] = {"train": depths_train, "test": depths_test}
+    grids["PLUNGE_TIMES"] = {"train": times_train, "test": times_test}
     plt.scatter(depths_train, times_train, color="b", label="Train")
     plt.scatter(depths_test, times_test, color="g", label="Test")
     plt.title(f"Train points: {len(depths_train)}, Test points: {len(depths_test)}")
@@ -160,13 +161,17 @@ if __name__ == "__main__":
     plt.show()
 
     # Save
-    with open(PROJECT_ROOT / "results" / "grids" / "GLYCERIN_GRID.pkl", "wb") as f:
+    with open(PROJECT_ROOT / "results" / "grids" / "TEST_GRID.pkl", "wb") as f:
         pickle.dump(grids, f)
 
     # Create plot in world frame
     plt.title(f"Train points: {len(grids['WORLD_FRAME']['train'])}, Test points: {len(grids['WORLD_FRAME']['test'])}")
-    plt.scatter(grids["WORLD_FRAME"]['train'][:,0], grids["WORLD_FRAME"]['train'][:,1], color="b", label="Train (World Frame)")
-    plt.scatter(grids["WORLD_FRAME"]['test'][:,0], grids["WORLD_FRAME"]['test'][:,1], color="g", label="Test (World Frame)")
+    plt.scatter(
+        grids["WORLD_FRAME"]["train"][:, 0], grids["WORLD_FRAME"]["train"][:, 1], color="b", label="Train (World Frame)"
+    )
+    plt.scatter(
+        grids["WORLD_FRAME"]["test"][:, 0], grids["WORLD_FRAME"]["test"][:, 1], color="g", label="Test (World Frame)"
+    )
     plt.scatter(landmarks[0][0], landmarks[0][1], marker="x", color="r", s=100)
     plt.scatter(landmarks[1][0], landmarks[1][1], marker="x", color="r", s=100)
     plt.plot(
@@ -183,8 +188,15 @@ if __name__ == "__main__":
 
     # Create plot in sensor frame
     plt.title(f"Train points: {len(grids['SENSOR_FRAME']['train'])}, Test points: {len(grids['SENSOR_FRAME']['test'])}")
-    plt.scatter(grids['SENSOR_FRAME']['train'][:,0], grids["SENSOR_FRAME"]['train'][:,1], color="b", label="Train (Sensor Frame)")
-    plt.scatter(grids['SENSOR_FRAME']['test'][:,0], grids["SENSOR_FRAME"]['test'][:,1], color="g", label="Test (Sensor Frame)")
+    plt.scatter(
+        grids["SENSOR_FRAME"]["train"][:, 0],
+        grids["SENSOR_FRAME"]["train"][:, 1],
+        color="b",
+        label="Train (Sensor Frame)",
+    )
+    plt.scatter(
+        grids["SENSOR_FRAME"]["test"][:, 0], grids["SENSOR_FRAME"]["test"][:, 1], color="g", label="Test (Sensor Frame)"
+    )
     plt.xlim(0, 0.1)
     plt.ylim(0, 0.1)
     plt.xlabel("X (m)")
