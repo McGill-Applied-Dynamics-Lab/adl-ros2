@@ -113,6 +113,51 @@ def collect_teensy_data_streaming(ser, max_duration=15.0):
         return np.zeros((0, 4), dtype=np.uint16), np.array([])
 
 
+# ===================== Baseline acquisition =====================
+BASELINE_DURATION_SEC = 2.0
+
+
+def acquire_baseline(ser, duration_sec=BASELINE_DURATION_SEC):
+    """
+    Stream Teensy data for duration_sec with no robot motion to get a per-sensor
+    mean baseline for later subtraction.
+
+    Returns:
+        baseline (np.ndarray): (N, 4) raw ADC samples.
+        baseline_mean (np.ndarray): (4,) per-channel mean.
+    """
+    print(f"Acquiring {duration_sec:.1f}s baseline...")
+    ser.reset_input_buffer()
+    ser.reset_output_buffer()
+
+    holder = []
+
+    def _worker():
+        try:
+            holder.append(collect_teensy_data_streaming(ser, max_duration=duration_sec + 5.0))
+        except Exception as e:
+            print(f"  Error in baseline thread: {e}")
+            holder.append((np.zeros((0, 4), dtype=np.uint16), np.array([])))
+
+    th = threading.Thread(target=_worker)
+    th.start()
+
+    time.sleep(0.1 + duration_sec)
+    ser.write(b"2")
+    time.sleep(0.1)
+    th.join(timeout=10.0)
+
+    baseline = holder[0][0] if holder else np.zeros((0, 4), dtype=np.uint16)
+
+    if baseline.size == 0:
+        print("  Warning: no baseline data received; using zero baseline.")
+        return baseline, np.zeros(4, dtype=np.float64)
+
+    baseline_mean = baseline.astype(np.float64).mean(axis=0)
+    print(f"  Baseline: {baseline.shape[0]} samples, means = [{', '.join(f'{m:.1f}' for m in baseline_mean)}]")
+    return baseline, baseline_mean
+
+
 # ===================== Probe helper =====================
 def probe(
     robot: Robot,
@@ -202,12 +247,13 @@ def probe(
     t_min = 0.0
     z_min = z_init
 
+    t0 = time.perf_counter()  # anchor: t=0 is trajectory start
     robot.follow_joint_trajectory(joint_traj, blocking=False)
 
     while robot.wait_for_trajectory_completion(probe_time, timeout_margin=0.5):
         ee_force = robot.end_effector_external_wrench["force"]
         ee_pose = robot.end_effector_pose
-        time_stamp = time.perf_counter()
+        time_stamp = time.perf_counter() - t0
 
         if ee_pose.position[2] < z_min:
             z_min = ee_pose.position[2]
@@ -295,6 +341,9 @@ def main():
         # Teensy 4-channel acoustic data (columns: ch1, ch2, ch3, ch4)
         "teensy_data": [],
         "teensy_timestamps": [],
+        # Per-probe baseline: raw samples and per-channel means
+        "baseline_data": [],
+        "baseline_mean": [],
     }
 
     results_dir = PROJECT_ROOT / "results"
@@ -312,9 +361,11 @@ def main():
             exp_dict = pickle.load(f)
             print(f"Loaded existing results file: {full_path}")
             start_idx = len(exp_dict["grid_positions"])
-            # Back-fill Teensy keys if resuming from a pre-Teensy results file
+            # Back-fill keys if resuming from an older results file
             exp_dict.setdefault("teensy_data", [])
             exp_dict.setdefault("teensy_timestamps", [])
+            exp_dict.setdefault("baseline_data", [])
+            exp_dict.setdefault("baseline_mean", [])
 
     print(f"Resuming from probe number {start_idx + 1}")
 
@@ -324,6 +375,7 @@ def main():
 
     input("Press Enter to start probing...")
 
+    # MARK: Main loop
     # ---- Main probe loop ----
     for i in range(start_idx, N_POINTS):
         x, y = grid_xy_world[i]
@@ -335,9 +387,9 @@ def main():
         robot.move_to(pose=home_pose, speed=MOVE_SPEED)
         time.sleep(SETTLE_SEC)
 
-        # Press trigger (no Teensy — only used for t_ref time-referencing)
+        # Press trigger (syncs external hardware — no data recorded here)
         # print("\tPressing trigger...")
-        # _, _, _, t_ref, _, _, _ = probe(
+        # probe(
         #     robot,
         #     start_xyz=home_position,
         #     depth=TRIG_DEPTH,
@@ -359,7 +411,13 @@ def main():
         robot.move_to(position=approach_xyz, speed=MOVE_SPEED)
         time.sleep(SETTLE_SEC)
 
-        # Calibration data
+        # Per-probe baseline (stationary, before plunge)
+        print(f"\tAcquiring baseline for probe {i + 1}...")
+        if ser is not None:
+            baseline, baseline_mean = acquire_baseline(ser)
+        else:
+            baseline = np.zeros((0, 4), dtype=np.uint16)
+            baseline_mean = np.zeros(4, dtype=np.float64)
 
         # Probe cycle with Teensy
         print("\tStarting probe...")
@@ -384,8 +442,7 @@ def main():
 
         # Validate depth reached (same check as before)
         if np.any(np.asarray(ee_positions)[:, 2] <= (PROBE_START_Z - depths[i] + 2.5e-3)):
-            ts_adjusted = [t - t_ref for t in ts]
-            exp_dict["ts"].append(ts_adjusted)
+            exp_dict["ts"].append(ts)  # already 0-referenced to trajectory start
             exp_dict["ee_poses"].append(
                 {
                     "positions": ee_positions,
@@ -398,6 +455,8 @@ def main():
             exp_dict["grid_positions"].append([x_sensor, y_sensor])
             exp_dict["teensy_data"].append(teensy_data)
             exp_dict["teensy_timestamps"].append(teensy_timestamps)
+            exp_dict["baseline_data"].append(baseline)
+            exp_dict["baseline_mean"].append(baseline_mean)
 
             with open(full_path, "wb") as f:
                 pickle.dump(exp_dict, f)
