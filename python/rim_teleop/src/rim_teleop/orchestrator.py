@@ -60,6 +60,7 @@ class RIMTeleopOrchestrator:
 
         self._running = False
         self._deadman_active = not self.cfg.safety.deadman_required
+        self._tool_axis_correction: float = 0.0  # TCP z − tool_tip z at home; applied in _send_osc_command
         self._threads: list[threading.Thread] = []
         self._loop_monitors = {
             "haptic": LoopRateMonitor(config.rates.haptic_rate_hz),
@@ -80,6 +81,7 @@ class RIMTeleopOrchestrator:
             synthetic = self.model_adapter.compute_at(q0, q0.copy(), q0.copy())
             rim = self.rim_calc.compute(synthetic)
             self.delay_rim.update_rim(rim)
+            # Tool correction not meaningful in dry-run; leave at 0.
 
         else:
             self._robot.wait_until_ready()
@@ -90,6 +92,19 @@ class RIMTeleopOrchestrator:
                 file_path=CONFIG_DIR / "controllers" / "osc_pd" / "default.yaml"
             )  # TODO: Specify param file in the config
             self._home_pose = self._robot.end_effector_pose.copy()
+
+            # Compute TCP-to-tool-tip offset projected onto the interface axis at the home configuration.
+            # The OSC controller tracks the TCP; the RIM proxy tracks the tool tip. We apply this
+            # correction in _send_osc_command so the TCP is commanded to the right position.
+            home_model = self.model_adapter.compute()
+            if home_model is not None:
+                tool_tip_home = float(home_model.x_i[0])
+                tcp_home = self._home_pose.position[self._axis]
+                self._tool_axis_correction = tcp_home - tool_tip_home
+                self._robot.node.get_logger().info(
+                    f"Tool axis correction ({self.cfg.interface.axis}): {self._tool_axis_correction:.4f} m"
+                    f"  (TCP={tcp_home:.4f}, tip={tool_tip_home:.4f})"
+                )
 
         self.haply = Inverse3Device(
             initial_robot_position=self._home_pose.position.copy(),
@@ -136,7 +151,7 @@ class RIMTeleopOrchestrator:
         so we pass it directly without sign inversion.
         """
         target_position = self._home_pose.position.copy()
-        target_position[axis] = rim_x
+        target_position[axis] = rim_x + self._tool_axis_correction
         self._robot.set_target(position=target_position)
 
         feedforward = np.zeros(3)
@@ -250,11 +265,13 @@ class RIMTeleopOrchestrator:
             now = time.time()
 
             # Always log robot telemetry at control-loop rate for Foxglove.
+            tcp_axis_pos: float | None = None
             try:
                 q = self._robot.q
                 dq = self._robot.dq
                 tau = self._robot.tau
                 ee_pose = self._robot.end_effector_pose
+                tcp_axis_pos = float(ee_pose.position[self._axis])
                 ee_twist = self._robot.end_effector_twist
                 ee_wrench = self._robot.end_effector_external_wrench
 
@@ -294,9 +311,9 @@ class RIMTeleopOrchestrator:
                     },
                     timestamp_s=now,
                 )
-            except RuntimeError:
+            except RuntimeError as e:
                 # One or more robot streams unavailable yet.
-                pass
+                self._robot.node.get_logger().warn(f"Error occurred while logging robot telemetry: {e}")
 
             if self.cfg.interface.rim_enabled:
                 model = self.model_adapter.compute()
@@ -326,6 +343,16 @@ class RIMTeleopOrchestrator:
                             "f_eff": rim.f_eff,
                             "x": rim.x,
                             "v": rim.v,
+                        },
+                        timestamp_s=now,
+                    )
+                    self.logger.log_sample(
+                        "tracking",
+                        {
+                            "tcp": tcp_axis_pos,
+                            "tool_tip": float(model.x_i[0]),
+                            "rim": float(rim_x[0]) if rim_x is not None else None,
+                            "target": float(rim_x[0]) + self._tool_axis_correction if rim_x is not None else None,
                         },
                         timestamp_s=now,
                     )

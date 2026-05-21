@@ -64,6 +64,8 @@ class ModelConfig:
     filter_alpha_q: float = 0.3
     filter_alpha_q_dot: float = 0.2
     filter_alpha_tau: float = 0.2
+    # Tool mounted in the gripper. Offset is in the EE frame (e.g. [0, 0, L] for a peg of length L along z).
+    tool_tip_offset: list = field(default_factory=lambda: [0.0, 0.0, 0.0])
 
 
 @dataclass(kw_only=True)

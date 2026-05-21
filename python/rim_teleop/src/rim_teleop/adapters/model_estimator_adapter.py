@@ -38,8 +38,9 @@ class RobotModelAdapter:
         urdf_path = os.path.join(urdf_root, model_cfg.urdf_relative_path)
         full_model = pin.buildModelFromUrdf(urdf_path)
         self._model = self._build_model_matching_robot_dof(full_model)
-        self._data = self._model.createData()
         self._ee_frame_id = self._model.getFrameId(self._frame_name)
+        self._ee_frame_id = self._add_tool_tip_frame(model_cfg)  # Frame id to `tool_tip`
+        self._data = self._model.createData()
 
         self._model_joint_names = [
             self._model.names[jid] for jid in range(1, self._model.njoints) if self._model.joints[jid].nq > 0
@@ -90,6 +91,33 @@ class RobotModelAdapter:
         )
         return reduced_model
 
+    def _add_tool_tip_frame(self, model_cfg: ModelConfig) -> int:
+        """Register a 'tool_tip' OP_FRAME offset from the EE frame and return its id.
+
+        If tool_tip_offset is zero, returns the existing EE frame id unchanged.
+        The offset is expressed in the EE frame (e.g. [0, 0, L] for a peg of length L along z).
+        Data must be recreated after calling this — do so after this call returns.
+        """
+        tip_offset = np.array(model_cfg.tool_tip_offset, dtype=float)
+        if np.allclose(tip_offset, 0.0):
+            return self._ee_frame_id
+
+        ee_frame = self._model.frames[self._ee_frame_id]
+        # Placement of tool tip relative to the EE frame's parent joint
+        tool_placement = ee_frame.placement * pin.SE3(np.eye(3), tip_offset)
+        tool_frame = pin.Frame(
+            "tool_tip",
+            ee_frame.parent,
+            self._ee_frame_id,
+            tool_placement,
+            pin.FrameType.OP_FRAME,
+        )
+        tool_frame_id = self._model.addFrame(tool_frame)
+        self._node.get_logger().info(
+            f"Tool tip registered at offset {tip_offset.tolist()} m from '{model_cfg.ee_frame_name}'."
+        )
+        return tool_frame_id
+
     def compute(self) -> DynModel | None:
         """Compute dynamics from current robot state and return the model.
 
@@ -108,6 +136,7 @@ class RobotModelAdapter:
         try:
             tau_ext_robot = self._robot.external_joint_torques
             tau_ext = tau_ext_robot[self._model_order_from_robot]
+
         except RuntimeError:
             tau_ext = None  # f_eff = 0 until FrankaRobotState arrives
 
@@ -142,7 +171,7 @@ class RobotModelAdapter:
             c=(self._data.nle - self._data.g).copy(),
             J_i=ai.copy(),
             b_i=b_i.copy(),
-            tau_ext=tau_ext.copy() if tau_ext is not None else None,
+            tau_ext=None,  # tau_ext.copy() if tau_ext is not None else None,
             stamp_s=time.time(),
         )
 

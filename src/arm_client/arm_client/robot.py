@@ -455,7 +455,7 @@ class Robot:
     def tau(self) -> NDArray:
         """Get the current joint torques of the robot.
 
-        Returns:
+        # Returns:
             numpy.ndarray: Copy of current joint torques, or None if not available.
         """
         if self._tau_current is None:
@@ -475,9 +475,7 @@ class Robot:
             RuntimeError: If FrankaRobotState has not been received yet.
         """
         if self._tau_ext_current is None:
-            raise RuntimeError(
-                "External joint torques not yet received from franka_robot_state_broadcaster."
-            )
+            raise RuntimeError("External joint torques not yet received from franka_robot_state_broadcaster.")
         return self._tau_ext_current.copy()
 
     @property
@@ -1330,7 +1328,7 @@ class Robot:
         if time_to_move is None:
             time_to_move = float(distance / speed)
 
-        print(f"[debug] Moving to target pose {desired_pose} with time_to_move: {time_to_move} sec")
+        # print(f"[debug] Moving to target pose {desired_pose} with time_to_move: {time_to_move} sec")
 
         active_controller = self.controller_switcher_client.get_active_controller()
         if active_controller is not None and self._is_joint_controller(active_controller):

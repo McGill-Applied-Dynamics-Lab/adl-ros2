@@ -8,7 +8,7 @@ interface:
   axis: z
   stiffness: 1000.0
   damping: 90.0
-  contact_surface: 0.0
+  contact_surface: 0.036  # 19.5mm, 
   contact_stiffness: 10000.0
   contact_damping: 100.0
   rim_enabled: true
@@ -45,6 +45,9 @@ model:
   filter_alpha_q: 0.3
   filter_alpha_q_dot: 0.2
   filter_alpha_tau: 0.2
+  # Offset from ee_frame_name to the tool tip, in the EE frame.
+  # For a peg of length L along the gripper z-axis: [0.0, 0.0, L]
+  tool_tip_offset: [0.0, 0.0, 0.043] # Peg: 0.043, pen: 0.050
 
 logging:
   enabled: true
