@@ -203,27 +203,36 @@ class RIMTeleopOrchestrator:
             leader_pos, leader_vel = self.teleop_interface.get_interface_state()
 
             self.delay_rim.add_leader_state(leader_pos, leader_vel)
+            self.delay_rim.step()
             now = time.time()
 
             ff_mode = self.cfg.interface.force_feedback
+
+            haptic_force = None  # Force to send to the haptic device
+            rim_interface_force = self.delay_rim.get_interface_force()
+
+            try:
+                robot_force = np.array([self._robot.end_effector_external_wrench["force"][self._axis]], dtype=float)
+            except RuntimeError:
+                robot_force = np.zeros(1, dtype=float)
+
             if ff_mode == "rim" and self._safety_allows_output(now):
-                force = self.delay_rim.get_interface_force()
+                haptic_force = rim_interface_force
 
             elif ff_mode == "robot" and self._robot_state_allows_output(now):
-                try:
-                    force = np.array([self._robot.end_effector_external_wrench["force"][self._axis]], dtype=float)
-                except RuntimeError:
-                    force = np.zeros(1, dtype=float)
+                haptic_force = robot_force
 
             else:
-                force = np.zeros(1, dtype=float)
+                haptic_force = np.zeros(1, dtype=float)
 
-            self.teleop_interface.set_interface_force(force)
+            self.teleop_interface.set_interface_force(haptic_force)
 
             haptic_log: dict = {
-                "leader_pos": leader_pos,
-                "leader_vel": leader_vel,
-                "force_cmd": force,
+                "leader_pos": leader_pos,  # Position of the I3 in the robot base frame
+                "leader_vel": leader_vel,  # Velocity of the I3 in the robot base frame
+                "force_cmd": haptic_force,  # Force command sent to the haptic device
+                "rim_interface_force": rim_interface_force,  # Force from the RIM interface
+                "robot_force": robot_force,  # Force from the robot
                 "deadman_active": self._deadman_active,
             }
             if ff_mode == "robot":
@@ -243,7 +252,7 @@ class RIMTeleopOrchestrator:
         dt = 1.0 / self.cfg.rates.rim_rate_hz
         next_tick = time.perf_counter()
         while self._running:
-            x_rim, v_rim = self.delay_rim.step()
+            x_rim, v_rim = self.delay_rim.get_rim_state()
             interface_force = self.delay_rim.get_interface_force()
             if x_rim is not None and v_rim is not None:
                 self.logger.log_sample(

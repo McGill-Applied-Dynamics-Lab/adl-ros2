@@ -26,22 +26,15 @@ def experiment_setup(robot: Robot) -> None:
     # robot.home()
     robot.controller_switcher_client.switch_controller("joint_trajectory_controller")
 
-    start_position = np.array([0.3, 0.0, 0.15])
+    start_position = np.array([0.681, -0.147, 0.15])  # Same as granular bed
+    # start_position = np.array([0.3, 0.0, 0.15])
+
     start_orientation = Rotation.from_euler("xyz", [-180, 0, 0], degrees=True)
     start_pose = Pose(position=start_position, orientation=start_orientation)
 
     robot.move_to(pose=start_pose)
 
     print("Experiment setup complete.")
-
-
-# Example: move to a custom start pose
-# start_pose = robot.end_effector_pose.copy()
-# start_pose.position[2] = 0.45  # lower z
-# robot.move_to(start_pose)
-
-# Example: close gripper
-# robot.gripper.move(width=0.0, speed=0.1, force=10.0)
 
 
 def main() -> None:

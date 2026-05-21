@@ -8,12 +8,12 @@ interface:
   axis: z
   stiffness: 1000.0
   damping: 90.0
-  contact_surface: 0.036  # 19.5mm, 
+  contact_surface: 0.03  # 19.5mm, 
   contact_stiffness: 10000.0
   contact_damping: 100.0
   rim_enabled: true
   force_scale: 0.1
-  force_feedback: none  # "none" | "robot" | "rim"
+  force_feedback: rim  # "none" | "robot" | "rim"
 
 safety:
   stale_state_timeout_s: 0.2
