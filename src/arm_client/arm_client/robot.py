@@ -747,6 +747,10 @@ class Robot:
         n_points: int | None = None,
         show_progress: bool = True,
         initial_joint_config: NDArray | None = None,
+        similarity_weight: float | None = None,
+        ori_weight: float | None = None,
+        pos_weight: float | None = None,
+        pin_start: bool = False,
     ) -> PlannedJointTrajectory:
         """Plan a joint trajectory from Cartesian waypoints using FR3 IK.
 
@@ -758,6 +762,20 @@ class Robot:
             show_progress: If True, print planner progress bar.
             initial_joint_config: Optional seed for the first IK point.
                 If None, uses the current measured robot joint state.
+            similarity_weight: IK cost weight penalising deviation from the
+                previous joint config.  Overrides config value when provided;
+                higher values suppress branch-switching at the cost of
+                allowing larger Cartesian error.
+            ori_weight: IK cost weight on orientation error.  Overrides config
+                value when provided; increase to enforce stricter orientation
+                tracking (useful for fixed-orientation trajectories).
+            pos_weight: IK cost weight on position error.  Overrides config
+                value when provided; increase to enforce tighter lateral
+                tracking (useful when x/y drift during z-only motion is observed).
+            pin_start: If True, the first trajectory point is set exactly to
+                initial_joint_config (or self.q) without running IK.  Use this
+                when the trajectory must start exactly at the current robot
+                state to avoid a jump at time_from_start=0.
         """
         joint_traj = plan_fr3_joint_trajectory(
             waypoints=list(waypoints),
@@ -768,10 +786,11 @@ class Robot:
             current_joint_config=self.q
             if initial_joint_config is None
             else np.array(initial_joint_config, dtype=float),
-            pos_weight=self.config.ik_position_weight,
-            ori_weight=self.config.ik_orientation_weight,
-            similarity_weight=self.config.ik_similarity_weight,
+            pos_weight=self.config.ik_position_weight if pos_weight is None else pos_weight,
+            ori_weight=self.config.ik_orientation_weight if ori_weight is None else ori_weight,
+            similarity_weight=self.config.ik_similarity_weight if similarity_weight is None else similarity_weight,
             show_progress=show_progress,
+            pin_start=pin_start,
         )
 
         if visualize:

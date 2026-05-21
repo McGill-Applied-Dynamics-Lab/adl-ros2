@@ -69,6 +69,61 @@ def load_fr3_urdf() -> Any:
     return yourdfpy.URDF.load(str(urdf_path), mesh_dir=str(meshes_dir))
 
 
+# ---------------------------------------------------------------------------
+# Module-level singletons: robot model and JIT-compiled IK solvers.
+# Avoids re-loading the URDF and re-tracing JAX functions on every planning
+# call.  _fr3_ik_solvers is keyed by (target_link_index, pos_w, ori_w, sim_w)
+# so different weight combinations each get their own compiled function while
+# still reusing the robot model.
+# ---------------------------------------------------------------------------
+_fr3_robot: Any | None = None
+_fr3_ik_solvers: dict = {}
+
+
+def _get_fr3_robot() -> Any:
+    global _fr3_robot
+    if _fr3_robot is None:
+        _fr3_robot = pk.Robot.from_urdf(load_fr3_urdf())
+    return _fr3_robot
+
+
+def _get_ik_solver(robot: Any, target_link_index: int, pos_weight: float, ori_weight: float, similarity_weight: float):
+    key = (target_link_index, pos_weight, ori_weight, similarity_weight)
+    if key not in _fr3_ik_solvers:
+        @jdc.jit
+        def solve_ik_single(target_wxyz, target_pos, q_init, q_prev):
+            joint_var = robot.joint_var_cls(0)
+            costs = [
+                pk.costs.pose_cost_analytic_jac(
+                    robot,
+                    joint_var,
+                    jaxlie.SE3.from_rotation_and_translation(
+                        jaxlie.SO3(target_wxyz),
+                        target_pos,
+                    ),
+                    jnp.array(target_link_index),
+                    pos_weight=pos_weight,
+                    ori_weight=ori_weight,
+                ),
+                pk.costs.rest_cost(joint_var, q_prev, jnp.array(similarity_weight)),
+                pk.costs.limit_constraint(robot, joint_var),
+            ]
+            sol = (
+                jaxls.LeastSquaresProblem(costs=costs, variables=[joint_var])
+                .analyze()
+                .solve(
+                    verbose=False,
+                    linear_solver="dense_cholesky",
+                    trust_region=jaxls.TrustRegionConfig(lambda_initial=1.0),
+                    initial_vals=jaxls.VarValues.make([joint_var.with_value(q_init)]),
+                )
+            )
+            return sol[joint_var]
+
+        _fr3_ik_solvers[key] = solve_ik_single
+    return _fr3_ik_solvers[key]
+
+
 def plan_fr3_joint_trajectory(
     waypoints: list[CartesianWaypoint],
     duration: float,
@@ -80,6 +135,7 @@ def plan_fr3_joint_trajectory(
     ori_weight: float = 50.0,
     similarity_weight: float = 0.001,
     show_progress: bool = True,
+    pin_start: bool = False,
 ) -> PlannedJointTrajectory:
     """Plan a dense joint-space trajectory by sequential warm-started IK."""
     if len(waypoints) < 2:
@@ -91,9 +147,9 @@ def plan_fr3_joint_trajectory(
 
     _configure_quiet_ik_logging()
 
-    urdf = load_fr3_urdf()
-    robot = pk.Robot.from_urdf(urdf)
+    robot = _get_fr3_robot()
     target_link_index = robot.links.names.index(target_link_name)
+    solve_ik_single = _get_ik_solver(robot, target_link_index, pos_weight, ori_weight, similarity_weight)
 
     ref_s = np.array([w.s for w in waypoints], dtype=float)
     ref_pos = np.array([w.position for w in waypoints], dtype=float)
@@ -110,59 +166,26 @@ def plan_fr3_joint_trajectory(
     q_seed = np.array(current_joint_config, dtype=float)
     q_current[: min(len(q_current), len(q_seed))] = q_seed[: min(len(q_current), len(q_seed))]
 
-    @jdc.jit
-    def solve_ik_single(
-        target_wxyz,
-        target_pos,
-        q_init,
-        q_prev,
-    ):
-        joint_var = robot.joint_var_cls(0)
-
-        costs = [
-            pk.costs.pose_cost_analytic_jac(
-                robot,
-                joint_var,
-                jaxlie.SE3.from_rotation_and_translation(
-                    jaxlie.SO3(target_wxyz),
-                    target_pos,
-                ),
-                jnp.array(target_link_index),
-                pos_weight=pos_weight,
-                ori_weight=ori_weight,
-            ),
-            pk.costs.rest_cost(
-                joint_var,
-                q_prev,
-                jnp.array(similarity_weight),
-            ),
-            pk.costs.limit_constraint(robot, joint_var),
-        ]
-
-        sol = (
-            jaxls.LeastSquaresProblem(costs=costs, variables=[joint_var])
-            .analyze()
-            .solve(
-                verbose=False,
-                linear_solver="dense_cholesky",
-                trust_region=jaxls.TrustRegionConfig(lambda_initial=1.0),
-                initial_vals=jaxls.VarValues.make([joint_var.with_value(q_init)]),
-            )
-        )
-        return sol[joint_var]
-
     all_joint_configs = np.zeros((n_points, len(q_current)))
     if show_progress:
         _print_progress(0, n_points)
 
     for i in range(n_points):
+        # pin_start: skip IK for the first point and use q_seed directly so that
+        # joint_trajectory_controller gets a trajectory whose first point exactly
+        # matches the measured robot state, preventing a large instantaneous jump.
+        if pin_start and i == 0:
+            all_joint_configs[0] = q_current
+            if show_progress:
+                _print_progress(1, n_points)
+            continue
         q_jax = jnp.array(q_current)
         q_sol = solve_ik_single(
             jnp.array(interp_quat_wxyz[i]),
             jnp.array(interp_pos[i]),
             q_jax,
             q_jax,
-        )
+        )  # reuses cached JIT-compiled solver — no retrace after first call
         q_sol.block_until_ready()
         q_current = np.array(q_sol)
         all_joint_configs[i] = q_current
