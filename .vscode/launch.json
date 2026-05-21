@@ -7,9 +7,15 @@
             "request": "launch",
             "program": "${file}",
             "python": "${workspaceFolder}/.pixi/envs/humble/bin/python",
+            "pythonArgs": [
+                "-Xfrozen_modules=off"
+            ],
             "args": [],
             // "preLaunchTask": "gen-vscode-env",
             "envFile": "${workspaceFolder}/.vscode/.env.humble",
+            "env": {
+                "PYDEVD_DISABLE_FILE_VALIDATION": "1"
+            },
             "console": "integratedTerminal",
             "pathMappings": [
                 // {
@@ -41,6 +47,9 @@
             "request": "launch",
             "module": "pytest",
             "python": "${workspaceFolder}/.pixi/envs/humble/bin/python",
+            "pythonArgs": [
+                "-Xfrozen_modules=off"
+            ],
             "args": [
                 "${file}",
                 "-v",
@@ -64,7 +73,8 @@
                 }
             ],
             "env": {
-                "PYTHONPATH": "${workspaceFolder}/src:${workspaceFolder}/install_humble/arm_client/lib/python3.12/site-packages:${workspaceFolder}/install_humble/franka_rim/lib/python3.12/site-packages"
+                "PYTHONPATH": "${workspaceFolder}/src:${workspaceFolder}/install_humble/arm_client/lib/python3.12/site-packages:${workspaceFolder}/install_humble/franka_rim/lib/python3.12/site-packages",
+                "PYDEVD_DISABLE_FILE_VALIDATION": "1"
             }
         },
         {
@@ -73,6 +83,9 @@
             "request": "launch",
             "module": "pytest",
             "python": "${workspaceFolder}/.pixi/envs/humble/bin/python",
+            "pythonArgs": [
+                "-Xfrozen_modules=off"
+            ],
             "args": [
                 "${workspaceFolder}/src/robot_arm/robot_arm_testing/test/",
                 "-v",
@@ -82,7 +95,8 @@
             "console": "integratedTerminal",
             "justMyCode": false,
             "env": {
-                "PYTHONPATH": "${workspaceFolder}/src:${workspaceFolder}/install_humble/arm_client/lib/python3.12/site-packages:${workspaceFolder}/install_humble/franka_rim/lib/python3.12/site-packages"
+                "PYTHONPATH": "${workspaceFolder}/src:${workspaceFolder}/install_humble/arm_client/lib/python3.12/site-packages:${workspaceFolder}/install_humble/franka_rim/lib/python3.12/site-packages",
+                "PYDEVD_DISABLE_FILE_VALIDATION": "1"
             }
         },
         {
@@ -92,8 +106,14 @@
             // "program": "${workspaceFolder}/python/rim_teleop/src/rim_teleop/main.py",
             "program": "${workspaceFolder}/python/rim_teleop/scripts/run_experiment.py",
             "python": "${workspaceFolder}/.pixi/envs/humble/bin/python",
+            "pythonArgs": [
+                "-Xfrozen_modules=off", // To speed up debugger launch
+            ],
             // "preLaunchTask": "gen-vscode-env",
             "envFile": "${workspaceFolder}/.vscode/.env.humble",
+            "env": {
+                "PYDEVD_DISABLE_FILE_VALIDATION": "1" // To speed up debugger launch
+            },
             "console": "internalConsole",
             "args": [
                 "--config",
