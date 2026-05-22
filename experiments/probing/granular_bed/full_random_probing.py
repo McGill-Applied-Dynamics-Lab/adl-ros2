@@ -31,7 +31,7 @@ BASE_ORI = R.from_euler("xyz", [-180, 0, 0], degrees=True)
 PROBE_START_Z = 0.1150  # start height for probing (m)
 
 # Teensy configuration (quad_tx 4-channel firmware)
-TEENSY = False  # set False to skip Teensy and run robot-only
+TEENSY = True  # set False to skip Teensy and run robot-only
 DEBUG_PLOTS = True  # save per-probe diagnostic plots to <output_dir>/debug_plots/
 SERIAL_PORT = "/dev/ttyACM0"
 BAUD_RATE = 3000000
@@ -40,6 +40,8 @@ BASELINE_DURATION_SEC = 2.0
 PLUNGE_SIMILARITY_WEIGHT = 0.1  # higher than default (0.001) to suppress IK branch-switching during plunge
 PLUNGE_ORI_WEIGHT = 200.0  # higher than default (50.0) to keep orientation fixed throughout plunge
 PLUNGE_POINTS_PER_SEC = 100  # IK solve density — keeps joint-space gaps constant regardless of plunge speed
+
+# TODO: Estimate bed curvature1.
 
 
 # ===================== Teensy serial helpers =====================

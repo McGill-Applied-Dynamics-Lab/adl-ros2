@@ -162,6 +162,7 @@ class Robot:
         self._dq_target: None | np.ndarray = None
         self._tau_current = None
         self._tau_target = None
+        self._last_joint_state_time: float | None = None
 
         # Task space states
         self._current_pose = None
@@ -404,6 +405,24 @@ class Robot:
             and self._q_target is not None
         )
 
+    def is_alive(self, timeout: float = 1.0) -> bool:
+        """Check if the robot server is actively publishing joint state.
+
+        Useful for detecting a crashed or disconnected robot server without
+        relying on ROS topic liveness alone.
+
+        Args:
+            timeout: Maximum acceptable age of the last received joint state (seconds).
+                     The robot publishes at ~100 Hz, so values above 0.5 s indicate
+                     a stale or dead connection.
+
+        Returns:
+            bool: True if a joint state was received within the last `timeout` seconds.
+        """
+        if self._last_joint_state_time is None:
+            return False
+        return (time.perf_counter() - self._last_joint_state_time) < timeout
+
     def reset_targets(self):
         """Reset all target values to None.
 
@@ -611,6 +630,8 @@ class Robot:
 
         if self._tau_target is None:
             self._tau_target = self._tau_current.copy()
+
+        self._last_joint_state_time = time.perf_counter()
 
     # =======================
     # MARK: Utilities

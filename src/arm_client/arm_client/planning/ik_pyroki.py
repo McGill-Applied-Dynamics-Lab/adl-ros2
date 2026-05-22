@@ -124,6 +124,39 @@ def _get_ik_solver(robot: Any, target_link_index: int, pos_weight: float, ori_we
     return _fr3_ik_solvers[key]
 
 
+def compute_fk_trajectory(
+    joint_positions: np.ndarray,
+    target_link_name: str,
+) -> np.ndarray:
+    """Compute Cartesian positions for a sequence of joint configs via FK.
+
+    Reuses the cached robot model — no URDF reload after the first call.
+
+    Args:
+        joint_positions: (N, n_arm_joints) array of joint configurations, as
+            stored in PlannedJointTrajectory (arm joints only, already sliced).
+            Will be padded to the full pyroki actuated-joint count using the
+            robot's default values for the remaining joints (e.g. hand/fingers).
+        target_link_name: Name of the link to evaluate FK at.
+
+    Returns:
+        positions: (N, 3) Cartesian positions of the target link in world frame.
+    """
+    robot = _get_fr3_robot()
+    target_link_index = robot.links.names.index(target_link_name)
+
+    # PlannedJointTrajectory stores only arm joints; pad to full pyroki size.
+    default_q = np.array(robot.joint_var_cls(0).default_factory())
+    n_full = len(default_q)
+    n_arm = joint_positions.shape[1]
+    full_positions = np.tile(default_q, (len(joint_positions), 1))
+    full_positions[:, :n_arm] = joint_positions
+
+    # Batched FK: (N, n_full) -> (N, link_count, 7) in wxyz_xyz format
+    Ts = robot.forward_kinematics(jnp.array(full_positions, dtype=float))
+    return np.array(Ts[:, target_link_index, 4:])  # xyz is the last 3 of 7
+
+
 def plan_fr3_joint_trajectory(
     waypoints: list[CartesianWaypoint],
     duration: float,

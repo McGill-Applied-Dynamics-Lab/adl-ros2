@@ -3,6 +3,14 @@ import matplotlib.pyplot as plt
 from pathlib import Path
 import pickle
 
+GRID_TYPE = "random"  # 'uniform'
+PROBE_DIAMETER = 0.016  # (m)
+ADD_OFFSET = 0.005  # (m)
+RANDOM = True
+
+DEPTH_RANGE = (0.01, 0.03)  # depth range in meters (min, max)
+TIME_RANGE = (1, 4)  # time range in seconds (min, max)
+
 
 def generate_grid(x_extent, y_extent, nx, ny):
     """Generate training and testing grid points within a rectangular area."""
@@ -73,18 +81,17 @@ def find_rotation(landmark_file: str):
 if __name__ == "__main__":
     PROJECT_ROOT = Path(__file__).resolve().parent
     LANDMARK_FILE = PROJECT_ROOT / "results" / "grids" / "landmarks.txt"
+
     # Check if landmark file exists
     if not LANDMARK_FILE.exists():
         raise FileNotFoundError(f"Landmark file not found: {LANDMARK_FILE}")
-    PROBE_DIAMETER = 0.016  # (m)
-    ADD_OFFSET = 0.005  # (m)
+
     X_SHIFT = 0.010 + PROBE_DIAMETER / 2 + ADD_OFFSET  # (m)
     Y_SHIFT = 0.010 + PROBE_DIAMETER / 2 + ADD_OFFSET  # (m)
     X_EXTENT = 0.10 - PROBE_DIAMETER - 2 * ADD_OFFSET  # (m)
     Y_EXTENT = 0.10 - PROBE_DIAMETER - 2 * ADD_OFFSET  # (m)
     grids = {}  # dictionary to hold grids
 
-    GRID_TYPE = "random"  # 'uniform'
     if GRID_TYPE == "uniform":
         train_, test_ = generate_grid(x_extent=X_EXTENT, y_extent=Y_EXTENT, nx=10, ny=10)  # generate rectangular grid
     elif GRID_TYPE == "random":
@@ -123,7 +130,6 @@ if __name__ == "__main__":
     grids["WORLD_FRAME"] = {"train": train, "test": test}
 
     # Repeat and randomize points
-    RANDOM = True
     COPIES = 1
     temp_train_rep = np.tile(temp_train, (COPIES, 1))
     temp_test_rep = np.tile(temp_test, (COPIES, 1))
@@ -144,8 +150,7 @@ if __name__ == "__main__":
         grids["WORLD_FRAME"]["test"] = test_rep
 
     # Save depths and plunge times
-    DEPTH_RANGE = (0.01, 0.03)  # depth range in meters (min, max)
-    TIME_RANGE = (1, 4)  # time range in seconds (min, max)
+
     depths_train = np.random.uniform(DEPTH_RANGE[0], DEPTH_RANGE[1], size=len(train))
     times_train = np.random.uniform(TIME_RANGE[0], TIME_RANGE[1], size=len(train))
     depths_test = np.random.uniform(DEPTH_RANGE[0], DEPTH_RANGE[1], size=len(test))
