@@ -58,7 +58,10 @@
     {
       "label": "fr3 - home",
       "type": "shell",
-      "command": "docker exec -it adl_ros2 bash -c 'source /home/ros/ros2_ws/install/setup.bash && cd /home/ros/ros2_ws/src/adl-ros2 && python src/arm_client/scripts/00_home.py'",
+      "command": [
+        "cd ${workspaceFolder} &&",
+        "pixi run -e humble python examples/00_home.py"
+      ],
       "problemMatcher": [],
       "group": {
         "kind": "test",

@@ -159,6 +159,6 @@
         "**/install/**/*.py": true
     },
     "ROS2.distro": "humble",
-    "python-envs.defaultEnvManager": "ms-python.python:system",
-    "python-envs.pythonProjects": []
+    "python-envs.defaultEnvManager": "renan-r-santos.pixi-code:pixi",
+    "python-envs.defaultPackageManager": "renan-r-santos.pixi-code:pixi"
 }
