@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import threading
+
 import numpy as np
 
 from .models import RIM
@@ -24,16 +25,19 @@ class DelayRIM:
         stiffness: float,
         damping: float,
         contact_surface: float,
+        vel_filter_alpha: float = 1.0,
     ) -> None:
         self._m = interface_dim
         self._dt = dt
         self._k = stiffness
         self._d = damping
         self._contact_surface = contact_surface
+        self._vel_alpha = float(np.clip(vel_filter_alpha, 0.0, 1.0))
         self._lock = threading.Lock()
 
         self._leader_pos = np.zeros(self._m)
         self._leader_vel = np.zeros(self._m)
+        self._leader_vel_filt = np.zeros(self._m)  # IIR state
 
         self._rim: RIM | None = None
         self._mass_factor: np.ndarray | None = None
@@ -43,7 +47,9 @@ class DelayRIM:
     def add_leader_state(self, position: np.ndarray, velocity: np.ndarray) -> None:
         with self._lock:
             self._leader_pos = position.reshape(self._m).copy()
-            self._leader_vel = velocity.reshape(self._m).copy()
+            raw_vel = velocity.reshape(self._m)
+            self._leader_vel_filt = self._vel_alpha * raw_vel + (1.0 - self._vel_alpha) * self._leader_vel_filt
+            self._leader_vel = self._leader_vel_filt.copy()
 
     def update_rim(self, rim: RIM) -> None:
         """Refresh model terms (M_eff, z_i, f_eff) while preserving integrated state."""
@@ -75,7 +81,8 @@ class DelayRIM:
             x_next = x_rim + self._dt * v_rim
 
             # LCP unilateral contact: snap to surface and kill inward velocity
-            if x_next[0] < self._contact_surface:
+            in_contact = x_next[0] < self._contact_surface
+            if in_contact:
                 x_next[0] = self._contact_surface
                 if v_next[0] < 0.0:
                     v_next[0] = 0.0
@@ -83,8 +90,14 @@ class DelayRIM:
             self._rim.x = x_next
             self._rim.v = v_next
 
-            # Use post-step state so the user feels the wall on the same tick it fires
             self._interface_force = self._k * (x_next - self._leader_pos) + self._d * (v_next - self._leader_vel)
+
+            # # Render spring always; add damping only at contact (passive: D*v always dissipates
+            # # at the wall, and the instability only occurs in free-space oscillation).
+            # self._interface_force = self._k * (x_next - self._leader_pos)
+            # if in_contact:
+            #     self._interface_force += self._d * (v_next - self._leader_vel)
+
             return x_next.copy(), v_next.copy()
 
     def get_interface_force(self) -> np.ndarray:

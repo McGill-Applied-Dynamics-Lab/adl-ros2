@@ -11,9 +11,10 @@ interface:
   contact_surface: 0.03  # 19.5mm, 
   contact_stiffness: 10000.0
   contact_damping: 100.0
-  rim_enabled: true
   force_scale: 0.1
+  rim_enabled: true
   force_feedback: rim  # "none" | "robot" | "rim"
+  vel_filter_alpha: 0.2  # IIR on leader velocity; 1.0 = off, ~35 Hz cutoff at 1 kHz
 
 safety:
   stale_state_timeout_s: 0.2

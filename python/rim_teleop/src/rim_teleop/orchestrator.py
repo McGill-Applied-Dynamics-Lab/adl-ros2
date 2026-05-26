@@ -55,6 +55,7 @@ class RIMTeleopOrchestrator:
             stiffness=config.interface.stiffness,
             damping=config.interface.damping,
             contact_surface=config.interface.contact_surface,
+            vel_filter_alpha=config.interface.vel_filter_alpha,
         )
         self.logger = ExperimentLogger(config.logging, full_config=config)
 

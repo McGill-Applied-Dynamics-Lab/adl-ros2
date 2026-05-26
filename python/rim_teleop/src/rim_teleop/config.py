@@ -32,6 +32,7 @@ class InterfaceConfig:
     force_cap: float = 12.0
     rim_enabled: bool = True
     force_feedback: str = "rim"  # "none" | "robot" | "rim"
+    vel_filter_alpha: float = 1.0  # IIR alpha for leader velocity; 1.0 = no filter
 
 
 @dataclass(kw_only=True)
