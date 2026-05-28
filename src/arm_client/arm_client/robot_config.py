@@ -40,6 +40,7 @@ class RobotConfig:
     target_pose_topic: str = "target_pose"
     target_joint_topic: str = "target_joint"
     target_trajectory_topic: str = "target_trajectory"
+    target_wrench_topic: str = "target_wrench"
 
     current_pose_topic: str = "current_pose"
     current_joint_topic: str = "joint_states"

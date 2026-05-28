@@ -90,7 +90,7 @@ class RIMTeleopOrchestrator:
                 self._setup_fn(self._robot)
             self._robot.controller_switcher_client.switch_controller(self.cfg.robot.controller_name)
             self._robot.osc_pd_controller_parameters_client.load_param_config(
-                file_path=CONFIG_DIR / "controllers" / "osc_pd" / "default.yaml"
+                file_path=CONFIG_DIR / "controllers" / "osc_pd" / "rim_controller.yaml"
             )  # TODO: Specify param file in the config
             self._home_pose = self._robot.end_effector_pose.copy()
 
@@ -157,8 +157,7 @@ class RIMTeleopOrchestrator:
 
         feedforward = np.zeros(3)
         feedforward[axis] = float(interface_force_1d[0])
-        # Step 4: enable once osc_pd_controller on franka-server supports feedforward wrench injection.
-        # self._robot.set_target_wrench(force=feedforward, torque=np.zeros(3))
+        self._robot.set_target_wrench(force=feedforward, torque=np.zeros(3))
 
     def set_deadman(self, active: bool) -> None:
         """Set deadman state. When inactive, command and force outputs are gated off."""
@@ -230,7 +229,8 @@ class RIMTeleopOrchestrator:
 
             haptic_log: dict = {
                 "leader_pos": leader_pos,  # Position of the I3 in the robot base frame
-                "leader_vel": leader_vel,  # Velocity of the I3 in the robot base frame
+                "leader_vel": leader_vel,  # Raw velocity from the I3
+                "leader_vel_filt": self.delay_rim.get_leader_vel(),  # Filtered velocity used by DelayRIM
                 "force_cmd": haptic_force,  # Force command sent to the haptic device
                 "rim_interface_force": rim_interface_force,  # Force from the RIM interface
                 "robot_force": robot_force,  # Force from the robot

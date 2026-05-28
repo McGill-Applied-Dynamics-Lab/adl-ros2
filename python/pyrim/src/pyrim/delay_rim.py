@@ -80,8 +80,10 @@ class DelayRIM:
             v_next = self._mass_factor @ v_rim + self._dt * self._inv_aug @ regular
             x_next = x_rim + self._dt * v_rim
 
-            # LCP unilateral contact: snap to surface and kill inward velocity
-            in_contact = x_next[0] < self._contact_surface
+            # LCP unilateral contact: snap to surface and kill inward velocity.
+            # Use <= so x_rim exactly at the surface stays in contact and avoids
+            # alternating-tick chatter (strict < would miss contact after clamping).
+            in_contact = x_next[0] <= self._contact_surface
             if in_contact:
                 x_next[0] = self._contact_surface
                 if v_next[0] < 0.0:
@@ -99,6 +101,11 @@ class DelayRIM:
             #     self._interface_force += self._d * (v_next - self._leader_vel)
 
             return x_next.copy(), v_next.copy()
+
+    def get_leader_vel(self) -> np.ndarray:
+        """Return the filtered leader velocity used internally by step()."""
+        with self._lock:
+            return self._leader_vel.copy()
 
     def get_interface_force(self) -> np.ndarray:
         with self._lock:

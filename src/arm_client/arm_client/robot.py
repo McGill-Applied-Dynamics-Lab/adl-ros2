@@ -196,7 +196,7 @@ class Robot:
             CartesianTrajectory, self.config.target_trajectory_topic, qos_profile_system_default
         )
         self._target_wrench_publisher = self.node.create_publisher(
-            WrenchStamped, "target_wrench", qos_profile_system_default
+            WrenchStamped, self.config.target_wrench_topic, qos_profile_system_default
         )
         self._target_joint_publisher = self.node.create_publisher(
             JointState, self.config.target_joint_topic, qos_profile_system_default
@@ -677,7 +677,7 @@ class Robot:
 
         self._last_wrench_update_time = time.time()
         if self._target_wrench is None:
-            self._target_wrench = self._current_wrench.copy()
+            self._target_wrench = {"force": [0.0, 0.0, 0.0], "torque": [0.0, 0.0, 0.0]}
 
     def _callback_robot_state(self, msg: FrankaRobotState) -> None:
         efforts = msg.tau_ext_hat_filtered.effort
