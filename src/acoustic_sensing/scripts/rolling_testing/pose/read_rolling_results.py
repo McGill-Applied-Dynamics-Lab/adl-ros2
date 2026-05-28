@@ -12,6 +12,7 @@ from matplotlib.patches import FancyBboxPatch, Rectangle
 
 CHANNEL_NAMES = ("S0", "S1", "S2", "S3")
 RESULTS_DIR = Path(__file__).resolve().parent / "results"
+RF_PLOT_X_MIN = 350  # match live_rolling_view.py viewport
 
 # ── colour palette ───────────────────────────────────────────────────────────
 BG        = "#12121e"
@@ -33,18 +34,27 @@ def load_result(path: Path) -> dict:
 
 
 def _pick_trial_dir(results_dir: Path) -> Path:
-    trial_dirs = sorted([p for p in results_dir.glob("trial_*") if p.is_dir()])
-    if not trial_dirs:
-        raise FileNotFoundError(f"No trial folders found in {results_dir}")
-    print("\nAvailable trials:")
-    for i, path in enumerate(trial_dirs):
-        print(f"  [{i}] {path.name}")
-    raw = input(f"Select trial [0-{len(trial_dirs) - 1}]: ").strip()
+    """Pick any subdirectory of *results_dir* that contains .pkl result files.
+
+    Accepts both auto-numbered `trial_NN/` folders and operator-named ones
+    like `1mm_depth_dia24mm/`.  Folders without .pkl files are hidden.
+    """
+    candidate_dirs = sorted(
+        [p for p in results_dir.iterdir()
+         if p.is_dir() and any(p.glob("*.pkl"))]
+    )
+    if not candidate_dirs:
+        raise FileNotFoundError(f"No result folders with .pkl files found in {results_dir}")
+    print("\nAvailable result folders:")
+    for i, path in enumerate(candidate_dirs):
+        n_pkls = len(list(path.glob("*.pkl")))
+        print(f"  [{i}] {path.name}  ({n_pkls} file{'s' if n_pkls != 1 else ''})")
+    raw = input(f"Select folder [0-{len(candidate_dirs) - 1}]: ").strip()
     try:
-        return trial_dirs[int(raw)]
+        return candidate_dirs[int(raw)]
     except (ValueError, IndexError):
         print("Invalid selection, using 0.")
-        return trial_dirs[0]
+        return candidate_dirs[0]
 
 
 def _pick_speed_file(trial_dir: Path) -> Path:
@@ -89,6 +99,42 @@ def _frame_times(trial: dict, expected_samples: int) -> np.ndarray:
             continue
         ts.append(float(t))
     return np.asarray(ts, dtype=float)
+
+
+def _eef_series(trial: dict, frame_times: np.ndarray, key: str, none_as_nan: bool = False) -> np.ndarray:
+    """Generic (N_frames, 3) series interpolated from ee_poses. Returns NaN array if unavailable."""
+    ee_poses = trial.get("ee_poses_slide_only") or trial.get("ee_poses", [])
+    nan_arr = np.full((max(len(frame_times), 0), 3), np.nan, dtype=float)
+    if not ee_poses or len(frame_times) == 0:
+        return nan_arr
+    ee_ts = np.asarray([p["t"] for p in ee_poses], dtype=float)
+    if none_as_nan:
+        raw = [p.get(key) for p in ee_poses]
+        if all(v is None for v in raw):
+            return nan_arr
+        vals = np.asarray([[np.nan] * 3 if v is None else v for v in raw], dtype=float)
+    else:
+        vals = np.asarray([p.get(key, [np.nan] * 3) for p in ee_poses], dtype=float)
+    out = np.empty((len(frame_times), 3), dtype=float)
+    for axis in range(3):
+        out[:, axis] = np.interp(frame_times, ee_ts, vals[:, axis],
+                                 left=vals[0, axis], right=vals[-1, axis])
+    return out
+
+
+def _cmd_eef_series(trial: dict, frame_times: np.ndarray, key: str) -> np.ndarray:
+    """Same as _eef_series but reads from commanded_ee_poses."""
+    cmd_poses = trial.get("commanded_ee_poses", [])
+    nan_arr = np.full((max(len(frame_times), 0), 3), np.nan, dtype=float)
+    if not cmd_poses or len(frame_times) == 0:
+        return nan_arr
+    cmd_ts = np.asarray([p["t"] for p in cmd_poses], dtype=float)
+    vals = np.asarray([p.get(key, [np.nan] * 3) for p in cmd_poses], dtype=float)
+    out = np.empty((len(frame_times), 3), dtype=float)
+    for axis in range(3):
+        out[:, axis] = np.interp(frame_times, cmd_ts, vals[:, axis],
+                                 left=vals[0, axis], right=vals[-1, axis])
+    return out
 
 
 def _eef_rotation_series_deg(trial: dict, frame_times: np.ndarray) -> np.ndarray:
@@ -161,12 +207,33 @@ def print_summary(path: Path, payload: dict) -> None:
     trial = payload["trial"]
     session = payload["session"]
     summary = trial.get("rf_capture_summary", {})
+    static_rf = trial.get("static_rf") or {}
     print("\n" + "=" * 72)
     print(f"File: {path}")
     print(f"Speed: {trial['speed_m_s'] * 1000.0:.1f} mm/s")
+    speed_idx = trial.get("speed_idx")
+    rep_idx = trial.get("repeat_idx")
+    if speed_idx is not None and rep_idx is not None:
+        print(f"Speed/repeat index: speed_idx={speed_idx}, repeat_idx={rep_idx}")
+    diam = trial.get("roller_diameter_m", session.get("roller_diameter_m"))
+    if diam is not None:
+        print(f"Roller diameter: {float(diam) * 1000.0:.1f} mm")
+    roll_dist = trial.get("roll_distance_m")
+    roll_off = trial.get("roll_end_offset_m", session.get("roll_end_offset_m"))
+    if roll_dist is not None and roll_off is not None:
+        print(
+            f"Roll distance: {float(roll_dist) * 1000.0:.1f} mm  "
+            f"(end offset {float(roll_off) * 1000.0:.1f} mm)"
+        )
     print(f"RF frames: {summary.get('frame_count', 0)}")
     print(f"RF coverage: {summary.get('coverage_ratio', 0.0) * 100.0:.1f}%")
     print(f"Expected RF samples/frame/channel: {session.get('expected_rf_samples', '?')}")
+    if static_rf:
+        sb_frames = len(static_rf.get("frames") or [])
+        print(
+            f"Static (stationary) RF baseline: {sb_frames} frames"
+            f" (requested {static_rf.get('n_frames_requested', '?')})"
+        )
     print(f"Compress duration: {trial.get('compress_duration_s', float('nan')):.2f} s")
     print(f"Slide duration: {trial.get('slide_duration_s', float('nan')):.2f} s")
     print(f"Decompress duration: {trial.get('decompress_duration_s', float('nan')):.2f} s")
@@ -195,8 +262,13 @@ def replay(payload: dict, fps: float) -> FuncAnimation:
     expected_samples = int(session["expected_rf_samples"])
     arr = _extract_rf_array(trial, expected_samples)
     ts = _frame_times(trial, expected_samples)
-    pos_m = _eef_position_series_m(trial, ts)
+    pos_m   = _eef_position_series_m(trial, ts)
     rot_deg = _eef_rotation_series_deg(trial, ts)
+    frc_N   = _eef_series(trial, ts, "force_xyz")
+    vel_ms  = _eef_series(trial, ts, "velocity_xyz", none_as_nan=True)
+    acc_ms2 = _eef_series(trial, ts, "acceleration_xyz", none_as_nan=True)
+    cmd_pos_m   = _cmd_eef_series(trial, ts, "position")
+    cmd_rot_deg = _cmd_eef_series(trial, ts, "orientation_euler_deg_xyz")
     n_frames, n_ch, n_samples = arr.shape
 
     compress_duration  = float(trial["compress_duration_s"])
@@ -216,11 +288,11 @@ def replay(payload: dict, fps: float) -> FuncAnimation:
         left=0.055, right=0.975,
         top=0.92, bottom=0.07,
     )
-    chart_gs = outer[0, 0].subgridspec(4, 1, hspace=0.55)
-    axes = [fig.add_subplot(chart_gs[i, 0]) for i in range(4)]
+    chart_gs = outer[0, 0].subgridspec(1, 4, wspace=0.35)
+    axes = [fig.add_subplot(chart_gs[0, i]) for i in range(4)]
 
     # Right side: contact viz (tall) on top, info panel below
-    right_gs = outer[0, 1].subgridspec(2, 1, height_ratios=[2.2, 1.0], hspace=0.28)
+    right_gs = outer[0, 1].subgridspec(2, 1, height_ratios=[1.5, 1.7], hspace=0.28)
     contact_ax = fig.add_subplot(right_gs[0, 0])
     info_ax    = fig.add_subplot(right_gs[1, 0])
 
@@ -231,13 +303,11 @@ def replay(payload: dict, fps: float) -> FuncAnimation:
     margin = (vmax - vmin) * 0.05
     lines = []
     for idx, ax in enumerate(axes):
-        xlabel = "Sample index" if idx == 3 else ""
-        _style_ax(ax, ylabel="ADC", xlabel=xlabel, title=CHANNEL_NAMES[idx])
+        _style_ax(ax, ylabel="ADC" if idx == 0 else "",
+                  xlabel="Sample index", title=CHANNEL_NAMES[idx])
         (line,) = ax.plot(x, arr[0, idx], lw=1.1, color=CH_COLORS[idx], alpha=0.92)
-        ax.set_xlim(0, n_samples - 1)
+        ax.set_xlim(RF_PLOT_X_MIN, n_samples - 1)
         ax.set_ylim(vmin - margin, vmax + margin)
-        if idx < 3:
-            ax.set_xticklabels([])
         lines.append(line)
 
     # ── contact visualisation ────────────────────────────────────────────────
@@ -282,11 +352,16 @@ def replay(payload: dict, fps: float) -> FuncAnimation:
     info_text = info_ax.text(
         0.07, 0.96, "",
         ha="left", va="top",
-        fontsize=8.2,
+        fontsize=7.5,
         color=TEXT,
         fontfamily="monospace",
         transform=info_ax.transAxes,
-        linespacing=1.65,
+        linespacing=1.45,
+    )
+    info_meas_lbl = info_ax.text(
+        0.13, 0.846, "meas",
+        ha="left", va="top", fontsize=7.5, color="#ff4444",
+        fontfamily="monospace", transform=info_ax.transAxes,
     )
 
     # ── title ────────────────────────────────────────────────────────────────
@@ -347,21 +422,43 @@ def replay(payload: dict, fps: float) -> FuncAnimation:
 
         px, py, pz = pos_m[frame_idx]
         rx, ry, rz = rot_deg[frame_idx]
+        fx, fy, fz = frc_N[frame_idx]
+        vx, vy, vz = vel_ms[frame_idx]
+        acx, acy, acz = acc_ms2[frame_idx]
+        cpx, cpy, cpz = cmd_pos_m[frame_idx]
+        crx, cry, crz = cmd_rot_deg[frame_idx]
+
+        def _ff(v: float) -> str:
+            return f"{v:+.2f}" if not np.isnan(v) else "  n/a"
+
+        def _fv(v: float) -> str:
+            return f"{v:+.5f}" if not np.isnan(v) else "   n/a  "
+
+        def _fa(v: float) -> str:
+            return f"{v:+.3f}" if not np.isnan(v) else "  n/a"
+
+        def _ferr(m, c):
+            return f"{(m-c)*1000:+.2f}" if not (np.isnan(m) or np.isnan(c)) else "  n/a"
+
+        def _rerr(m, c):
+            return f"{m-c:+.3f}" if not (np.isnan(m) or np.isnan(c)) else " n/a"
 
         info_text.set_text(
-            f"t   {t_now:6.2f} / {rf_window_duration:.2f} s\n"
+            f"t   {t_now:6.2f} / {rf_window_duration:.2f} s   [{ph}]\n"
+            f"cmp {compress_duration:.2f}s  sld {slide_duration:.2f}s  dcmp {decompress_duration:.2f}s\n"
             f"\n"
-            f"compress   {compress_duration:.2f} s\n"
-            f"slide      {slide_duration:.2f} s\n"
-            f"decompress {decompress_duration:.2f} s\n"
+            f"               cmd      err\n"
+            f" x  {px:+.4f}  {cpx:+.4f}  {_ferr(px,cpx)} mm\n"
+            f" y  {py:+.4f}  {cpy:+.4f}  {_ferr(py,cpy)} mm\n"
+            f" z  {pz:+.4f}  {cpz:+.4f}  {_ferr(pz,cpz)} mm\n"
             f"\n"
-            f"x   {px:+.4f} m\n"
-            f"y   {py:+.4f} m\n"
-            f"z   {pz:+.4f} m\n"
+            f"rx  {rx:+.2f}°  {crx:+.2f}°  {_rerr(rx,crx)}°\n"
+            f"ry  {ry:+.2f}°  {cry:+.2f}°  {_rerr(ry,cry)}°\n"
+            f"rz  {rz:+.2f}°  {crz:+.2f}°  {_rerr(rz,crz)}°\n"
             f"\n"
-            f"rx  {rx:+.2f}°\n"
-            f"ry  {ry:+.2f}°\n"
-            f"rz  {rz:+.2f}°"
+            f"Fx {_ff(fx)} N   vx {_fv(vx)} m/s\n"
+            f"Fy {_ff(fy)} N   vy {_fv(vy)} m/s\n"
+            f"Fz {_ff(fz)} N   vz {_fv(vz)} m/s"
         )
         return [*lines, contact_band, phase_text, info_text, title]
 
@@ -370,16 +467,67 @@ def replay(payload: dict, fps: float) -> FuncAnimation:
     return ani
 
 
+def _resolve_root(arg_path: Path | None, env_path: str | None) -> Path:
+    """Decide which directory to scan for result folders.
+
+    Priority:
+      1. `path` argument if it's a directory (use as root)
+      2. `--results-dir` flag (handled by argparse above this)
+      3. ROLLING_RESULTS_DIR environment variable
+      4. default RESULTS_DIR next to this script
+    """
+    if arg_path is not None and arg_path.is_dir():
+        return arg_path
+    if env_path:
+        return Path(env_path).expanduser().resolve()
+    return RESULTS_DIR
+
+
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Replay rolling-testing RF result files.")
-    parser.add_argument("path", nargs="?", help="Optional direct path to a per-speed result .pkl")
+    parser = argparse.ArgumentParser(
+        description=(
+            "Replay rolling-testing RF result files.\n\n"
+            "Positional 'path' can be:\n"
+            "  - a single .pkl file → replay it directly\n"
+            "  - a directory that holds *.pkl files → pick one of those\n"
+            "  - a directory of result folders (each with *.pkl) → pick folder then file\n"
+            "If omitted, scans --results-dir (or $ROLLING_RESULTS_DIR, or the default\n"
+            "results/ folder next to this script)."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument("path", nargs="?", help="Optional .pkl file OR folder")
+    parser.add_argument(
+        "--results-dir",
+        help=(
+            "Root directory of result folders (overrides the default and the "
+            "ROLLING_RESULTS_DIR env var).  Used only when 'path' is not a file."
+        ),
+    )
     parser.add_argument("--fps", type=float, default=20.0, help="Replay fps")
     args = parser.parse_args()
 
-    if args.path:
-        path = Path(args.path).expanduser().resolve()
+    arg_path = Path(args.path).expanduser().resolve() if args.path else None
+
+    if arg_path is not None and arg_path.is_file():
+        # Direct .pkl path
+        path = arg_path
     else:
-        trial_dir = _pick_trial_dir(RESULTS_DIR)
+        # Decide root: explicit --results-dir, then env, then positional dir, then default
+        if args.results_dir:
+            root = Path(args.results_dir).expanduser().resolve()
+        else:
+            import os
+            root = _resolve_root(arg_path, os.environ.get("ROLLING_RESULTS_DIR"))
+
+        if not root.exists():
+            raise SystemExit(f"Results root not found: {root}")
+
+        # If the root itself contains .pkl files, treat it as a single trial folder.
+        if any(root.glob("*.pkl")):
+            trial_dir = root
+        else:
+            trial_dir = _pick_trial_dir(root)
         path = _pick_speed_file(trial_dir)
 
     payload = load_result(path)

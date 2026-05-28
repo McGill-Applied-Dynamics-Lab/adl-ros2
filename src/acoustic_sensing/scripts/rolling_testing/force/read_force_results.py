@@ -153,6 +153,7 @@ def print_summary(path: Path, payload: dict) -> None:
     trial = payload["trial"]
     session = payload["session"]
     summary = trial.get("rf_capture_summary", {})
+    static_rf = trial.get("static_rf") or {}
     sf = trial.get("ee_poses_slide_force", [])
     fz_lo = trial.get("force_lower_n", session.get("force_lower_n", float("nan")))
     fz_hi = trial.get("force_upper_n", session.get("force_upper_n", float("nan")))
@@ -160,10 +161,23 @@ def print_summary(path: Path, payload: dict) -> None:
     print("\n" + "=" * 72)
     print(f"File: {path}")
     print(f"Slide speed: {trial.get('slide_speed_m_s', float('nan')) * 1000.0:.1f} mm/s")
+    speed_idx = trial.get("speed_idx")
+    rep_idx = trial.get("repeat_idx")
+    if speed_idx is not None and rep_idx is not None:
+        print(f"Speed/repeat index: speed_idx={speed_idx}, repeat_idx={rep_idx}")
+    diam = trial.get("roller_diameter_m", session.get("roller_diameter_m"))
+    if diam is not None:
+        print(f"Roller diameter: {float(diam) * 1000.0:.1f} mm")
     print(f"Force band:  [{fz_lo:.1f}, {fz_hi:.1f}] N")
     print(f"Termination: {trial.get('termination_reason', '?')}")
     print(f"Roll distance: {trial.get('roll_distance_m', float('nan')) * 1000.0:.1f} mm")
     print(f"RF frames: {summary.get('frame_count', 0)}  coverage: {summary.get('coverage_ratio', 0.0) * 100:.1f}%")
+    if static_rf:
+        sb_frames = len(static_rf.get("frames") or [])
+        print(
+            f"Static (stationary) RF baseline: {sb_frames} frames"
+            f" (requested {static_rf.get('n_frames_requested', '?')})"
+        )
     print(f"Force-control samples: {len(sf)}  in-band: {in_band_pct:.1f}%")
     print(f"Compress duration: {trial.get('compress_duration_s', float('nan')):.2f} s")
     print(f"Decompress duration: {trial.get('decompress_duration_s', float('nan')):.2f} s")
@@ -236,7 +250,7 @@ def replay(payload: dict, fps: float) -> FuncAnimation:
         _style_ax(ax, ylabel="ADC" if idx == 0 else "",
                   xlabel="Sample index", title=CHANNEL_NAMES[idx])
         (line,) = ax.plot(x, arr[0, idx], lw=1.1, color=CH_COLORS[idx], alpha=0.92)
-        ax.set_xlim(500, n_samples - 1)
+        ax.set_xlim(350, n_samples - 1)
         ax.set_ylim(vmin - margin, vmax + margin)
         lines.append(line)
 

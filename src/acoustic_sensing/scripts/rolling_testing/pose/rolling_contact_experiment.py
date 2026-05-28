@@ -83,6 +83,8 @@ from rolling_config import (
     IK_ORIENTATION_WEIGHT,
     IK_POSITION_WEIGHT,
     IK_SIMILARITY_WEIGHT,
+    N_REPEATS,
+    ROLL_END_OFFSET_M,
     ROLL_LENGTH_PERCENT,
     ROLLER_DIAMETER_M,
     RETURN_POINT_SPACING_M,
@@ -93,6 +95,8 @@ from rolling_config import (
     SERIAL_TIMEOUT_SEC,
     SETTLE_SEC,
     SLIDE_POINT_SPACING_M,
+    STATIONARY_BASELINE_FRAMES,
+    STATIONARY_BASELINE_TIMEOUT_SEC,
 )
 
 # Gripper base orientation: 90-degree custom adapter, face pointing down.
@@ -102,7 +106,7 @@ CMD_START = bytes([0x43])
 CMD_STOP = bytes([0x45])
 CHANNEL_MARKERS = ("S0", "S1", "S2", "S3")
 STREAM_END = "STREAM_END"
-EXPECTED_RF_SAMPLES = int((178804.2 / 343.0) * 2.0 * 0.6 * 1.2)
+EXPECTED_RF_SAMPLES = 1000
 
 # ---------------------------------------------------------------------------
 # Results directory
@@ -206,15 +210,45 @@ def rf_stream_stop(
     stop_event: threading.Event,
     thread: threading.Thread,
 ) -> None:
-    """Send CMD_STOP and wait for the reader to flush."""
+    """Send CMD_STOP and wait for the reader to flush.
+
+    Lets the reader thread drain any in-flight bytes (residual frame data +
+    the STREAM_END marker) before exiting.  STREAM_END sets *stop_event*
+    inside `_stream_reader`, so the thread terminates naturally.  Forcing
+    stop_event immediately would kill the reader mid-frame and leave bytes
+    in the OS serial buffer that would corrupt the next session.
+    """
     try:
         written = ser.write(CMD_STOP)
     except serial.SerialException as err:
         raise RuntimeError(f"Failed to send stop byte 69 to Teensy: {err}") from err
     if written != len(CMD_STOP):
         raise RuntimeError(f"Failed to send full stop byte to Teensy: wrote {written} bytes")
-    stop_event.set()
     thread.join(timeout=SERIAL_TIMEOUT_SEC)
+    if thread.is_alive():
+        stop_event.set()
+        thread.join(timeout=1.0)
+
+
+def capture_stationary_frames(
+    ser: serial.Serial,
+    n_frames: int,
+    timeout_s: float = STATIONARY_BASELINE_TIMEOUT_SEC,
+) -> list:
+    """Stream RF until n_frames have been collected, then stop. Returns the frames."""
+    frames, stop_event, _first_frame_event, thread, _t0 = rf_stream_start(ser)
+    deadline = time.perf_counter() + timeout_s
+    try:
+        while len(frames) < n_frames:
+            if time.perf_counter() > deadline:
+                raise TimeoutError(
+                    f"Only received {len(frames)}/{n_frames} stationary RF frames "
+                    f"within {timeout_s:.1f} s."
+                )
+            time.sleep(0.02)
+    finally:
+        rf_stream_stop(ser, stop_event, thread)
+    return frames[:n_frames]
 
 
 # ---------------------------------------------------------------------------
@@ -365,6 +399,28 @@ def _sample_ee_poses(
         time.sleep(period_s)
 
 
+def _sample_cmd_poses(
+    robot: Robot,
+    cmd_poses: list[dict],
+    stop_event: threading.Event,
+    t0: float,
+    period_s: float = EE_SAMPLE_PERIOD_SEC,
+) -> None:
+    while not stop_event.is_set():
+        try:
+            ee = robot.target_pose
+        except RuntimeError:
+            time.sleep(period_s)
+            continue
+        cmd_poses.append({
+            "t": time.perf_counter() - t0,
+            "position": ee.position.tolist(),
+            "orientation_quat": ee.orientation.as_quat().tolist(),
+            "orientation_euler_deg_xyz": ee.orientation.as_euler("xyz", degrees=True).tolist(),
+        })
+        time.sleep(period_s)
+
+
 def _pose_xyz_rpy_str(pose: Pose) -> str:
     pos = np.array(pose.position, dtype=float)
     rpy = pose.orientation.as_euler("xyz", degrees=True)
@@ -470,7 +526,8 @@ def _next_trial_dir(results_dir: Path) -> Path:
 
 
 def _roll_distance_m() -> float:
-    return FINRAY_LENGTH_M * (ROLL_LENGTH_PERCENT / 100.0)
+    """Effective roll distance, with the end-of-sensor safety margin removed."""
+    return max(0.0, FINRAY_LENGTH_M * (ROLL_LENGTH_PERCENT / 100.0) - ROLL_END_OFFSET_M)
 
 
 def _rf_capture_summary(frames: list, expected_duration_s: float) -> dict:
@@ -500,10 +557,11 @@ def _save_trial_result(
     speed_m_s: float,
     trial_payload: dict,
     session_metadata: dict,
+    repeat_idx: int = 0,
 ) -> Path:
     trial_dir.mkdir(parents=True, exist_ok=True)
     speed_mm_s = speed_m_s * 1000.0
-    out_path = trial_dir / f"rolling_speed_{speed_mm_s:06.1f}_mm_s.pkl"
+    out_path = trial_dir / f"rolling_speed_{speed_mm_s:06.1f}_mm_s_rep_{repeat_idx:02d}.pkl"
     with open(out_path, "wb") as f:
         pickle.dump(
             {
@@ -636,9 +694,45 @@ def main() -> None:
 
         input("\nPress Enter to begin sliding trials...")
 
-        for trial_idx, speed in enumerate(ROLL_SPEEDS_M_S):
-            print(f"\n─── Trial {trial_idx + 1}/{len(ROLL_SPEEDS_M_S)}  "
-                  f"speed = {speed * 1000:.1f} mm/s ───")
+        # ── Stationary RF baseline (robot must stay still here) ───────────────
+        # Captured once before the trial loop and embedded into every trial pickle
+        # under the "static_rf" key, so each saved file contains both static and
+        # rolling data without needing to cross-reference a separate baseline file.
+        static_rf_payload: dict = {
+            "frames": [],
+            "n_frames_requested": STATIONARY_BASELINE_FRAMES,
+            "ee_pose": None,
+            "expected_rf_samples": EXPECTED_RF_SAMPLES,
+        }
+        if STATIONARY_BASELINE_FRAMES > 0:
+            baseline_ee_pose = robot.end_effector_pose.copy()
+            static_rf_payload["ee_pose"] = {
+                "position": baseline_ee_pose.position.tolist(),
+                "orientation_quat": baseline_ee_pose.orientation.as_quat().tolist(),
+                "orientation_euler_deg_xyz": baseline_ee_pose.orientation.as_euler("xyz", degrees=True).tolist(),
+            }
+            print(
+                f"\nCapturing {STATIONARY_BASELINE_FRAMES} stationary RF frames "
+                f"at {_pose_xyz_rpy_str(baseline_ee_pose)} ..."
+            )
+            if dry_run:
+                print("  DRY RUN — skipping stationary RF capture.")
+            else:
+                static_rf_payload["frames"] = capture_stationary_frames(ser, STATIONARY_BASELINE_FRAMES)
+                print(f"  Stationary baseline captured: {len(static_rf_payload['frames'])} frames")
+            session_metadata["stationary_baseline_frames"] = STATIONARY_BASELINE_FRAMES
+
+        trial_plan = [
+            (speed_idx, rep_idx, speed)
+            for speed_idx, speed in enumerate(ROLL_SPEEDS_M_S)
+            for rep_idx in range(N_REPEATS)
+        ]
+
+        for trial_idx, (speed_idx, rep_idx, speed) in enumerate(trial_plan):
+            print(f"\n─── Trial {trial_idx + 1}/{len(trial_plan)}  "
+                  f"speed = {speed * 1000:.1f} mm/s  "
+                  f"(speed {speed_idx + 1}/{len(ROLL_SPEEDS_M_S)}, "
+                  f"rep {rep_idx + 1}/{N_REPEATS}) ───")
             input("Press Enter to start this rolling session...")
 
             # ── 1. Plan approach → descend (contact trajectory planned later, after
@@ -706,7 +800,7 @@ def main() -> None:
                 BASE_ORI,
             )
             desired_compressed_end = Pose(
-                desired_compressed_start.position + np.array([0.0, -roll_distance_m, 0.0]),
+                desired_compressed_start.position + np.array([0.0, roll_distance_m, 0.0]),
                 BASE_ORI,
             )
             desired_surface_end = Pose(
@@ -766,13 +860,15 @@ def main() -> None:
             # synchronously before/after the trajectory within the same call.
             frames: list = []
             ee_poses_trial: list[dict] = []
+            cmd_poses_trial: list[dict] = []
             sample_stop_event: threading.Event | None = None
             sample_thread: threading.Thread | None = None
+            cmd_thread: threading.Thread | None = None
             first_frame_event: threading.Event | None = None
             slide_t0: float | None = None
 
             def start_rf_capture() -> None:
-                nonlocal frames, active_stop_event, active_thread, sample_stop_event, sample_thread, first_frame_event, slide_t0
+                nonlocal frames, active_stop_event, active_thread, sample_stop_event, sample_thread, cmd_thread, first_frame_event, slide_t0
                 slide_t0 = time.perf_counter()
                 if dry_run:
                     print(
@@ -795,16 +891,25 @@ def main() -> None:
                     args=(robot, ee_poses_trial, sample_stop_event, slide_t0),
                     daemon=True,
                 )
+                cmd_thread = threading.Thread(
+                    target=_sample_cmd_poses,
+                    args=(robot, cmd_poses_trial, sample_stop_event, slide_t0),
+                    daemon=True,
+                )
                 sample_thread.start()
+                cmd_thread.start()
 
             def stop_rf_capture() -> None:
-                nonlocal active_stop_event, active_thread, sample_stop_event, sample_thread, first_frame_event
+                nonlocal active_stop_event, active_thread, sample_stop_event, sample_thread, cmd_thread, first_frame_event
                 if sample_stop_event is not None:
                     sample_stop_event.set()
                 if sample_thread is not None:
                     sample_thread.join(timeout=1.0)
+                if cmd_thread is not None:
+                    cmd_thread.join(timeout=1.0)
                 sample_stop_event = None
                 sample_thread = None
+                cmd_thread = None
                 first_frame_event = None
                 if dry_run:
                     print(
@@ -884,10 +989,14 @@ def main() -> None:
             trial_payload = {
                 "speed_m_s": speed,
                 "roll_distance_m": roll_distance_m,
+                "roll_end_offset_m": ROLL_END_OFFSET_M,
+                "roller_diameter_m": ROLLER_DIAMETER_M,
+                "roller_radius_m": R,
                 "roller_rotation_deg_nominal": float(roller_rotation_deg),
                 "frames": list(frames),
                 "ee_poses": ee_poses_trial,
                 "ee_poses_slide_only": ee_poses_slide_only,
+                "commanded_ee_poses": cmd_poses_trial,
                 "rf_window_duration_s": rf_window_duration,
                 "slide_duration_s": slide_duration,
                 "compress_duration_s": compress_duration,
@@ -916,8 +1025,11 @@ def main() -> None:
                 ],
             }
             trial_payload["rf_capture_summary"] = _rf_capture_summary(frames, rf_window_duration)
+            trial_payload["static_rf"] = static_rf_payload
+            trial_payload["repeat_idx"] = rep_idx
+            trial_payload["speed_idx"] = speed_idx
             trials.append(trial_payload)
-            _save_trial_result(trial_dir, speed, trial_payload, session_metadata)
+            _save_trial_result(trial_dir, speed, trial_payload, session_metadata, repeat_idx=rep_idx)
             if not dry_run:
                 coverage = trial_payload["rf_capture_summary"]["coverage_ratio"]
                 print(

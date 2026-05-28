@@ -33,9 +33,15 @@ from rolling_config import (
     APPROACH_HEIGHT_M, APPROACH_SPEED_M_S, BAUD_RATE,
     BASE_ORI_EULER_DEG, COMPRESS_DEPTH_M, CONTACT_POSITION_M,
     DRY_RUN as _CFG_DRY_RUN, EE_SAMPLE_PERIOD_SEC,
-    FINRAY_LENGTH_M, RETURN_SPEED_M_S, ROBOT_NAMESPACE,
+    FINRAY_LENGTH_M, N_REPEATS, RETURN_SPEED_M_S, ROBOT_NAMESPACE,
+    ROLL_END_OFFSET_M,
     ROLL_LENGTH_PERCENT, ROLLER_DIAMETER_M, ROLL_SPEEDS_M_S,
     SERIAL_PORT, SERIAL_TIMEOUT_SEC, SETTLE_SEC,
+    STATIONARY_BASELINE_FRAMES, STATIONARY_BASELINE_TIMEOUT_SEC,
+    BASELINE_EXTRA_HEIGHT_M,
+    CONTACT_HOLD_SEC, PRE_COMPRESS_HOLD_SEC, POST_SLIDE_HOLD_SEC,
+    LIVE_AUTO_RUN,
+    MAX_CARTESIAN_SPEED_M_S, MIN_TRAJ_DURATION_S, MIN_WAYPOINT_DT_S,
 )
 
 # ---------------------------------------------------------------------------
@@ -173,8 +179,31 @@ def _rf_start(ser):
 
 def _rf_stop(ser, stop_ev, thr):
     ser.write(CMD_STOP); ser.flush()
-    stop_ev.set()
+    # Don't force stop_ev: let the reader thread drain the remaining in-flight
+    # bytes and the STREAM_END marker first.  STREAM_END itself sets stop_ev
+    # inside `_handle`, so the thread exits naturally.  If the Teensy never
+    # emits STREAM_END (e.g. firmware mismatch), fall back to forcing it.
     thr.join(timeout=SERIAL_TIMEOUT_SEC)
+    if thr.is_alive():
+        stop_ev.set()
+        thr.join(timeout=1.0)
+
+
+def _capture_stationary(ser, n_frames, timeout_s=STATIONARY_BASELINE_TIMEOUT_SEC):
+    """Stream RF until n_frames have been collected, then stop. Returns the frames."""
+    frames, stop_ev, _first_ev, thr, _t0 = _rf_start(ser)
+    deadline = time.perf_counter() + timeout_s
+    try:
+        while len(frames) < n_frames:
+            if time.perf_counter() > deadline:
+                raise TimeoutError(
+                    f"Only received {len(frames)}/{n_frames} stationary RF frames "
+                    f"within {timeout_s:.1f} s."
+                )
+            time.sleep(0.02)
+    finally:
+        _rf_stop(ser, stop_ev, thr)
+    return frames[:n_frames]
 
 
 # ---------------------------------------------------------------------------
@@ -234,17 +263,47 @@ def _ensure_rf_active(frames, timeout_s: float = 5.0) -> None:
 # Experiment helpers (identical to rolling_contact_experiment_fr3pose.py)
 # ---------------------------------------------------------------------------
 def _roll_dist():
-    return FINRAY_LENGTH_M * ROLL_LENGTH_PERCENT / 100.0
+    """Effective roll distance, with the end-of-sensor safety margin removed."""
+    return max(0.0, FINRAY_LENGTH_M * ROLL_LENGTH_PERCENT / 100.0 - ROLL_END_OFFSET_M)
 
 
 def _move_dur(a, b, speed):
-    return max(float(np.linalg.norm(b.position - a.position)) / speed, 0.25)
+    """Cartesian segment duration, with hard speed cap and minimum floor.
+
+    Clamps requested speed at MAX_CARTESIAN_SPEED_M_S and floors the result
+    at MIN_TRAJ_DURATION_S — prevents near-zero-distance moves from
+    collapsing into the dense-waypoint regime that triggered Franka's
+    joint_acceleration_discontinuity reflex.
+    """
+    speed_capped = min(max(speed, 1e-6), MAX_CARTESIAN_SPEED_M_S)
+    dist = float(np.linalg.norm(b.position - a.position))
+    return max(dist / speed_capped, MIN_TRAJ_DURATION_S)
+
+
+def _wait_for_move(start_pose, end_pose, speed, extra_sec=1.0):
+    """Sleep long enough for a `move_to(end_pose, speed=speed)` to actually finish.
+
+    `robot.move_to` returns before the trajectory completes.  If the next
+    command (another move_to, or execute_cartesian_traj) lands while the
+    previous trajectory is still running, the controller logs
+    "Ignoring new pose - trajectory in progress" and lands in a state where
+    EE velocity != 0 when the next trajectory's ramp-up starts — which
+    triggers `joint_acceleration_discontinuity`.  Wait based on the planned
+    distance + a safety margin so the controller is guaranteed idle before
+    the next command.
+    """
+    dist = float(np.linalg.norm(end_pose.position - start_pose.position))
+    dur = dist / max(speed, 1e-6)
+    time.sleep(max(dur + extra_sec, SETTLE_SEC))
 
 
 def _build_traj(seg_pairs, durations, n_wps=CONTACT_WAYPOINTS, t_off=EXEC_TRAJ_TIME_OFFSET, seg_vels=None):
     bounds = [0.0]
     for d in durations: bounds.append(bounds[-1] + d)
     total = bounds[-1]
+    # Cap waypoint density: never closer than MIN_WAYPOINT_DT_S in time.
+    max_n_wps = max(2, int(total / MIN_WAYPOINT_DT_S) + 1)
+    n_wps = max(2, min(n_wps, max_n_wps))
     wps, times = [], []
     for t in np.linspace(0.0, total, n_wps):
         seg = len(seg_pairs) - 1
@@ -275,10 +334,10 @@ def _next_trial_dir():
     return d
 
 
-def _save(trial_dir, speed, trial_payload, session_meta):
+def _save(trial_dir, speed, trial_payload, session_meta, repeat_idx=0):
     trial_dir.mkdir(parents=True, exist_ok=True)
     mm = speed * 1000.0
-    out = trial_dir / f"rolling_speed_{mm:06.1f}_mm_s.pkl"
+    out = trial_dir / f"rolling_speed_{mm:06.1f}_mm_s_rep_{repeat_idx:02d}.pkl"
     with open(out, "wb") as f:
         pickle.dump({"trial": trial_payload, "session": session_meta}, f)
     _state.status = f"Saved: {out.name}"
@@ -298,10 +357,76 @@ def _setup_controller(robot):
 
 
 # ---------------------------------------------------------------------------
+# Reconnect helpers — when fr3-launch crashes (typically from a reflex), allow
+# the operator to relaunch it and have this script pick the connection back up
+# without restarting.
+# ---------------------------------------------------------------------------
+def _wait_for_robot_alive(robot, max_wait_sec=600.0):
+    """Block until `robot.wait_until_ready` succeeds. Returns True/False.
+
+    Polls every ~2 s for the robot state topics to come back online so the
+    operator can `ros2 launch ... fr3-launch ...` on the robot host without
+    killing this script.
+    """
+    print("\n*** Robot connection lost. Waiting for FR3 to come back online... ***")
+    print(f"    Relaunch fr3-launch on the robot host (will retry for {max_wait_sec:.0f} s).")
+    deadline = time.perf_counter() + max_wait_sec
+    while time.perf_counter() < deadline:
+        _state.status = "Robot offline — waiting for fr3-launch to come back…"
+        try:
+            robot.wait_until_ready(timeout=2.0)
+            print("    Robot back online.")
+            return True
+        except (TimeoutError, RuntimeError):
+            time.sleep(1.0)
+    print("    Timed out waiting for robot.")
+    return False
+
+
+def _recover_robot(robot):
+    """Wait for the robot to come back, then re-apply fr3_pose_controller setup."""
+    if not _wait_for_robot_alive(robot):
+        return False
+    try:
+        _setup_controller(robot)
+    except Exception as err:
+        print(f"    Controller re-setup after reconnect failed: {err}")
+        return False
+    _state.status = "Robot reconnected and pose controller re-armed."
+    return True
+
+
+def _stop_threads_safely(sample_stop_event, sample_thread, ser, active_stop_event, active_thread, dry_run):
+    """Best-effort shutdown of background threads + RF stream after a fault."""
+    if sample_stop_event is not None:
+        sample_stop_event.set()
+    if sample_thread is not None:
+        try:
+            sample_thread.join(timeout=1.0)
+        except Exception:
+            pass
+    if (not dry_run and ser is not None
+            and active_stop_event is not None and active_thread is not None):
+        try:
+            _rf_stop(ser, active_stop_event, active_thread)
+        except Exception:
+            pass
+
+
+# ---------------------------------------------------------------------------
 # Wait helper — pauses worker thread until GUI button is clicked
 # ---------------------------------------------------------------------------
 def _wait_user(msg: str) -> None:
+    """Surface a prompt in the UI.
+
+    In auto mode (LIVE_AUTO_RUN=True) the worker thread auto-advances after a
+    short pause instead of blocking on the Continue button — the message is
+    still shown so the operator can see what step is starting.
+    """
     _state.status = msg
+    if LIVE_AUTO_RUN:
+        time.sleep(0.5)
+        return
     _state.waiting_for_user = True
     _state.continue_event.clear()
     _state.continue_event.wait()
@@ -340,113 +465,222 @@ def _run_experiment(dry_run: bool, robot: Robot, ser) -> None:
         contact = (Pose(np.array(CONTACT_POSITION_M, dtype=float), BASE_ORI)
                    if CONTACT_POSITION_M else robot.end_effector_pose.copy())
         approach = Pose(contact.position + np.array([0.0, 0.0, APPROACH_HEIGHT_M]), BASE_ORI)
+        baseline = Pose(
+            contact.position + np.array(
+                [0.0, 0.0, APPROACH_HEIGHT_M + BASELINE_EXTRA_HEIGHT_M]
+            ),
+            BASE_ORI,
+        )
+
+        # ── Move to baseline pose (approach + 50 mm) and capture static RF ────
+        _state.status = (
+            f"Moving to baseline pose (approach + {BASELINE_EXTRA_HEIGHT_M*1000:.0f} mm)…"
+        )
+        _wait_start_pose = robot.end_effector_pose.copy()
+        robot.move_to(pose=baseline, speed=RETURN_SPEED_M_S)
+        _wait_for_move(_wait_start_pose, baseline, RETURN_SPEED_M_S)
+
+        static_rf_payload: dict = {
+            "frames": [],
+            "n_frames_requested": STATIONARY_BASELINE_FRAMES,
+            "ee_pose": None,
+            "expected_rf_samples": EXPECTED_RF_SAMPLES,
+        }
+        if STATIONARY_BASELINE_FRAMES > 0:
+            baseline_ee_pose = robot.end_effector_pose.copy()
+            static_rf_payload["ee_pose"] = {
+                "position": baseline_ee_pose.position.tolist(),
+                "orientation_quat": baseline_ee_pose.orientation.as_quat().tolist(),
+                "orientation_euler_deg_xyz": baseline_ee_pose.orientation.as_euler("xyz", degrees=True).tolist(),
+            }
+            _state.status = f"Capturing {STATIONARY_BASELINE_FRAMES} stationary RF frames…"
+            if dry_run:
+                print("  DRY RUN — skipping stationary RF capture.")
+            else:
+                static_rf_payload["frames"] = _capture_stationary(ser, STATIONARY_BASELINE_FRAMES)
+                print(f"  Stationary baseline captured: {len(static_rf_payload['frames'])} frames")
+            session_meta["stationary_baseline_frames"] = STATIONARY_BASELINE_FRAMES
+            session_meta["baseline_extra_height_m"] = BASELINE_EXTRA_HEIGHT_M
 
         _state.status = "Moving to approach pose…"
-        if np.linalg.norm(robot.end_effector_pose.copy().position - approach.position) > 1e-3:
-            robot.move_to(pose=approach, speed=RETURN_SPEED_M_S)
-            time.sleep(SETTLE_SEC)
+        _wait_start_pose = robot.end_effector_pose.copy()
+        robot.move_to(pose=approach, speed=RETURN_SPEED_M_S)
+        _wait_for_move(_wait_start_pose, approach, RETURN_SPEED_M_S)
 
-        _wait_user(f"At approach. Click Continue to begin {len(ROLL_SPEEDS_M_S)} trials.")
+        trial_plan = [
+            (speed_idx, rep_idx, speed)
+            for speed_idx, speed in enumerate(ROLL_SPEEDS_M_S)
+            for rep_idx in range(N_REPEATS)
+        ]
+        _wait_user(f"At approach. Click Continue to begin {len(trial_plan)} trials.")
 
-        for t_idx, speed in enumerate(ROLL_SPEEDS_M_S):
+        def _execute_trial(speed_idx, rep_idx, speed):
+            """Run a single trial. Raises on failure for the retry loop to catch."""
+            nonlocal active_sev, active_thr
+            s_stop_event = None
+            s_thread = None
+            try:
+                # Descend to contact
+                _state.phase = "compress"
+                _state.status = "Descending to contact…"
+                _pre_descend_pose = robot.end_effector_pose.copy()
+                robot.move_to(pose=contact, speed=APPROACH_SPEED_M_S)
+                _wait_for_move(_pre_descend_pose, contact, APPROACH_SPEED_M_S)
+                if CONTACT_HOLD_SEC > 0:
+                    _state.status = (
+                        f"Contact point reached; holding {CONTACT_HOLD_SEC:.1f} s to settle…"
+                    )
+                    time.sleep(CONTACT_HOLD_SEC)
+                meas_contact = robot.end_effector_pose.copy()
+
+                # Trajectory poses
+                c_start = Pose(meas_contact.position + [0.0, 0.0, -d], BASE_ORI)
+                c_end   = Pose(c_start.position + [0.0, roll_dist, 0.0], BASE_ORI)
+                c_surf  = Pose(c_end.position + [0.0, 0.0, d], BASE_ORI)
+
+                cmp_dur  = _move_dur(meas_contact, c_start, APPROACH_SPEED_M_S)
+                sld_dur  = _move_dur(c_start, c_end, speed)
+                dcmp_dur = _move_dur(c_end, c_surf, APPROACH_SPEED_M_S)
+                rf_dur   = cmp_dur + SETTLE_SEC + sld_dur + dcmp_dur + (0.5 + EXEC_TRAJ_TIME_OFFSET + 2.0) * 3
+
+                cmp_wps,  cmp_t  = _build_traj([(meas_contact, c_start)], [cmp_dur])
+                sld_wps,  sld_t  = _build_traj([(c_start, c_end)], [sld_dur])
+                dcmp_wps, dcmp_t = _build_traj([(c_end, c_surf)], [dcmp_dur])
+
+                _state.slide_start_y = float(c_start.position[1])
+
+                # Start RF + EEF sampling
+                frames = []
+                ee_trial = []
+                t0 = time.perf_counter()
+                if not dry_run:
+                    frames, active_sev, first_ev, active_thr, t0 = _rf_start(ser)
+                    _state.status = "Waiting for first RF frame…"
+                    if not first_ev.wait(timeout=SERIAL_TIMEOUT_SEC):
+                        raise TimeoutError("No RF frame from Teensy.")
+                s_stop_event = threading.Event()
+                s_thread = threading.Thread(
+                    target=_sample_ee, args=(robot, ee_trial, s_stop_event, t0), daemon=True)
+                s_thread.start()
+
+                if PRE_COMPRESS_HOLD_SEC > 0:
+                    _state.status = (
+                        f"Holding {PRE_COMPRESS_HOLD_SEC:.1f} s before starting compress…"
+                    )
+                    time.sleep(PRE_COMPRESS_HOLD_SEC)
+
+                # Compress
+                _state.status = "Starting compress…"
+                _state.phase = "compress"
+                robot.execute_cartesian_traj(cmp_wps, cmp_t)
+                while robot.wait_for_trajectory_completion(cmp_dur + EXEC_TRAJ_TIME_OFFSET): pass
+                time.sleep(SETTLE_SEC)
+
+                if not dry_run:
+                    _state.status = "Confirming RF stream is active before slide…"
+                    _ensure_rf_active(frames)
+
+                # Slide
+                _state.status = f"Sliding at {speed*1000:.1f} mm/s…"
+                _state.phase = "slide"
+                robot.execute_cartesian_traj(sld_wps, sld_t)
+                while robot.wait_for_trajectory_completion(sld_dur + EXEC_TRAJ_TIME_OFFSET): pass
+
+                if POST_SLIDE_HOLD_SEC > 0:
+                    _state.status = (
+                        f"Slide done; holding {POST_SLIDE_HOLD_SEC:.1f} s before decompress…"
+                    )
+                    time.sleep(POST_SLIDE_HOLD_SEC)
+
+                # Decompress
+                _state.status = "Decompressing…"
+                _state.phase = "decompress"
+                robot.execute_cartesian_traj(dcmp_wps, dcmp_t)
+                while robot.wait_for_trajectory_completion(dcmp_dur + EXEC_TRAJ_TIME_OFFSET): pass
+
+                # Stop samplers (success path)
+                s_stop_event.set(); s_thread.join(timeout=1.0)
+                s_stop_event = None; s_thread = None
+                if not dry_run:
+                    _rf_stop(ser, active_sev, active_thr)
+                    active_sev = active_thr = None
+
+                # Z-based slide-only filter
+                cz = float(c_start.position[2])
+                slide_only = [ep for ep in ee_trial if abs(ep["position"][2] - cz) < 0.001]
+
+                # Return to approach
+                _state.phase = "idle"
+                _state.status = "Returning to approach…"
+                _pre_return_pose = robot.end_effector_pose.copy()
+                robot.move_to(pose=approach, speed=RETURN_SPEED_M_S)
+                _wait_for_move(_pre_return_pose, approach, RETURN_SPEED_M_S)
+
+                # Save
+                payload = {
+                    "speed_m_s": speed, "roll_distance_m": roll_dist,
+                    "roll_end_offset_m": ROLL_END_OFFSET_M,
+                    "roller_diameter_m": ROLLER_DIAMETER_M,
+                    "roller_radius_m": ROLLER_DIAMETER_M / 2.0,
+                    "frames": list(frames),
+                    "ee_poses": ee_trial, "ee_poses_slide_only": slide_only,
+                    "rf_window_duration_s": rf_dur, "slide_duration_s": sld_dur,
+                    "compress_duration_s": cmp_dur, "decompress_duration_s": dcmp_dur,
+                    "approach_position": approach.position.tolist(),
+                    "contact_position": meas_contact.position.tolist(),
+                    "compressed_start_position": c_start.position.tolist(),
+                    "compressed_end_position": c_end.position.tolist(),
+                    "surface_end_position": c_surf.position.tolist(),
+                    "rf_capture_summary": _rf_summary(frames, rf_dur),
+                    "static_rf": static_rf_payload,
+                    "repeat_idx": rep_idx,
+                    "speed_idx": speed_idx,
+                }
+                _save(trial_dir, speed, payload, session_meta, repeat_idx=rep_idx)
+                print(f"  RF coverage: {payload['rf_capture_summary']['coverage_ratio']*100:.1f}%")
+            finally:
+                # Best-effort cleanup of background threads so a retry doesn't
+                # leak workers reading from a dead robot/teensy.
+                _stop_threads_safely(s_stop_event, s_thread, ser, active_sev, active_thr, dry_run)
+                if active_sev is not None or active_thr is not None:
+                    active_sev = None
+                    active_thr = None
+
+        for t_idx, (speed_idx, rep_idx, speed) in enumerate(trial_plan):
             _state.speed_m_s = speed
-            _state.trial_label = f"Trial {t_idx+1}/{len(ROLL_SPEEDS_M_S)}  {speed*1000:.1f} mm/s"
+            _state.trial_label = (
+                f"Trial {t_idx+1}/{len(trial_plan)}  "
+                f"{speed*1000:.1f} mm/s  "
+                f"(speed {speed_idx+1}/{len(ROLL_SPEEDS_M_S)}, rep {rep_idx+1}/{N_REPEATS})"
+            )
             _state.phase = "idle"
             _wait_user(f"{_state.trial_label} — click Continue to start.")
 
-            # Descend to contact
-            _state.phase = "compress"
-            _state.status = "Descending to contact…"
-            robot.move_to(pose=contact, speed=APPROACH_SPEED_M_S)
-            time.sleep(SETTLE_SEC)
-            meas_contact = robot.end_effector_pose.copy()
-
-            # Trajectory poses
-            c_start = Pose(meas_contact.position + [0.0, 0.0, -d], BASE_ORI)
-            c_end   = Pose(c_start.position + [0.0, roll_dist, 0.0], BASE_ORI)
-            c_surf  = Pose(c_end.position + [0.0, 0.0, d], BASE_ORI)
-
-            cmp_dur  = _move_dur(meas_contact, c_start, APPROACH_SPEED_M_S)
-            sld_dur  = _move_dur(c_start, c_end, speed)
-            dcmp_dur = _move_dur(c_end, c_surf, APPROACH_SPEED_M_S)
-            rf_dur   = cmp_dur + SETTLE_SEC + sld_dur + dcmp_dur + (0.5 + EXEC_TRAJ_TIME_OFFSET + 2.0) * 3
-
-            cmp_wps,  cmp_t  = _build_traj([(meas_contact, c_start)], [cmp_dur])
-            sld_wps,  sld_t  = _build_traj([(c_start, c_end)], [sld_dur])
-            dcmp_wps, dcmp_t = _build_traj([(c_end, c_surf)], [dcmp_dur])
-
-            _state.slide_start_y = float(c_start.position[1])
-
-            # Start RF + EEF sampling
-            frames = []
-            ee_trial = []
-            t0 = time.perf_counter()
-            if not dry_run:
-                frames, active_sev, first_ev, active_thr, t0 = _rf_start(ser)
-                _state.status = "Waiting for first RF frame…"
-                if not first_ev.wait(timeout=SERIAL_TIMEOUT_SEC):
-                    raise TimeoutError("No RF frame from Teensy.")
-            s_stop = threading.Event()
-            s_thr = threading.Thread(
-                target=_sample_ee, args=(robot, ee_trial, s_stop, t0), daemon=True)
-            s_thr.start()
-
-            # Compress
-            _state.status = "Compressing…"
-            _state.phase = "compress"
-            robot.execute_cartesian_traj(cmp_wps, cmp_t)
-            while robot.wait_for_trajectory_completion(cmp_dur + EXEC_TRAJ_TIME_OFFSET): pass
-            time.sleep(SETTLE_SEC)
-
-            # Guard: confirm Teensy is still streaming before moving
-            if not dry_run:
-                _state.status = "Confirming RF stream is active before slide…"
-                _ensure_rf_active(frames)
-
-            # Slide
-            _state.status = f"Sliding at {speed*1000:.1f} mm/s…"
-            _state.phase = "slide"
-            robot.execute_cartesian_traj(sld_wps, sld_t)
-            while robot.wait_for_trajectory_completion(sld_dur + EXEC_TRAJ_TIME_OFFSET): pass
-
-            # Decompress
-            _state.status = "Decompressing…"
-            _state.phase = "decompress"
-            robot.execute_cartesian_traj(dcmp_wps, dcmp_t)
-            while robot.wait_for_trajectory_completion(dcmp_dur + EXEC_TRAJ_TIME_OFFSET): pass
-
-            # Stop samplers
-            s_stop.set(); s_thr.join(timeout=1.0)
-            if not dry_run:
-                _rf_stop(ser, active_sev, active_thr)
-                active_sev = active_thr = None
-
-            # Z-based slide-only filter
-            cz = float(c_start.position[2])
-            slide_only = [ep for ep in ee_trial if abs(ep["position"][2] - cz) < 0.001]
-
-            # Return to approach
-            _state.phase = "idle"
-            _state.status = "Returning to approach…"
-            robot.move_to(pose=approach, speed=RETURN_SPEED_M_S)
-            time.sleep(SETTLE_SEC)
-
-            # Save
-            payload = {
-                "speed_m_s": speed, "roll_distance_m": roll_dist,
-                "frames": list(frames),
-                "ee_poses": ee_trial, "ee_poses_slide_only": slide_only,
-                "rf_window_duration_s": rf_dur, "slide_duration_s": sld_dur,
-                "compress_duration_s": cmp_dur, "decompress_duration_s": dcmp_dur,
-                "approach_position": approach.position.tolist(),
-                "contact_position": meas_contact.position.tolist(),
-                "compressed_start_position": c_start.position.tolist(),
-                "compressed_end_position": c_end.position.tolist(),
-                "surface_end_position": c_surf.position.tolist(),
-                "rf_capture_summary": _rf_summary(frames, rf_dur),
-            }
-            _save(trial_dir, speed, payload, session_meta)
-            print(f"  RF coverage: {payload['rf_capture_summary']['coverage_ratio']*100:.1f}%")
+            attempt = 0
+            while True:
+                attempt += 1
+                try:
+                    _execute_trial(speed_idx, rep_idx, speed)
+                    break  # success → next trial
+                except Exception as err:
+                    print(f"\n*** Trial {t_idx+1} attempt {attempt} failed: {err} ***")
+                    _state.status = (
+                        f"Trial {t_idx+1} failed (attempt {attempt}). "
+                        "Recovering…"
+                    )
+                    if not _recover_robot(robot):
+                        print("    Recovery failed; aborting session.")
+                        raise
+                    # After fr3-launch is back, move to approach pose before retrying
+                    try:
+                        _pre_back_pose = robot.end_effector_pose.copy()
+                        robot.move_to(pose=approach, speed=RETURN_SPEED_M_S)
+                        _wait_for_move(_pre_back_pose, approach, RETURN_SPEED_M_S)
+                    except Exception as err2:
+                        print(f"    Failed to return to approach after recovery: {err2}")
+                        raise
+                    print(f"  Retrying trial {t_idx+1} (attempt {attempt + 1})…\n")
+                    _state.status = f"Retrying trial {t_idx+1}…"
 
         _state.status = f"Session complete. Results: {trial_dir}"
 
@@ -503,7 +737,7 @@ def main():
                 else:
                     p.setXLink(_first_rf_plot)
                     p.getAxis("left").setStyle(showValues=False)
-                p.setXRange(500, EXPECTED_RF_SAMPLES - 1, padding=0)
+                p.setXRange(350, EXPECTED_RF_SAMPLES - 1, padding=0)
                 p.setYRange(0, 4095, padding=0.02)
                 p.showGrid(x=True, y=True, alpha=0.25)
                 crv = p.plot(x_idx, np.zeros(EXPECTED_RF_SAMPLES),

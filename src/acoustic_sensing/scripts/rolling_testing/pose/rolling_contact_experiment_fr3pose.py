@@ -48,14 +48,25 @@ from rolling_config import (
     DRY_RUN,
     EE_SAMPLE_PERIOD_SEC,
     FINRAY_LENGTH_M,
+    N_REPEATS,
     RETURN_SPEED_M_S,
     ROBOT_NAMESPACE,
+    ROLL_END_OFFSET_M,
     ROLL_LENGTH_PERCENT,
     ROLLER_DIAMETER_M,
     ROLL_SPEEDS_M_S,
     SERIAL_PORT,
     SERIAL_TIMEOUT_SEC,
     SETTLE_SEC,
+    STATIONARY_BASELINE_FRAMES,
+    STATIONARY_BASELINE_TIMEOUT_SEC,
+    BASELINE_EXTRA_HEIGHT_M,
+    CONTACT_HOLD_SEC,
+    PRE_COMPRESS_HOLD_SEC,
+    POST_SLIDE_HOLD_SEC,
+    MAX_CARTESIAN_SPEED_M_S,
+    MIN_TRAJ_DURATION_S,
+    MIN_WAYPOINT_DT_S,
 )
 
 FR3_POSE_CONTROLLER = "fr3_pose_controller"
@@ -77,7 +88,7 @@ CMD_START = bytes([0x43])
 CMD_STOP = bytes([0x45])
 CHANNEL_MARKERS = ("S0", "S1", "S2", "S3")
 STREAM_END = "STREAM_END"
-EXPECTED_RF_SAMPLES = int((178804.2 / 343.0) * 2.0 * 0.6 * 1.2)
+EXPECTED_RF_SAMPLES = 1000
 
 RESULTS_DIR = Path(__file__).resolve().parent / "results"
 
@@ -158,8 +169,29 @@ def rf_stream_stop(ser, stop_event, thread):
     written = ser.write(CMD_STOP)
     if written != len(CMD_STOP):
         raise RuntimeError(f"Failed to send full stop byte: wrote {written} bytes")
-    stop_event.set()
+    # Let the reader thread drain in-flight bytes (incl. STREAM_END) before
+    # exiting.  STREAM_END itself sets stop_event inside _stream_reader.
     thread.join(timeout=SERIAL_TIMEOUT_SEC)
+    if thread.is_alive():
+        stop_event.set()
+        thread.join(timeout=1.0)
+
+
+def capture_stationary_frames(ser, n_frames, timeout_s=STATIONARY_BASELINE_TIMEOUT_SEC):
+    """Stream RF until n_frames have been collected, then stop."""
+    frames, stop_event, _first_frame_event, thread, _t0 = rf_stream_start(ser)
+    deadline = time.perf_counter() + timeout_s
+    try:
+        while len(frames) < n_frames:
+            if time.perf_counter() > deadline:
+                raise TimeoutError(
+                    f"Only received {len(frames)}/{n_frames} stationary RF frames "
+                    f"within {timeout_s:.1f} s."
+                )
+            time.sleep(0.02)
+    finally:
+        rf_stream_stop(ser, stop_event, thread)
+    return frames[:n_frames]
 
 
 # ---------------------------------------------------------------------------
@@ -167,12 +199,36 @@ def rf_stream_stop(ser, stop_event, thread):
 # ---------------------------------------------------------------------------
 
 def _roll_distance_m():
-    return FINRAY_LENGTH_M * (ROLL_LENGTH_PERCENT / 100.0)
+    """Effective roll distance, with the end-of-sensor safety margin removed."""
+    return max(0.0, FINRAY_LENGTH_M * (ROLL_LENGTH_PERCENT / 100.0) - ROLL_END_OFFSET_M)
 
 
 def _duration_for_move(start_pose, end_pose, speed):
+    """Duration for a straight-line Cartesian segment.
+
+    Clamps the requested speed at MAX_CARTESIAN_SPEED_M_S and floors the
+    duration at MIN_TRAJ_DURATION_S so degenerate (near-zero-distance) moves
+    don't collapse into a sub-second window — which is what triggered the
+    `joint_acceleration_discontinuity` reflex previously.
+    """
     distance = float(np.linalg.norm(end_pose.position - start_pose.position))
-    return max(distance / speed, 0.25)
+    speed_capped = min(max(speed, 1e-6), MAX_CARTESIAN_SPEED_M_S)
+    return max(distance / speed_capped, MIN_TRAJ_DURATION_S)
+
+
+def _wait_for_move(start_pose, end_pose, speed, extra_sec=1.0):
+    """Sleep long enough for a `move_to(end_pose, speed=speed)` to finish.
+
+    `robot.move_to` returns before the trajectory completes.  If the next
+    command lands while the previous one is still running, the controller
+    logs "Ignoring new pose - trajectory in progress" and ends up with
+    EE velocity != 0 when the next trajectory's ramp-up starts — which
+    trips `joint_acceleration_discontinuity`.  Wait long enough for the
+    planned motion (+ a safety margin) before issuing the next command.
+    """
+    distance = float(np.linalg.norm(end_pose.position - start_pose.position))
+    duration = distance / max(speed, 1e-6)
+    time.sleep(max(duration + extra_sec, SETTLE_SEC))
 
 
 def _pose_xyz_rpy_str(pose):
@@ -220,6 +276,13 @@ def _build_contact_trajectory(
         t_bounds.append(t_bounds[-1] + dur)
     total_duration = t_bounds[-1]
 
+    # Cap waypoint density so consecutive waypoints stay >= MIN_WAYPOINT_DT_S
+    # apart.  Otherwise the controller races through dense waypoints and the
+    # apparent inter-waypoint speed spikes, which triggers the
+    # joint_acceleration_discontinuity reflex.
+    max_n_waypoints = max(2, int(total_duration / MIN_WAYPOINT_DT_S) + 1)
+    n_waypoints = max(2, min(n_waypoints, max_n_waypoints))
+
     waypoints = []
     times = []
 
@@ -247,19 +310,99 @@ def _build_contact_trajectory(
 
 
 def _sample_ee_poses(robot, ee_poses, stop_event, t0, period_s=EE_SAMPLE_PERIOD_SEC):
+    prev_t = None
+    prev_pos = None
+    prev_vel = None
     while not stop_event.is_set():
         try:
             ee = robot.end_effector_pose
+            wrench = robot.end_effector_wrench
         except RuntimeError:
             time.sleep(period_s)
             continue
+        t = time.perf_counter() - t0
+        pos = ee.position.tolist()
+
+        dt = t - prev_t if prev_t is not None else None
+        if dt and dt > 0 and prev_pos is not None:
+            vel = [(pos[i] - prev_pos[i]) / dt for i in range(3)]
+            acc = [(vel[i] - prev_vel[i]) / dt for i in range(3)] if prev_vel is not None else None
+        else:
+            vel = None
+            acc = None
+
         ee_poses.append({
-            "t": time.perf_counter() - t0,
-            "position": ee.position.tolist(),
+            "t": t,
+            "position": pos,
             "orientation_quat": ee.orientation.as_quat().tolist(),
             "orientation_euler_deg_xyz": ee.orientation.as_euler("xyz", degrees=True).tolist(),
+            "force_xyz": wrench["force"].tolist(),
+            "torque_xyz": wrench["torque"].tolist(),
+            "velocity_xyz": vel,
+            "acceleration_xyz": acc,
         })
+
+        prev_t = t
+        prev_pos = pos
+        prev_vel = vel
         time.sleep(period_s)
+
+
+def _sample_cmd_poses(robot, cmd_poses, stop_event, t0, period_s=EE_SAMPLE_PERIOD_SEC):
+    prev_t = None
+    prev_pos = None
+    prev_vel = None
+    while not stop_event.is_set():
+        try:
+            ee = robot.target_pose
+            wrench = robot.end_effector_wrench
+        except RuntimeError:
+            time.sleep(period_s)
+            continue
+        t = time.perf_counter() - t0
+        pos = ee.position.tolist()
+
+        dt = t - prev_t if prev_t is not None else None
+        if dt and dt > 0 and prev_pos is not None:
+            vel = [(pos[i] - prev_pos[i]) / dt for i in range(3)]
+            acc = [(vel[i] - prev_vel[i]) / dt for i in range(3)] if prev_vel is not None else None
+        else:
+            vel = None
+            acc = None
+
+        cmd_poses.append({
+            "t": t,
+            "position": pos,
+            "orientation_quat": ee.orientation.as_quat().tolist(),
+            "orientation_euler_deg_xyz": ee.orientation.as_euler("xyz", degrees=True).tolist(),
+            "force_xyz": wrench["force"].tolist(),
+            "torque_xyz": wrench["torque"].tolist(),
+            "velocity_xyz": vel,
+            "acceleration_xyz": acc,
+        })
+
+        prev_t = t
+        prev_pos = pos
+        prev_vel = vel
+        time.sleep(period_s)
+
+
+def _ensure_rf_active(frames, timeout_s: float = 5.0) -> None:
+    """Block until at least one new RF frame arrives within *timeout_s* seconds.
+
+    Called immediately before the slide trajectory to guarantee the Teensy is
+    actively streaming data.  Raises TimeoutError if the stream has stalled.
+    """
+    count_before = len(frames)
+    deadline = time.perf_counter() + timeout_s
+    while time.perf_counter() < deadline:
+        if len(frames) > count_before:
+            return
+        time.sleep(0.05)
+    raise TimeoutError(
+        f"RF stream stalled: no new frame in the last {timeout_s:.0f} s. "
+        "Slide aborted to avoid recording without sensor data."
+    )
 
 
 def estimate_contact_location_per_frame(frame_data):
@@ -295,10 +438,10 @@ def _next_trial_dir(results_dir):
     return trial_dir
 
 
-def _save_trial_result(trial_dir, speed_m_s, trial_payload, session_metadata):
+def _save_trial_result(trial_dir, speed_m_s, trial_payload, session_metadata, repeat_idx=0):
     trial_dir.mkdir(parents=True, exist_ok=True)
     speed_mm_s = speed_m_s * 1000.0
-    out_path = trial_dir / f"rolling_speed_{speed_mm_s:06.1f}_mm_s.pkl"
+    out_path = trial_dir / f"rolling_speed_{speed_mm_s:06.1f}_mm_s_rep_{repeat_idx:02d}.pkl"
     with open(out_path, "wb") as f:
         pickle.dump({"trial": trial_payload, "session": session_metadata}, f)
     print(f"  Result saved: {out_path}")
@@ -429,7 +572,7 @@ def main():
         robot.wait_until_ready()
         _setup_fr3_pose_controller(robot)
 
-        # ── Resolve contact and approach poses ──────────────────────────────
+        # ── Phase 0a: resolve contact and approach poses ─────────────────────
         if CONTACT_POSITION_M is not None:
             _contact_pose = Pose(np.array(CONTACT_POSITION_M, dtype=float), BASE_ORI)
             print(f"\n=== Rolling contact experiment (fr3_pose) ===")
@@ -443,7 +586,15 @@ def main():
             _contact_pose.position + np.array([0.0, 0.0, APPROACH_HEIGHT_M]),
             BASE_ORI,
         )
+        baseline_pose = Pose(
+            _contact_pose.position + np.array(
+                [0.0, 0.0, APPROACH_HEIGHT_M + BASELINE_EXTRA_HEIGHT_M]
+            ),
+            BASE_ORI,
+        )
 
+        print(f"Baseline pose:   {baseline_pose.position.tolist()}  "
+              f"(approach + {BASELINE_EXTRA_HEIGHT_M*1000:.0f} mm)")
         print(f"Approach pose:   {approach_pose.position.tolist()}")
         print(f"Compress depth:  {d*1000:.1f} mm")
         print(f"Roller diameter: {ROLLER_DIAMETER_M*1000:.1f} mm  |  R_eff: {R_eff*1000:.1f} mm")
@@ -452,25 +603,64 @@ def main():
         print(f"Speeds:          {[s*1000 for s in ROLL_SPEEDS_M_S]} mm/s")
         print(f"Trajectory waypoints: {CONTACT_WAYPOINTS} (quintic interpolation by controller)")
 
-        # ── Move to approach pose ────────────────────────────────────────────
-        current_pose = robot.end_effector_pose.copy()
-        if np.linalg.norm(current_pose.position - approach_pose.position) > 1e-3:
-            print("\nMoving to approach pose...")
-            robot.move_to(pose=approach_pose, speed=RETURN_SPEED_M_S)
-            time.sleep(SETTLE_SEC)
-            print(f"  at approach: {_pose_xyz_rpy_str(robot.end_effector_pose.copy())}")
+        # ── Phase 0b: move to baseline pose and capture stationary RF ────────
+        print("\nMoving to baseline pose for stationary RF capture...")
+        _pre_baseline_pose = robot.end_effector_pose.copy()
+        robot.move_to(pose=baseline_pose, speed=RETURN_SPEED_M_S)
+        _wait_for_move(_pre_baseline_pose, baseline_pose, RETURN_SPEED_M_S)
+        print(f"  at baseline: {_pose_xyz_rpy_str(robot.end_effector_pose.copy())}")
+
+        static_rf_payload: dict = {
+            "frames": [],
+            "n_frames_requested": STATIONARY_BASELINE_FRAMES,
+            "ee_pose": None,
+            "expected_rf_samples": EXPECTED_RF_SAMPLES,
+        }
+        if STATIONARY_BASELINE_FRAMES > 0:
+            baseline_ee_pose = robot.end_effector_pose.copy()
+            static_rf_payload["ee_pose"] = {
+                "position": baseline_ee_pose.position.tolist(),
+                "orientation_quat": baseline_ee_pose.orientation.as_quat().tolist(),
+                "orientation_euler_deg_xyz": baseline_ee_pose.orientation.as_euler("xyz", degrees=True).tolist(),
+            }
+            print(f"Capturing {STATIONARY_BASELINE_FRAMES} stationary RF frames...")
+            if dry_run:
+                print("  DRY RUN — skipping stationary RF capture.")
+            else:
+                static_rf_payload["frames"] = capture_stationary_frames(ser, STATIONARY_BASELINE_FRAMES)
+                print(f"  Stationary baseline captured: {len(static_rf_payload['frames'])} frames")
+            session_metadata["stationary_baseline_frames"] = STATIONARY_BASELINE_FRAMES
+            session_metadata["baseline_extra_height_m"] = BASELINE_EXTRA_HEIGHT_M
+
+        # ── Phase 0c: descend to approach pose ───────────────────────────────
+        print("\nMoving to approach pose...")
+        _pre_approach_pose = robot.end_effector_pose.copy()
+        robot.move_to(pose=approach_pose, speed=RETURN_SPEED_M_S)
+        _wait_for_move(_pre_approach_pose, approach_pose, RETURN_SPEED_M_S)
+        print(f"  at approach: {_pose_xyz_rpy_str(robot.end_effector_pose.copy())}")
 
         input("\nPress Enter to begin sliding trials...")
 
-        for trial_idx, speed in enumerate(ROLL_SPEEDS_M_S):
-            print(f"\n─── Trial {trial_idx + 1}/{len(ROLL_SPEEDS_M_S)}  "
-                  f"speed = {speed * 1000:.1f} mm/s ───")
+        trial_plan = [
+            (speed_idx, rep_idx, speed)
+            for speed_idx, speed in enumerate(ROLL_SPEEDS_M_S)
+            for rep_idx in range(N_REPEATS)
+        ]
+
+        for trial_idx, (speed_idx, rep_idx, speed) in enumerate(trial_plan):
+            print(f"\n─── Trial {trial_idx + 1}/{len(trial_plan)}  "
+                  f"speed = {speed * 1000:.1f} mm/s  "
+                  f"(speed {speed_idx + 1}/{len(ROLL_SPEEDS_M_S)}, "
+                  f"rep {rep_idx + 1}/{N_REPEATS}) ───")
             input("Press Enter to start this rolling session...")
 
             # ── 1. Descend to contact ────────────────────────────────────────
             print("  Descending to contact...")
+            _pre_descend_pose = robot.end_effector_pose.copy()
             robot.move_to(pose=_contact_pose, speed=APPROACH_SPEED_M_S)
-            time.sleep(SETTLE_SEC)
+            _wait_for_move(_pre_descend_pose, _contact_pose, APPROACH_SPEED_M_S)
+            print(f"  Contact point reached; holding {CONTACT_HOLD_SEC:.1f} s to settle...")
+            time.sleep(CONTACT_HOLD_SEC)
             measured_contact_pose = robot.end_effector_pose.copy()
             print(f"  Contact actual: {_pose_xyz_rpy_str(measured_contact_pose)}")
 
@@ -524,8 +714,10 @@ def main():
             # ── 3. RF + EE sampling setup ─────────────────────────────────────
             frames = []
             ee_poses_trial = []
+            cmd_poses_trial = []
             sample_stop_event = None
             sample_thread = None
+            cmd_thread = None
             slide_t0 = None
 
             # ── 4. Execute compress → settle → slide → decompress ─────────────
@@ -551,9 +743,22 @@ def main():
                 args=(robot, ee_poses_trial, sample_stop_event, slide_t0),
                 daemon=True,
             )
+            cmd_thread = threading.Thread(
+                target=_sample_cmd_poses,
+                args=(robot, cmd_poses_trial, sample_stop_event, slide_t0),
+                daemon=True,
+            )
             sample_thread.start()
+            cmd_thread.start()
+
+            # Hold before kicking off compress so the operator can verify pose
+            # and the EEF/sampler threads have produced a baseline reading.
+            if PRE_COMPRESS_HOLD_SEC > 0:
+                print(f"  Holding {PRE_COMPRESS_HOLD_SEC:.1f} s before starting compress...")
+                time.sleep(PRE_COMPRESS_HOLD_SEC)
 
             # Step 1: Compress — smooth descent to compressed Z
+            print("  Starting compress...")
             robot.execute_cartesian_traj(compress_wps, compress_times)
             while robot.wait_for_trajectory_completion(compress_duration + EXEC_TRAJ_TIME_OFFSET):
                 pass
@@ -563,11 +768,24 @@ def main():
             time.sleep(SETTLE_SEC)
 
             # Step 3: Slide — quintic-interpolated Y translation
+            # Guard: confirm the Teensy is still streaming before moving.
+            if not dry_run:
+                print("  Waiting for active RF stream before slide…")
+                _ensure_rf_active(frames)
+                print(f"  RF active ({len(frames)} frames so far) — sliding.")
             print("  Sliding...")
             robot.execute_cartesian_traj(slide_wps, slide_times)
             while robot.wait_for_trajectory_completion(slide_duration + EXEC_TRAJ_TIME_OFFSET):
                 pass
             print(f"  Slide done: {_pose_xyz_rpy_str(robot.end_effector_pose.copy())}")
+
+            # Hold between slide and decompress so the EE comes to a full stop
+            # before changing direction (+Y → +Z).  Skipping this trips
+            # Franka's joint_acceleration_discontinuity reflex at higher
+            # slide speeds.
+            if POST_SLIDE_HOLD_SEC > 0:
+                print(f"  Holding {POST_SLIDE_HOLD_SEC:.1f} s after slide before decompress...")
+                time.sleep(POST_SLIDE_HOLD_SEC)
 
             # Step 4: Decompress — smooth ascent back to surface
             robot.execute_cartesian_traj(decompress_wps, decompress_times)
@@ -578,6 +796,7 @@ def main():
             # Stop EE sampler
             sample_stop_event.set()
             sample_thread.join(timeout=1.0)
+            cmd_thread.join(timeout=1.0)
 
             # Stop RF
             if not dry_run:
@@ -607,18 +826,23 @@ def main():
 
             # ── 5. Return to approach ─────────────────────────────────────────
             print("  Returning to approach pose...")
+            _pre_return_pose = robot.end_effector_pose.copy()
             robot.move_to(pose=approach_pose, speed=RETURN_SPEED_M_S)
-            time.sleep(SETTLE_SEC)
+            _wait_for_move(_pre_return_pose, approach_pose, RETURN_SPEED_M_S)
             print(f"  return actual: {_pose_xyz_rpy_str(robot.end_effector_pose.copy())}")
 
             # ── 6. Save ───────────────────────────────────────────────────────
             trial_payload = {
                 "speed_m_s": speed,
                 "roll_distance_m": roll_distance_m,
+                "roll_end_offset_m": ROLL_END_OFFSET_M,
+                "roller_diameter_m": ROLLER_DIAMETER_M,
+                "roller_radius_m": R,
                 "roller_rotation_deg_nominal": float(roller_rotation_deg),
                 "frames": list(frames),
                 "ee_poses": ee_poses_trial,
                 "ee_poses_slide_only": ee_poses_slide_only,
+                "commanded_ee_poses": cmd_poses_trial,
                 "rf_window_duration_s": rf_window_duration,
                 "slide_duration_s": slide_duration,
                 "compress_duration_s": compress_duration,
@@ -652,8 +876,11 @@ def main():
                 },
             }
             trial_payload["rf_capture_summary"] = _rf_capture_summary(frames, rf_window_duration)
+            trial_payload["static_rf"] = static_rf_payload
+            trial_payload["repeat_idx"] = rep_idx
+            trial_payload["speed_idx"] = speed_idx
             trials.append(trial_payload)
-            _save_trial_result(trial_dir, speed, trial_payload, session_metadata)
+            _save_trial_result(trial_dir, speed, trial_payload, session_metadata, repeat_idx=rep_idx)
 
             if not dry_run:
                 coverage = trial_payload["rf_capture_summary"]["coverage_ratio"]
