@@ -276,12 +276,14 @@ class RIMTeleopOrchestrator:
 
             # Always log robot telemetry at control-loop rate for Foxglove.
             tcp_axis_pos: float | None = None
+            ee_orientation_xyzw: list | None = None
             try:
                 q = self._robot.q
                 dq = self._robot.dq
                 tau = self._robot.tau
                 ee_pose = self._robot.end_effector_pose
                 tcp_axis_pos = float(ee_pose.position[self._axis])
+                ee_orientation_xyzw = ee_pose.orientation.as_quat().tolist()
                 ee_twist = self._robot.end_effector_twist
                 ee_wrench = self._robot.end_effector_external_wrench
 
@@ -334,7 +336,7 @@ class RIMTeleopOrchestrator:
                     interface_force = self.delay_rim.get_interface_force()
 
                     if rim_x is not None and self._safety_allows_output(now) and not self.cfg.dry_run:
-                        self._send_osc_command(self._axis, float(rim_x[0]), interface_force)
+                        self._send_osc_command(self._axis, float(rim_x[0]), -interface_force)
 
                     self.logger.log_sample(
                         "control",
@@ -363,6 +365,7 @@ class RIMTeleopOrchestrator:
                             "tool_tip": float(model.x_i[0]),
                             "rim": float(rim_x[0]) if rim_x is not None else None,
                             "target": float(rim_x[0]) + self._tool_axis_correction if rim_x is not None else None,
+                            "orientation_xyzw": ee_orientation_xyzw,
                         },
                         timestamp_s=now,
                     )

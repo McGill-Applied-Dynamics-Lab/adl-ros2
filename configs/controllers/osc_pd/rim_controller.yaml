@@ -2,19 +2,19 @@
 # Default parameters for the OSC PD controller
 gains.k_pos_x: 800.0
 gains.k_pos_y: 800.0
-gains.k_pos_z: 3000.0
+gains.k_pos_z: 1000.0
 
 gains.d_pos_x: -1.0
 gains.d_pos_y: -1.0
-gains.d_pos_z: -1.0
+gains.d_pos_z: 200.0
 
-gains.k_rot_x: 150.0
-gains.k_rot_y: 150.0
-gains.k_rot_z: 150.0
+gains.k_rot_x: 30.0
+gains.k_rot_y: 30.0
+gains.k_rot_z: 10.0   # wrist spin — irrelevant for z-axis interface; keep low to avoid ff cross-coupling oscillation
 
-gains.d_rot_x: 10.0
-gains.d_rot_y: 10.0
-gains.d_rot_z: 10.0
+gains.d_rot_x: -1.0   # auto-damp: 2*sqrt(k * Lambda_ii)
+gains.d_rot_y: -1.0
+gains.d_rot_z: -1.0
 
 # -- EMA Filters (0.0: Max filtering, 1.0: No filtering) --
 # filter.joint_targets: 1.0  # No filtering
@@ -27,7 +27,7 @@ filter.output_torque: 0.7  # No filtering
 
 
 
-nullspace.damping: 5.0  # Joint-space damping in redundant DOFs (N·m·s/rad)
+nullspace.damping: 0.0  # Joint-space damping in redundant DOFs (N·m·s/rad)
 
 workspace.force_limit: 90.0  # Maximum allowed force magnitude (N) (at EE)
 workspace.torque_limit: 10.0  # Maximum allowed torque magnitude (Nm) (at EE)

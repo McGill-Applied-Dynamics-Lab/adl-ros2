@@ -1,12 +1,14 @@
 """
 Trajectory tracking benchmark for the OSC PD controller.
 
-Four trajectories characterize tracking accuracy and stability across gain settings:
+Five trajectories characterize tracking accuracy and stability across gain settings:
 
   1. Circle (x-y):    5 cm radius at 1 rad/s — coupled tracking, path fidelity, orientation stability.
   2. Step Z:          5 cm step — rise time, overshoot, settling time (2 % band), SS error.
   3. Sine Z:          ±3 cm at 0.5 Hz — amplitude attenuation and phase lag (via FFT at cmd frequency).
   4. Oscillation Z:   ±2 cm at 2 Hz — stress-test stability under rapid reversals ("unstable user").
+  5. Fast ramp Z:     5 cm at ~0.30 m/s — replicates a rapid haptic-device push; reveals Ry/Rx oscillation
+                      triggered by feedforward cross-coupling during fast transients.
 
 Usage:
     python trajectory_tracking.py [config_name]
@@ -37,22 +39,32 @@ from _utils import collect, sample_state, save, setup_robot
 # Trajectory parameters
 # ---------------------------------------------------------------------------
 
-CIRCLE_RADIUS_M = 0.05       # 5 cm
-CIRCLE_OMEGA_RAD_S = 1.0     # angular velocity → period ≈ 6.28 s
-CIRCLE_DURATION_S = 8.0      # ~1.3 full circles (steady-state portion skips the ramp)
-CIRCLE_RAMP_S = 1.5          # linear radius ramp-in to avoid a step at t=0
+CIRCLE_RADIUS_M = 0.05  # 5 cm
+CIRCLE_OMEGA_RAD_S = 1.0  # angular velocity → period ≈ 6.28 s
+CIRCLE_DURATION_S = 8.0  # ~1.3 full circles (steady-state portion skips the ramp)
+CIRCLE_RAMP_S = 1.5  # linear radius ramp-in to avoid a step at t=0
 
-STEP_Z_M = 0.05              # 5 cm upward step
-STEP_RECORD_S = 3.0          # record after step command
-STEP_SETTLE_S = 2.0          # settle at home before / after step
+STEP_Z_M = 0.05  # 5 cm upward step
+STEP_RECORD_S = 3.0  # record after step command
+STEP_SETTLE_S = 2.0  # settle at home before / after step
 
-SINE_AMP_M = 0.03            # ±3 cm
-SINE_FREQ_HZ = 0.5           # 0.5 Hz
-SINE_DURATION_S = 10.0       # 5 full cycles
+SINE_AMP_M = 0.03  # ±3 cm
+SINE_FREQ_HZ = 0.5  # 0.5 Hz
+SINE_DURATION_S = 10.0  # 5 full cycles
 
-OSCL_AMP_M = 0.02            # ±2 cm  ("unstable user")
-OSCL_FREQ_HZ = 2.0           # 2 Hz
-OSCL_DURATION_S = 5.0        # 10 full cycles
+OSCL_AMP_M = 0.02  # ±2 cm  ("unstable user")
+OSCL_FREQ_HZ = 2.0  # 2 Hz
+OSCL_DURATION_S = 5.0  # 10 full cycles
+
+RAMP_VELOCITY_M_S = 0.30  # m/s — approx. peak velocity seen from fast haptic device push
+RAMP_DIST_M = -0.05       # 5 cm downward (negative = toward table, same direction as haptic push)
+RAMP_HOLD_S = 2.0         # hold at target to observe orientation settling after the transient
+
+# RIM coupling parameters — must match rim_teleop_default.yaml interface stiffness/damping
+# During the ramp at constant velocity, the dominant coupling force is D * v (~27 N at 0.3 m/s).
+# This is the force missing from a pure position-tracking test; it is what excites Ry.
+RAMP_FF_D = 90.0   # N·s/m  (interface damping K_i from rim_teleop config)
+RAMP_FF_K = 1000.0 # N/m    (interface stiffness D_i — contributes when proxy lags robot)
 
 RATE_HZ = 200.0
 
@@ -60,6 +72,7 @@ RATE_HZ = 200.0
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _follow_and_record(
     robot,
@@ -105,7 +118,7 @@ def _step_metrics(z: np.ndarray, home_z: float, target_z: float, rate_hz: float)
             break
     settling_time_s = settled_idx / rate_hz
 
-    ss_z = z[-int(rate_hz * 0.5):].mean()
+    ss_z = z[-int(rate_hz * 0.5) :].mean()
     return {
         "rise_time_s": float(rise_time_s),
         "overshoot_pct": float(overshoot_pct),
@@ -135,6 +148,7 @@ def _sine_metrics(z_resp: np.ndarray, z_cmd: np.ndarray, freq_hz: float, rate_hz
 # Trajectory tests
 # ---------------------------------------------------------------------------
 
+
 def run_circle(robot, home_pose, ref_ori: Rotation) -> dict:
     print(f"\n{'=' * 55}")
     print(f"[1] Circle x-y  R={CIRCLE_RADIUS_M * 100:.0f} cm  ω={CIRCLE_OMEGA_RAD_S:.1f} rad/s")
@@ -157,9 +171,7 @@ def run_circle(robot, home_pose, ref_ori: Rotation) -> dict:
     data["cmd_position"] = cmd_positions
 
     steady = t >= CIRCLE_RAMP_S
-    path_err = np.sqrt(
-        (data["position"][:, 0] - x_cmd) ** 2 + (data["position"][:, 1] - y_cmd) ** 2
-    )
+    path_err = np.sqrt((data["position"][:, 0] - x_cmd) ** 2 + (data["position"][:, 1] - y_cmd) ** 2)
     rmse_xy = float(np.sqrt(np.mean(path_err[steady] ** 2)))
     max_err = float(path_err[steady].max())
     ori_rms_deg = float(np.degrees(np.sqrt(np.mean(data["ori_err_rad"][steady] ** 2))))
@@ -257,9 +269,74 @@ def run_oscillation_z(robot, home_pose, ref_ori: Rotation) -> dict:
     return data
 
 
+def run_ramp_z(robot, home_pose, ref_ori: Rotation) -> dict:
+    """Fast linear ramp in z WITH feedforward — replicates a rapid haptic-device push.
+
+    Two phases:
+      - Ramp:  position moves at RAMP_VELOCITY_M_S; feedforward = D*v (dominant coupling term)
+      - Hold:  position held at target; feedforward zeroed; orientation settles
+
+    Without the feedforward, the Ry cross-coupling is not excited — matching the observation
+    that the oscillation only appears during RIM teleoperation, not pure position tracking.
+    """
+    ff_ramp = RAMP_FF_D * RAMP_VELOCITY_M_S * np.sign(RAMP_DIST_M)  # N, same direction as motion
+    print(f"\n{'=' * 55}")
+    print(f"[5] Fast ramp Z  v={RAMP_VELOCITY_M_S:.2f} m/s  d={RAMP_DIST_M * 100:.0f} cm  ff={ff_ramp:.1f} N during ramp")
+
+    n_ramp = max(1, int(abs(RAMP_DIST_M) / RAMP_VELOCITY_M_S * RATE_HZ))
+    n_hold = int(RAMP_HOLD_S * RATE_HZ)
+    n = n_ramp + n_hold
+    dt = 1.0 / RATE_HZ
+
+    cx, cy, cz = home_pose.position
+    z_ramp = cz + np.linspace(0.0, RAMP_DIST_M, n_ramp, endpoint=True)
+    z_hold = np.full(n_hold, cz + RAMP_DIST_M)
+    z_cmd = np.concatenate([z_ramp, z_hold])
+    ff_z = np.concatenate([np.full(n_ramp, ff_ramp), np.zeros(n_hold)])
+    cmd_positions = np.stack([np.full(n, cx), np.full(n, cy), z_cmd], axis=1)
+
+    robot.set_target(pose=home_pose)
+    robot.set_target_wrench(force=[0.0, 0.0, 0.0])
+    time.sleep(2.0)
+
+    samples: list[dict] = []
+    next_tick = time.perf_counter()
+    for pos, ff in zip(cmd_positions, ff_z):
+        robot.set_target(pose=Pose(position=pos, orientation=ref_ori))
+        robot.set_target_wrench(force=[0.0, 0.0, float(ff)])
+        samples.append(sample_state(robot, ref_ori))
+        next_tick += dt
+        time.sleep(max(0.0, next_tick - time.perf_counter()))
+
+    robot.set_target_wrench(force=[0.0, 0.0, 0.0])
+
+    data = {k: np.array([s[k] for s in samples]) for k in samples[0]}
+    data["cmd_position"] = cmd_positions
+    data["cmd_ff_z"] = ff_z
+
+    err_rots = ref_ori.inv() * Rotation.from_quat(data["orientation_quat"])
+    euler_deg = err_rots.as_euler("xyz", degrees=True)
+    data["euler_deg"] = euler_deg
+
+    trans_end = n_ramp + int(0.5 * RATE_HZ)
+    ss_start = n - int(0.5 * RATE_HZ)
+
+    print("  Orientation error (Euler XYZ, vs home):")
+    for i, ax_name in enumerate(["Rx", "Ry  ← cross-coupling", "Rz"]):
+        rms_t = float(np.std(euler_deg[:trans_end, i]))
+        rms_ss = float(np.std(euler_deg[ss_start:, i]))
+        peak = float(np.abs(euler_deg[:, i]).max())
+        print(f"    {ax_name}: transient RMS={rms_t:.2f}°  SS RMS={rms_ss:.2f}°  peak={peak:.2f}°")
+
+    robot.set_target(pose=home_pose)
+    time.sleep(2.0)
+    return data
+
+
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
+
 
 def main() -> None:
     config_name = sys.argv[1] if len(sys.argv) > 1 else "rim_controller"
@@ -275,10 +352,11 @@ def main() -> None:
         {
             "home_position": home_pose.position.copy(),
             "config": np.bytes_(config_name),
-            "circle": run_circle(robot, home_pose, ref_ori),
-            "step_z": run_step_z(robot, home_pose, ref_ori),
-            "sine_z": run_sine_z(robot, home_pose, ref_ori),
-            "osc_z": run_oscillation_z(robot, home_pose, ref_ori),
+            # "circle": run_circle(robot, home_pose, ref_ori),
+            # "step_z": run_step_z(robot, home_pose, ref_ori),
+            "ramp_z": run_ramp_z(robot, home_pose, ref_ori),
+            # "sine_z": run_sine_z(robot, home_pose, ref_ori),
+            # "osc_z": run_oscillation_z(robot, home_pose, ref_ori),
         },
         f"trajectory_tracking_{config_name}",
     )

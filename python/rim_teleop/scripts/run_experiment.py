@@ -26,7 +26,7 @@ def experiment_setup(robot: Robot) -> None:
     # robot.home()
     robot.controller_switcher_client.switch_controller("joint_trajectory_controller")
 
-    start_position = np.array([0.681, -0.147, 0.15])  # Same as granular bed
+    start_position = np.array([0.5, -0.12, 0.10])  # Same as granular bed
     # start_position = np.array([0.3, 0.0, 0.15])
 
     start_orientation = Rotation.from_euler("xyz", [-180, 0, 0], degrees=True)
