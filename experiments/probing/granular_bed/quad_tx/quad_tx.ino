@@ -1,22 +1,13 @@
-// quad_tx.ino — four-channel pressure streamer for the granular-bed setup.
+// quad_tx.ino — four-channel pressure streamer for the haptic interface setup.
 //
 // Reads analog pins 14, 15, 16, 17 (A0–A3) and streams the four 12-bit ADC
-// channels over the Teensy USB serial link in fixed-size chunks. Wire layout
-// matches teensy_tx_multi.ino's three-channel format with a fourth uint16[]
-// block per chunk (see the 'C' comment below).
+// channels over the Teensy USB serial link in fixed-size chunks. 
 //
 // Sample rate target: ~40 kHz (25 µs per 4-channel sample).
-//
-// Why the ADC library:
-//   stock analogRead() with averaging takes ~20 µs per call on Teensy 3.x, so
-//   four sequential reads cap out near 12 kHz. The Teensy core's ADC library
-//   exposes both ADC modules and a synchronized-pair read, so we sample two
-//   pins simultaneously and only need two reads per channel set (≈10 µs at
-//   HIGH_SPEED with AVG=1).
 
 #include <ADC.h>
 
-#define RES 12
+#define RES 12                  // This is the maximum value for the teensy
 #define AVG 12                  // No on-chip averaging — keeps each pair < ~5 µs.
 #define SAMPLE_PERIOD_US 50    // 25 µs ⇒ 40 kHz nominal
 
