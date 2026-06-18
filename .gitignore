@@ -32,7 +32,9 @@ log/
 # Data
 **/test/results/**
 **/results/**
-data/
+# Run output only (repo-root data/, e.g. data/rim_runs). Anchored with a leading
+# slash so it does NOT match source dirs named `data` elsewhere in the tree.
+/data/
 
 # Docs
 site/

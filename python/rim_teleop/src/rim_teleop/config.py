@@ -77,6 +77,7 @@ class FileSinkConfig:
     output_dir: str = "data/rim_runs"
     run_name: str | None = None
     flush_hz: float = 20.0
+    notes: str = ""  # free-text purpose for the run; recorded in metadata.json
 
 
 @dataclass(kw_only=True)
