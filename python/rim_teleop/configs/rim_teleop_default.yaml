@@ -8,10 +8,9 @@ interface:
   axis: z
   stiffness: 1000.0
   damping: 90.0
-  contact_surface: 0.025  # 19.5mm, 
-  contact_stiffness: 10000.0
-  contact_damping: 100.0
+  contact_surface: 0.025  # 19.5mm, world height of the table
   force_scale: 0.1
+  feedforward_force_cap: 25.0  # max feedforward sent to the robot [N]; keep below the OSC force limit
   rim_enabled: true
   force_feedback: rim  # "none" | "robot" | "rim"
   vel_filter_alpha: 0.2  # IIR on leader velocity; 1.0 = off, ~35 Hz cutoff at 1 kHz

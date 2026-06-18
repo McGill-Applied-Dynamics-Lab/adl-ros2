@@ -155,8 +155,17 @@ class RIMTeleopOrchestrator:
         target_position[axis] = rim_x + self._tool_axis_correction
         self._robot.set_target(position=target_position)
 
+        raw_force = float(interface_force_1d[0])
+        cap = self.cfg.interface.feedforward_force_cap
+        cmd_force = float(np.clip(raw_force, -cap, cap))
+        if cmd_force != raw_force:
+            self._robot.node.get_logger().warn(
+                f"Feedforward force {raw_force:.1f} N clamped to {cmd_force:.1f} N (feedforward_force_cap={cap} N)",
+                throttle_duration_sec=0.5,
+            )
+
         feedforward = np.zeros(3)
-        feedforward[axis] = float(interface_force_1d[0])
+        feedforward[axis] = cmd_force
         self._robot.set_target_wrench(force=feedforward, torque=np.zeros(3))
 
     def set_deadman(self, active: bool) -> None:

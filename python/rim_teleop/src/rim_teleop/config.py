@@ -1,10 +1,9 @@
 """Configuration dataclasses for RIM teleoperation runtime."""
 
 from dataclasses import dataclass, field, is_dataclass
-from importlib.resources import files
+from pathlib import Path
 
 import yaml
-
 from arm_client.teleop.inverse3_teleop import Inverse3Config
 
 
@@ -26,10 +25,9 @@ class InterfaceConfig:
     stiffness: float = 1000.0
     damping: float = 90.0
     contact_surface: float = 0.0
-    contact_stiffness: float = 10000.0
-    contact_damping: float = 100.0
     force_scale: float = 1.0
-    force_cap: float = 12.0
+    force_cap: float = 12.0  # max force rendered to the Inverse3 device
+    feedforward_force_cap: float = 15.0  # max |feedforward| sent to the robot [N]; tune below the OSC force limit
     rim_enabled: bool = True
     force_feedback: str = "rim"  # "none" | "robot" | "rim"
     vel_filter_alpha: float = 1.0  # IIR alpha for leader velocity; 1.0 = no filter
@@ -127,8 +125,13 @@ def _apply_nested_config(instance, values: dict) -> None:
 
 
 def default_config_path() -> str:
-    """Return the path to the bundled default config YAML."""
-    return str(files("rim_teleop") / "configs" / "rim_teleop_default.yaml")
+    """Return the path to the example config template shipped in the source tree.
+
+    The YAML is a user-editable template (copy + edit per setup), not bundled
+    package data — runtime defaults come from the dataclasses above. Resolve it
+    relative to this file: python/rim_teleop/configs/rim_teleop_default.yaml.
+    """
+    return str(Path(__file__).resolve().parents[2] / "configs" / "rim_teleop_default.yaml")
 
 
 def load_config_from_yaml(file_path: str) -> RIMTeleopConfig:
