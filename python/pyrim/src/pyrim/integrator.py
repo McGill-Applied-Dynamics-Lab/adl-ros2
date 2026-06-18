@@ -44,6 +44,11 @@ class RIMIntegrator:
         self._inv_aug: np.ndarray | None = None
         self._interface_force = np.zeros(self._m)
 
+    @property
+    def interface_dim(self) -> int:
+        """Dimension of the interface subspace (number of RIM DoF)."""
+        return self._m
+
     def add_leader_state(self, position: np.ndarray, velocity: np.ndarray) -> None:
         with self._lock:
             self._leader_pos = position.reshape(self._m).copy()
