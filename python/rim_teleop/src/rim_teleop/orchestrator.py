@@ -336,6 +336,9 @@ class RIMTeleopOrchestrator:
                     interface_force = self.delay_rim.get_interface_force()
 
                     if rim_x is not None and self._safety_allows_output(now) and not self.cfg.dry_run:
+                        if self.cfg.interface.force_feedback == "robot":
+                            interface_force = np.zeros_like(interface_force)
+
                         self._send_osc_command(self._axis, float(rim_x[0]), -interface_force)
 
                     self.logger.log_sample(
