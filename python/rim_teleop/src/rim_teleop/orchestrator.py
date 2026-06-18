@@ -9,7 +9,7 @@ from collections.abc import Callable
 import numpy as np
 from arm_client.robot import Pose, Robot
 from arm_client.teleop.inverse3_teleop import Inverse3Device
-from pyrim import DynModel, RIMCalculator, RIMIntegrator
+from pyrim import RIM, InterfaceFrame, RIMIntegrator
 from scipy.spatial.transform import Rotation
 
 from arm_client import CONFIG_DIR
@@ -17,8 +17,6 @@ from arm_client import CONFIG_DIR
 from .adapters import ExperimentLogger, RobotModelAdapter, TeleopInterfaceAdapter
 from .config import RIMTeleopConfig
 from .monitoring import LoopRateMonitor
-
-_AXIS_TO_INDEX = {"x": 0, "y": 1, "z": 2}
 
 
 class RIMTeleopOrchestrator:
@@ -31,7 +29,7 @@ class RIMTeleopOrchestrator:
     ) -> None:
         self.cfg = config
         self._setup_fn = setup_fn
-        self._axis = _AXIS_TO_INDEX[config.interface.axis]
+        self._frame = InterfaceFrame.from_direction(config.interface.rim_direction)
 
         self._robot = Robot(namespace=config.robot.namespace)
         if config.robot.wrench_filter_alpha is not None:
@@ -42,26 +40,27 @@ class RIMTeleopOrchestrator:
             node=self._robot.node,
             robot=self._robot,
             model_cfg=config.model,
-            interface_cfg=config.interface,
+            frame=self._frame,
         )
 
         self.haply: Inverse3Device  # created in start() once home pose is known
         self.teleop_interface: TeleopInterfaceAdapter  # created in start()
 
-        self.rim_calc = RIMCalculator()
-        self.delay_rim = RIMIntegrator(
-            interface_dim=1,
+        integrator = RIMIntegrator(
+            interface_dim=self._frame.dim,
             dt=1.0 / config.rates.rim_rate_hz,
             stiffness=config.interface.stiffness,
             damping=config.interface.damping,
             contact_surface=config.interface.contact_surface,
             vel_filter_alpha=config.interface.vel_filter_alpha,
         )
+        self.rim = RIM(self._frame, integrator)
         self.logger = ExperimentLogger(config.logging, full_config=config)
 
         self._running = False
         self._deadman_active = not self.cfg.safety.deadman_required
-        self._tool_axis_correction: float = 0.0  # TCP z − tool_tip z at home; applied in _send_osc_command
+        # TCP − tool-tip offset projected onto the RIM subspace at home; applied when commanding.
+        self._tool_correction = np.zeros(self._frame.dim)
         self._threads: list[threading.Thread] = []
         self._loop_monitors = {
             "haptic": LoopRateMonitor(config.rates.haptic_rate_hz),
@@ -80,8 +79,7 @@ class RIMTeleopOrchestrator:
             n = self.model_adapter._model.nv
             q0 = np.zeros(n)
             synthetic = self.model_adapter.compute_at(q0, q0.copy(), q0.copy())
-            rim = self.rim_calc.compute(synthetic)
-            self.delay_rim.update_rim(rim)
+            self.rim.update(synthetic)
             # Tool correction not meaningful in dry-run; leave at 0.
 
         else:
@@ -99,19 +97,21 @@ class RIMTeleopOrchestrator:
             # correction in _send_osc_command so the TCP is commanded to the right position.
             home_model = self.model_adapter.compute()
             if home_model is not None:
-                tool_tip_home = float(home_model.x_i[0])
-                tcp_home = self._home_pose.position[self._axis]
-                self._tool_axis_correction = tcp_home - tool_tip_home
+                tool_tip_home = home_model.x_i  # tool tip projected onto the RIM subspace, (k,)
+                tcp_home = self.rim.project(self._home_pose.position)  # (k,)
+                self._tool_correction = tcp_home - tool_tip_home
                 self._robot.node.get_logger().info(
-                    f"Tool axis correction ({self.cfg.interface.axis}): {self._tool_axis_correction:.4f} m"
-                    f"  (TCP={tcp_home:.4f}, tip={tool_tip_home:.4f})"
+                    f"Tool correction (RIM subspace): {np.array2string(self._tool_correction, precision=4)} m"
+                    f"  (TCP={np.array2string(tcp_home, precision=4)}, tip={np.array2string(tool_tip_home, precision=4)})"
                 )
 
         self.haply = Inverse3Device(
             initial_robot_position=self._home_pose.position.copy(),
             config=self.cfg.inverse3,
         )
-        self.teleop_interface = TeleopInterfaceAdapter(device=self.haply, interface_cfg=self.cfg.interface)
+        self.teleop_interface = TeleopInterfaceAdapter(
+            device=self.haply, interface_cfg=self.cfg.interface, frame=self._frame
+        )
 
         self.haply.start()
         self.logger.start()
@@ -142,31 +142,36 @@ class RIMTeleopOrchestrator:
             return self._robot.end_effector_pose.orientation
         return self._home_pose.orientation
 
-    def _send_osc_command(self, axis: int, rim_x: float, interface_force_1d: np.ndarray) -> None:
-        """Publish RIM proxy position as OSC target pose and inject feedforward coupling force.
+    def _send_osc_command(self, target_position: np.ndarray, feedforward: np.ndarray) -> None:
+        """Publish the 3D target pose and inject the feedforward coupling force.
 
-        target_pose tracks the RIM proxy along the interface axis while holding
-        the other two axes at the home position.
-
-        Feedforward = -λi (paper eq. 20).  delay_rim returns K*(x_rim - x_h) = -λi,
-        so we pass it directly without sign inversion.
+        ``target_position`` is the full 3D Cartesian target (proxy along the RIM
+        subspace, leader/home in the complement). ``feedforward`` is the 3D coupling
+        force (= -λi, paper eq. 20), already lifted onto the RIM subspace.
         """
-        target_position = self._home_pose.position.copy()
-        target_position[axis] = rim_x + self._tool_axis_correction
         self._robot.set_target(position=target_position)
 
-        raw_force = float(interface_force_1d[0])
         cap = self.cfg.interface.feedforward_force_cap
-        cmd_force = float(np.clip(raw_force, -cap, cap))
-        if cmd_force != raw_force:
+        norm = float(np.linalg.norm(feedforward))
+        if norm > cap > 0.0:
+            feedforward = feedforward * (cap / norm)
             self._robot.node.get_logger().warn(
-                f"Feedforward force {raw_force:.1f} N clamped to {cmd_force:.1f} N (feedforward_force_cap={cap} N)",
+                f"Feedforward force {norm:.1f} N clamped to {cap:.1f} N (feedforward_force_cap={cap} N)",
                 throttle_duration_sec=0.5,
             )
 
-        feedforward = np.zeros(3)
-        feedforward[axis] = cmd_force
         self._robot.set_target_wrench(force=feedforward, torque=np.zeros(3))
+
+    def _free_source(self) -> np.ndarray:
+        """3D source for the complement of the RIM subspace: live leader, or home when locked.
+
+        How to control the non-rim axis. When 'leader' is selected, they follow the I3 pose.
+        When 'locked', they remain in their starting position.
+        """
+        if self.cfg.interface.free_space == "leader":
+            pos3, _ = self.teleop_interface.get_cartesian_state()
+            return pos3
+        return self._home_pose.position
 
     def set_deadman(self, active: bool) -> None:
         """Set deadman state. When inactive, command and force outputs are gated off."""
@@ -211,19 +216,21 @@ class RIMTeleopOrchestrator:
             self.teleop_interface.update()
             leader_pos, leader_vel = self.teleop_interface.get_interface_state()
 
-            self.delay_rim.add_leader_state(leader_pos, leader_vel)
-            self.delay_rim.step()
+            self.rim.add_leader_state(leader_pos, leader_vel)
+            self.rim.step()
             now = time.time()
 
             ff_mode = self.cfg.interface.force_feedback
 
             haptic_force = None  # Force to send to the haptic device
-            rim_interface_force = self.delay_rim.get_interface_force()
+            rim_interface_force = self.rim.get_interface_force()
 
             try:
-                robot_force = np.array([self._robot.end_effector_external_wrench["force"][self._axis]], dtype=float)
+                robot_force = self.rim.project(
+                    np.asarray(self._robot.end_effector_external_wrench["force"], dtype=float)
+                )
             except RuntimeError:
-                robot_force = np.zeros(1, dtype=float)
+                robot_force = np.zeros(self._frame.dim, dtype=float)
 
             if ff_mode == "rim" and self._safety_allows_output(now):
                 haptic_force = rim_interface_force
@@ -239,7 +246,7 @@ class RIMTeleopOrchestrator:
             haptic_log: dict = {
                 "leader_pos": leader_pos,  # Position of the I3 in the robot base frame
                 "leader_vel": leader_vel,  # Raw velocity from the I3
-                "leader_vel_filt": self.delay_rim.get_leader_vel(),  # Filtered velocity used by RIMIntegrator
+                "leader_vel_filt": self.rim.get_leader_vel(),  # Filtered velocity used by RIMIntegrator
                 "force_cmd": haptic_force,  # Force command sent to the haptic device
                 "rim_interface_force": rim_interface_force,  # Force from the RIM interface
                 "robot_force": robot_force,  # Force from the robot
@@ -247,8 +254,8 @@ class RIMTeleopOrchestrator:
             }
             if ff_mode == "robot":
                 try:
-                    haptic_log["force_raw"] = np.array(
-                        [self._robot.end_effector_external_wrench_raw["force"][self._axis]], dtype=float
+                    haptic_log["force_raw"] = self.rim.project(
+                        np.asarray(self._robot.end_effector_external_wrench_raw["force"], dtype=float)
                     )
                 except RuntimeError:
                     pass
@@ -262,8 +269,8 @@ class RIMTeleopOrchestrator:
         dt = 1.0 / self.cfg.rates.rim_rate_hz
         next_tick = time.perf_counter()
         while self._running:
-            x_rim, v_rim = self.delay_rim.get_rim_state()
-            interface_force = self.delay_rim.get_interface_force()
+            x_rim, v_rim = self.rim.get_rim_state()
+            interface_force = self.rim.get_interface_force()
             if x_rim is not None and v_rim is not None:
                 self.logger.log_sample(
                     "rim",
@@ -291,7 +298,7 @@ class RIMTeleopOrchestrator:
                 dq = self._robot.dq
                 tau = self._robot.tau
                 ee_pose = self._robot.end_effector_pose
-                tcp_axis_pos = float(ee_pose.position[self._axis])
+                tcp_axis_pos = float(self.rim.project(ee_pose.position)[0])
                 ee_orientation_xyzw = ee_pose.orientation.as_quat().tolist()
                 ee_twist = self._robot.end_effector_twist
                 ee_wrench = self._robot.end_effector_external_wrench
@@ -339,16 +346,18 @@ class RIMTeleopOrchestrator:
             if self.cfg.interface.rim_enabled:
                 model = self.model_adapter.compute()
                 if model is not None:
-                    rim = self.rim_calc.compute(model)
-                    self.delay_rim.update_rim(rim)
-                    rim_x, _ = self.delay_rim.get_rim_state()
-                    interface_force = self.delay_rim.get_interface_force()
+                    reduced = self.rim.update(model)
+                    rim_x, _ = self.rim.get_rim_state()
+                    interface_force = self.rim.get_interface_force()
 
                     if rim_x is not None and self._safety_allows_output(now) and not self.cfg.dry_run:
                         if self.cfg.interface.force_feedback == "robot":
                             interface_force = np.zeros_like(interface_force)
 
-                        self._send_osc_command(self._axis, float(rim_x[0]), -interface_force)
+                        commanded_s = rim_x + self._tool_correction
+                        target = self.rim.compose(commanded_s, self._free_source())
+                        feedforward = self.rim.lift(-interface_force)
+                        self._send_osc_command(target, feedforward)
 
                     self.logger.log_sample(
                         "control",
@@ -362,11 +371,11 @@ class RIMTeleopOrchestrator:
                     self.logger.log_sample(
                         "rim_model",
                         {
-                            "M_eff": rim.M_eff,
-                            "z_i": rim.z_i,
-                            "f_eff": rim.f_eff,
-                            "x": rim.x,
-                            "v": rim.v,
+                            "M_eff": reduced.M_eff,
+                            "z_i": reduced.z_i,
+                            "f_eff": reduced.f_eff,
+                            "x": reduced.x,
+                            "v": reduced.v,
                         },
                         timestamp_s=now,
                     )
@@ -376,19 +385,23 @@ class RIMTeleopOrchestrator:
                             "tcp": tcp_axis_pos,
                             "tool_tip": float(model.x_i[0]),
                             "rim": float(rim_x[0]) if rim_x is not None else None,
-                            "target": float(rim_x[0]) + self._tool_axis_correction if rim_x is not None else None,
+                            "target": float((rim_x + self._tool_correction)[0]) if rim_x is not None else None,
                             "orientation_xyzw": ee_orientation_xyzw,
                         },
                         timestamp_s=now,
                     )
             else:
-                leader_pos, _ = self.teleop_interface.get_interface_state()
+                leader3, _ = self.teleop_interface.get_cartesian_state()
                 if self._robot_state_allows_output(now) and not self.cfg.dry_run:
-                    self._send_osc_command(self._axis, float(leader_pos[0]), np.zeros(1, dtype=float))
+                    # Direct teleop: RIM direction follows the leader (no proxy); complement per free_space.
+                    commanded_s = self.rim.project(leader3) + self._tool_correction
+                    free_src = leader3 if self.cfg.interface.free_space == "leader" else self._home_pose.position
+                    target = self.rim.compose(commanded_s, free_src)
+                    self._send_osc_command(target, np.zeros(3))
 
                 self.logger.log_sample(
                     "control",
-                    {"leader_pos_direct": leader_pos},
+                    {"leader_pos_direct": leader3},
                     timestamp_s=now,
                 )
             self._loop_monitors["control"].tick()

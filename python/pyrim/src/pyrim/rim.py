@@ -20,7 +20,7 @@ import numpy as np
 from .calculator import RIMCalculator
 from .frame import InterfaceFrame
 from .integrator import RIMIntegrator
-from .models import DynModel
+from .models import DynModel, RIMModel
 
 
 class RIM:
@@ -83,9 +83,11 @@ class RIM:
 
     # -- reduction + integration (thread-safe via the integrator) ----------
 
-    def update(self, model: DynModel) -> None:
-        """Reduce a dynamics snapshot and refresh the integrator's model terms."""
-        self.integrator.update_rim(self.calculator.compute(model))
+    def update(self, model: DynModel) -> RIMModel:
+        """Reduce a dynamics snapshot, refresh the integrator's terms, and return the reduced model."""
+        reduced = self.calculator.compute(model)
+        self.integrator.update_rim(reduced)
+        return reduced
 
     def add_leader_state(self, position: np.ndarray, velocity: np.ndarray) -> None:
         self.integrator.add_leader_state(position, velocity)

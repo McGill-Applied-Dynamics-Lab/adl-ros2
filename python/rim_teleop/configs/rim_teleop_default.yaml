@@ -5,7 +5,8 @@ rates:
   haptic_rate_hz: 1000.0
 
 interface:
-  axis: z
+  rim_direction: [0.0, 0.0, 1.0]  # unit vector for RIM + contact + haptic force
+  free_space: leader  # "leader" -> device drives x/y (3D teleop) | "locked" -> held at home (1-DoF)
   stiffness: 1000.0
   damping: 90.0
   contact_surface: 0.025  # 19.5mm, world height of the table

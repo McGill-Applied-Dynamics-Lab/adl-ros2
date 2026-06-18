@@ -21,7 +21,8 @@ class RateConfig:
 class InterfaceConfig:
     """RIM interface and force rendering settings."""
 
-    axis: str = "z"
+    rim_direction: list = field(default_factory=lambda: [0.0, 0.0, 1.0])  # unit vector; RIM + contact + haptic force
+    free_space: str = "locked"  # "leader" (device drives the complement -> 3D teleop) | "locked" (held at home -> 1-DoF)
     stiffness: float = 1000.0
     damping: float = 90.0
     contact_surface: float = 0.0

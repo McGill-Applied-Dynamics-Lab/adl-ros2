@@ -10,13 +10,11 @@ import numpy as np
 import pinocchio as pin
 from ament_index_python.packages import get_package_share_directory
 from arm_client.robot import Robot
-from pyrim import DynModel
+from pyrim import DynModel, InterfaceFrame
 from rclpy.node import Node
 
-from ..config import InterfaceConfig, ModelConfig
+from ..config import ModelConfig
 from ..filters import LowPassFilter
-
-_AXIS_TO_INDEX = {"x": 0, "y": 1, "z": 2}
 
 
 class RobotModelAdapter:
@@ -27,7 +25,7 @@ class RobotModelAdapter:
         node: Node,
         robot: Robot,
         model_cfg: ModelConfig,
-        interface_cfg: InterfaceConfig,
+        frame: InterfaceFrame,
     ) -> None:
         self._node = node
         self._robot = robot
@@ -47,9 +45,12 @@ class RobotModelAdapter:
         ]
         self._model_order_from_robot = [self._robot_joint_names.index(name) for name in self._model_joint_names]
 
-        axis_idx = _AXIS_TO_INDEX[interface_cfg.axis]
-        self._di = np.zeros((1, 6))
-        self._di[0, axis_idx] = 1.0
+        # Interface selection: rows are the RIM subspace directions in EE-translation
+        # space (k x 6). Projecting the EE Jacobian/position onto these gives the
+        # reduced interface terms. For a single z direction this is [0,0,1,0,0,0].
+        self._frame = frame
+        self._di = np.zeros((frame.dim, 6))
+        self._di[:, :3] = frame.basis.T
 
         self._f_q = LowPassFilter(model_cfg.filter_alpha_q)
         self._f_dq = LowPassFilter(model_cfg.filter_alpha_q_dot)
@@ -150,19 +151,18 @@ class RobotModelAdapter:
 
         ai = self._di @ j_ee
         ai_dot = self._di @ j_dot_ee
-        b_i = (ai_dot @ dq).reshape(1)
+        b_i = (ai_dot @ dq).reshape(self._frame.dim)
 
         x_ee = self._data.oMf[self._ee_frame_id].translation
         v_ee = j_ee[:3, :] @ dq
 
-        axis = int(np.argmax(self._di[0, :3]))
-        x_i = np.array([x_ee[axis]], dtype=float)
-        v_i = np.array([v_ee[axis]], dtype=float)
+        x_i = self._frame.project(x_ee)
+        v_i = self._frame.project(v_ee)
 
         n = self._model.nv
         dyn = DynModel(
             n=n,
-            m=1,
+            m=self._frame.dim,
             q=q.copy(),
             q_dot=dq.copy(),
             x_i=x_i,
@@ -194,18 +194,17 @@ class RobotModelAdapter:
 
         ai = self._di @ j_ee
         ai_dot = self._di @ j_dot_ee
-        b_i = (ai_dot @ dq).reshape(1)
+        b_i = (ai_dot @ dq).reshape(self._frame.dim)
 
         x_ee = self._data.oMf[self._ee_frame_id].translation
         v_ee = j_ee[:3, :] @ dq
 
-        axis = int(np.argmax(self._di[0, :3]))
-        x_i = np.array([x_ee[axis]], dtype=float)
-        v_i = np.array([v_ee[axis]], dtype=float)
+        x_i = self._frame.project(x_ee)
+        v_i = self._frame.project(v_ee)
 
         return DynModel(
             n=self._model.nv,
-            m=1,
+            m=self._frame.dim,
             q=q.copy(),
             q_dot=dq.copy(),
             x_i=x_i,

@@ -1,4 +1,4 @@
-"""Device-agnostic teleop interface adapter for reduced RIM interaction space."""
+"""Device-agnostic teleop interface adapter for the RIM interaction space."""
 
 from __future__ import annotations
 
@@ -6,15 +6,14 @@ from dataclasses import dataclass
 
 import numpy as np
 from arm_client.teleop.inverse3_teleop import Inverse3Device
+from pyrim import InterfaceFrame
 
 from ..config import InterfaceConfig
-
-_AXIS_TO_INDEX = {"x": 0, "y": 1, "z": 2}
 
 
 @dataclass
 class TeleopInterfaceAdapter:
-    """Convert 3D teleop device state/forces to reduced interface signals.
+    """Map a 3D teleop device to/from the RIM interface subspace via an InterfaceFrame.
 
     Expected device API (duck-typed):
       - update_device_state() -> None
@@ -26,43 +25,30 @@ class TeleopInterfaceAdapter:
 
     device: Inverse3Device | object
     interface_cfg: InterfaceConfig
-
-    def __post_init__(self) -> None:
-        if self.interface_cfg.axis not in _AXIS_TO_INDEX:
-            raise ValueError(f"Unsupported interface axis: {self.interface_cfg.axis}")
-        self._axis = _AXIS_TO_INDEX[self.interface_cfg.axis]
-        self._initial_position: np.ndarray | None = None
+    frame: InterfaceFrame
 
     def update(self) -> None:
         """Refresh underlying device state."""
         self.device.update_device_state()
 
-    def get_interface_state(self) -> tuple[np.ndarray, np.ndarray]:
-        """Return reduced interface position and velocity, both shape (1,)."""
-        # Get state of I3 in robot frame
+    def _device_state(self) -> tuple[np.ndarray, np.ndarray]:
         position_robot = np.asarray(self.device.position_robot, dtype=float).reshape(3)
         velocity_robot = np.asarray(self.device.velocity_robot, dtype=float).reshape(3)
+        return position_robot, velocity_robot
 
-        if self._initial_position is None:
-            self._initial_position = position_robot.copy()
+    def get_interface_state(self) -> tuple[np.ndarray, np.ndarray]:
+        """Return the device position/velocity projected onto the RIM subspace, shape (k,)."""
+        position_robot, velocity_robot = self._device_state()
+        return self.frame.project(position_robot), self.frame.project(velocity_robot)
 
-        # delta = self.interface_cfg.interface_workspace_scale * (position_robot - self._initial_position)
-        # velocity_scaled = self.interface_cfg.interface_workspace_scale * velocity_robot
-
-        return (
-            np.array([position_robot[self._axis]], dtype=float),
-            np.array([velocity_robot[self._axis]], dtype=float),
-        )
+    def get_cartesian_state(self) -> tuple[np.ndarray, np.ndarray]:
+        """Return the full 3D device position/velocity in the robot frame, shape (3,)."""
+        return self._device_state()
 
     def set_interface_force(self, force: np.ndarray) -> None:
-        """Send the interface force to the device.
-        Scales it and map it to the correct frame for the I3.
-        """
+        """Scale/cap the subspace force and lift it into a 3D device force."""
         f = np.asarray(force, dtype=float).reshape(-1)
-        if f.size == 0:
-            scalar = 0.0
-        else:
-            scalar = float(f[0])
+        scalar = 0.0 if f.size == 0 else float(f[0])
 
         scalar = float(
             np.clip(
@@ -72,8 +58,7 @@ class TeleopInterfaceAdapter:
             )
         )
 
-        force_3d = np.zeros(3, dtype=float)
-        force_3d[self._axis] = scalar
+        force_3d = self.frame.lift(scalar)
         self.device.apply_force(force_3d)
 
     def is_connected(self) -> bool:

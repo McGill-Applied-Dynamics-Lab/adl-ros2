@@ -13,7 +13,6 @@ from rim_teleop.orchestrator import RIMTeleopOrchestrator
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run RIM bilateral teleoperation with arm_client")
     parser.add_argument("--config", type=str, default=None, help="Path to YAML config file")
-    parser.add_argument("--axis", choices=["x", "y", "z"], default=None, help="RIM interface axis")
     parser.add_argument("--websocket-uri", default=None, help="Inverse3 websocket URI")
     parser.add_argument("--robot-ns", default=None, help="ROS namespace used by arm_client")
     parser.add_argument("--control-rate", type=float, default=None, help="Robot command loop rate (Hz)")
@@ -27,9 +26,6 @@ def main() -> None:
     args = _parse_args()
     cfg: RIMTeleopConfig = load_config_from_yaml(args.config) if args.config else RIMTeleopConfig()
 
-    if args.axis is not None:
-        cfg.interface.axis = args.axis
-        cfg.inverse3.interface_axis = args.axis
     if args.websocket_uri is not None:
         cfg.inverse3.uri = args.websocket_uri
     if args.robot_ns is not None:

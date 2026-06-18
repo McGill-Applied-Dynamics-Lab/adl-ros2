@@ -73,6 +73,14 @@ class TestRIMGeometryDelegation:
 # ---------------------------------------------------------------------------
 
 class TestRIMDynamics:
+    def test_update_returns_reduced_model(self):
+        # The orchestrator logs reduced.M_eff etc., so update() must return the model.
+        rim = make_rim()
+        reduced = rim.update(make_model(M=np.eye(1), J_i=np.ones((1, 1))))
+        assert reduced is not None
+        assert reduced.M_eff.shape == (1, 1)
+        assert reduced.z_i.shape == (1,)
+
     def test_update_then_step_ready(self):
         rim = make_rim()
         # Not ready before update
