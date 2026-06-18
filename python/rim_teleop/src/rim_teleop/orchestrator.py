@@ -9,7 +9,7 @@ from collections.abc import Callable
 import numpy as np
 from arm_client.robot import Pose, Robot
 from arm_client.teleop.inverse3_teleop import Inverse3Device
-from pyrim import DelayRIM, DynModel, RIMCalculator
+from pyrim import DynModel, RIMCalculator, RIMIntegrator
 from scipy.spatial.transform import Rotation
 
 from arm_client import CONFIG_DIR
@@ -49,7 +49,7 @@ class RIMTeleopOrchestrator:
         self.teleop_interface: TeleopInterfaceAdapter  # created in start()
 
         self.rim_calc = RIMCalculator()
-        self.delay_rim = DelayRIM(
+        self.delay_rim = RIMIntegrator(
             interface_dim=1,
             dt=1.0 / config.rates.rim_rate_hz,
             stiffness=config.interface.stiffness,
@@ -239,7 +239,7 @@ class RIMTeleopOrchestrator:
             haptic_log: dict = {
                 "leader_pos": leader_pos,  # Position of the I3 in the robot base frame
                 "leader_vel": leader_vel,  # Raw velocity from the I3
-                "leader_vel_filt": self.delay_rim.get_leader_vel(),  # Filtered velocity used by DelayRIM
+                "leader_vel_filt": self.delay_rim.get_leader_vel(),  # Filtered velocity used by RIMIntegrator
                 "force_cmd": haptic_force,  # Force command sent to the haptic device
                 "rim_interface_force": rim_interface_force,  # Force from the RIM interface
                 "robot_force": robot_force,  # Force from the robot

@@ -25,7 +25,7 @@ class DynModel:
 
 
 @dataclass
-class RIM:
+class RIMModel:
     """Reduced interface model state and parameters."""
 
     m: int

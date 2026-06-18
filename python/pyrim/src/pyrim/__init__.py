@@ -1,6 +1,6 @@
-from .models import DynModel, RIM
+from .models import DynModel, RIMModel
 from .calculator import RIMCalculator
-from .delay_rim import DelayRIM
+from .integrator import RIMIntegrator
 from .frame import InterfaceFrame
 
-__all__ = ["DynModel", "RIM", "RIMCalculator", "DelayRIM", "InterfaceFrame"]
+__all__ = ["DynModel", "RIMModel", "RIMCalculator", "RIMIntegrator", "InterfaceFrame"]

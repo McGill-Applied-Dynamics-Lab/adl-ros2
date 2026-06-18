@@ -1,8 +1,8 @@
-"""Tests for DelayRIM integration, contact, and model-update semantics."""
+"""Tests for RIMIntegrator integration, contact, and model-update semantics."""
 
 import numpy as np
 import pytest
-from pyrim import RIM, DelayRIM
+from pyrim import RIMModel, RIMIntegrator
 
 
 # ---------------------------------------------------------------------------
@@ -16,7 +16,7 @@ SURFACE = 0.0
 
 
 def make_rim(x=0.0, v=0.0, m_eff=1.0, f_eff=0.0, z_i=0.0, m=1):
-    return RIM(
+    return RIMModel(
         m=m,
         M_eff=np.array([[m_eff]]),
         z_i=np.array([z_i]),
@@ -26,25 +26,25 @@ def make_rim(x=0.0, v=0.0, m_eff=1.0, f_eff=0.0, z_i=0.0, m=1):
     )
 
 
-def make_delay_rim(**kwargs):
+def make_integrator(**kwargs):
     defaults = dict(interface_dim=1, dt=DT, stiffness=K, damping=D, contact_surface=SURFACE)
     defaults.update(kwargs)
-    return DelayRIM(**defaults)
+    return RIMIntegrator(**defaults)
 
 
 # ---------------------------------------------------------------------------
 # Initialisation
 # ---------------------------------------------------------------------------
 
-class TestDelayRIMInit:
+class TestRIMIntegratorInit:
     def test_step_returns_none_before_update(self):
-        drim = make_delay_rim()
+        drim = make_integrator()
         drim.add_leader_state(np.zeros(1), np.zeros(1))
         x, v = drim.step()
         assert x is None and v is None
 
     def test_step_ready_after_both(self):
-        drim = make_delay_rim()
+        drim = make_integrator()
         drim.update_rim(make_rim())
         drim.add_leader_state(np.zeros(1), np.zeros(1))
         x, v = drim.step()
@@ -55,10 +55,10 @@ class TestDelayRIMInit:
 # Free-space stepping
 # ---------------------------------------------------------------------------
 
-class TestDelayRIMFreeSpace:
+class TestRIMIntegratorFreeSpace:
     def test_spring_pulls_rim_toward_leader(self):
         """RIM displaced +1 from stationary leader should converge back."""
-        drim = make_delay_rim()
+        drim = make_integrator()
         drim.update_rim(make_rim(x=1.0, v=0.0))
         drim.add_leader_state(np.zeros(1), np.zeros(1))
 
@@ -73,7 +73,7 @@ class TestDelayRIMFreeSpace:
 
     def test_interface_force_sign(self):
         """When RIM is ahead of leader, coupling force should be positive (pushes leader forward)."""
-        drim = make_delay_rim()
+        drim = make_integrator()
         drim.update_rim(make_rim(x=0.5, v=0.0))
         drim.add_leader_state(np.zeros(1), np.zeros(1))
         drim.step()
@@ -83,7 +83,7 @@ class TestDelayRIMFreeSpace:
 
     def test_interface_force_formula(self):
         """Interface force should equal k*(x-xl) + d*(v-vl) using post-step state."""
-        drim = make_delay_rim()
+        drim = make_integrator()
         drim.update_rim(make_rim(x=0.3, v=0.1))
         drim.add_leader_state(np.array([0.1]), np.array([0.0]))
         x, v = drim.step()
@@ -93,7 +93,7 @@ class TestDelayRIMFreeSpace:
 
     def test_zero_displacement_zero_force(self):
         """RIM starting at leader position with zero velocity → near-zero force."""
-        drim = make_delay_rim()
+        drim = make_integrator()
         drim.update_rim(make_rim(x=0.5, v=0.0))
         drim.add_leader_state(np.array([0.5]), np.zeros(1))
         drim.step()
@@ -102,7 +102,7 @@ class TestDelayRIMFreeSpace:
 
     def test_f_eff_applied(self):
         """Non-zero f_eff should produce a non-zero velocity from rest at leader position."""
-        drim = make_delay_rim()
+        drim = make_integrator()
         drim.update_rim(make_rim(x=0.0, v=0.0, f_eff=10.0))
         drim.add_leader_state(np.zeros(1), np.zeros(1))
         _, v = drim.step()
@@ -110,7 +110,7 @@ class TestDelayRIMFreeSpace:
 
     def test_position_update_uses_old_velocity(self):
         """x_next = x + dt*v_old (forward Euler on position)."""
-        drim = make_delay_rim(stiffness=0.0, damping=0.0)  # disable coupling to isolate kinematics
+        drim = make_integrator(stiffness=0.0, damping=0.0)  # disable coupling to isolate kinematics
         drim.update_rim(make_rim(x=0.5, v=2.0))
         drim.add_leader_state(np.zeros(1), np.zeros(1))
         x, _ = drim.step()
@@ -121,11 +121,11 @@ class TestDelayRIMFreeSpace:
 # Contact / unilateral constraint
 # ---------------------------------------------------------------------------
 
-class TestDelayRIMContact:
+class TestRIMIntegratorContact:
     def test_rim_cannot_go_below_surface(self):
         """RIM pushed hard below the contact surface should stay at the surface."""
         surface = 0.5
-        drim = make_delay_rim(contact_surface=surface, stiffness=1000.0)
+        drim = make_integrator(contact_surface=surface, stiffness=1000.0)
         drim.update_rim(make_rim(x=0.6, v=-5.0))  # moving fast into surface
         drim.add_leader_state(np.array([0.0]), np.zeros(1))  # leader far below
 
@@ -136,7 +136,7 @@ class TestDelayRIMContact:
     def test_inward_velocity_killed_at_contact(self):
         """When contact fires and velocity is into the wall, it should be zeroed."""
         surface = 0.0
-        drim = make_delay_rim(contact_surface=surface)
+        drim = make_integrator(contact_surface=surface)
         # Place RIM just above surface with strong inward velocity
         drim.update_rim(make_rim(x=0.001, v=-10.0))
         drim.add_leader_state(np.array([-1.0]), np.zeros(1))  # leader below surface
@@ -146,7 +146,7 @@ class TestDelayRIMContact:
 
     def test_no_contact_when_above_surface(self):
         """RIM well above surface should evolve freely (no velocity clamp)."""
-        drim = make_delay_rim(contact_surface=SURFACE)
+        drim = make_integrator(contact_surface=SURFACE)
         drim.update_rim(make_rim(x=1.0, v=-0.1))  # slightly negative v, won't reach surface
         drim.add_leader_state(np.array([1.0]), np.zeros(1))
         x, v = drim.step()
@@ -157,7 +157,7 @@ class TestDelayRIMContact:
     def test_contact_force_is_positive_at_surface(self):
         """When RIM is at the surface and leader is below, force should be positive."""
         surface = 0.5
-        drim = make_delay_rim(contact_surface=surface)
+        drim = make_integrator(contact_surface=surface)
         drim.update_rim(make_rim(x=surface, v=0.0))
         drim.add_leader_state(np.array([0.0]), np.zeros(1))  # leader below surface
         drim.step()
@@ -169,10 +169,10 @@ class TestDelayRIMContact:
 # Model update semantics
 # ---------------------------------------------------------------------------
 
-class TestDelayRIMModelUpdate:
+class TestRIMIntegratorModelUpdate:
     def test_state_preserved_on_update(self):
         """update_rim must preserve x and v from the integrated state."""
-        drim = make_delay_rim()
+        drim = make_integrator()
         drim.update_rim(make_rim(x=0.0, v=0.0))
         drim.add_leader_state(np.zeros(1), np.zeros(1))
 
@@ -191,8 +191,8 @@ class TestDelayRIMModelUpdate:
 
     def test_new_model_params_used_after_update(self):
         """After update_rim the new M_eff should affect the next step."""
-        drim_light = make_delay_rim()
-        drim_heavy = make_delay_rim()
+        drim_light = make_integrator()
+        drim_heavy = make_integrator()
 
         rim_light = make_rim(x=1.0, v=0.0, m_eff=0.1)
         rim_heavy = make_rim(x=1.0, v=0.0, m_eff=10.0)
@@ -211,6 +211,6 @@ class TestDelayRIMModelUpdate:
         assert abs(v_light[0]) > abs(v_heavy[0])
 
     def test_get_rim_state_returns_none_before_init(self):
-        drim = make_delay_rim()
+        drim = make_integrator()
         x, v = drim.get_rim_state()
         assert x is None and v is None

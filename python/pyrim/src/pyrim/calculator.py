@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import numpy as np
 
-from .models import RIM, DynModel
+from .models import RIMModel, DynModel
 
 
 class RIMCalculator:
     """Compute reduced interface model parameters from a full model snapshot."""
 
-    def compute(self, model: DynModel) -> RIM:
+    def compute(self, model: DynModel) -> RIMModel:
         """Compute the Reduced Interface Model (RIM) of a Dynamic Model.
         Computes:
         - Effective mass
@@ -31,4 +31,4 @@ class RIMCalculator:
             f_eff = np.zeros(model.m)
         else:
             f_eff = m_eff @ model.J_i @ m_inv @ model.tau_ext
-        return RIM(m=model.m, M_eff=m_eff, z_i=z_i, f_eff=f_eff, x=model.x_i.copy(), v=model.v_i.copy())
+        return RIMModel(m=model.m, M_eff=m_eff, z_i=z_i, f_eff=f_eff, x=model.x_i.copy(), v=model.v_i.copy())

@@ -6,12 +6,12 @@ import threading
 
 import numpy as np
 
-from .models import RIM
+from .models import RIMModel
 
 
-class DelayRIM:
+class RIMIntegrator:
     """
-    DelayRIM algorithm: integrates reduced interface dynamics at high rate.
+    Integrates reduced interface dynamics at high rate (the RIM proxy stepper).
 
     Designed for a two-rate loop: update_rim() is called at low rate (e.g. 50 Hz)
     from the control thread while step() runs at high rate (e.g. 1 kHz) from the
@@ -39,7 +39,7 @@ class DelayRIM:
         self._leader_vel = np.zeros(self._m)
         self._leader_vel_filt = np.zeros(self._m)  # IIR state
 
-        self._rim: RIM | None = None
+        self._rim: RIMModel | None = None
         self._mass_factor: np.ndarray | None = None
         self._inv_aug: np.ndarray | None = None
         self._interface_force = np.zeros(self._m)
@@ -51,7 +51,7 @@ class DelayRIM:
             self._leader_vel_filt = self._vel_alpha * raw_vel + (1.0 - self._vel_alpha) * self._leader_vel_filt
             self._leader_vel = self._leader_vel_filt.copy()
 
-    def update_rim(self, rim: RIM) -> None:
+    def update_rim(self, rim: RIMModel) -> None:
         """Refresh model terms (M_eff, z_i, f_eff) while preserving integrated state."""
         with self._lock:
             if self._rim is None:
