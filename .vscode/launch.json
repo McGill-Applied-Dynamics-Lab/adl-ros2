@@ -143,5 +143,32 @@
                 // }
             ]
         },
+        {
+            "name": "Python: haptic stability bench",
+            "type": "debugpy",
+            "request": "launch",
+            // "program": "${workspaceFolder}/python/rim_teleop/src/rim_teleop/main.py",
+            "program": "${workspaceFolder}/python/rim_teleop/examples/stability_bench.py",
+            "python": "${workspaceFolder}/.pixi/envs/humble/bin/python",
+            "pythonArgs": [
+                "-Xfrozen_modules=off", // To speed up debugger launch
+            ],
+            // "preLaunchTask": "gen-vscode-env",
+            "envFile": "${workspaceFolder}/.vscode/.env.humble",
+            "env": {
+                "PYDEVD_DISABLE_FILE_VALIDATION": "1" // To speed up debugger launch
+            },
+            "console": "internalConsole",
+            "args": [
+                "--stiffness",
+                "100",
+                "--damping",
+                "0",
+                "--rate",
+                "1000",
+                "--duration",
+                "10"
+            ],
+        },
     ]
 }

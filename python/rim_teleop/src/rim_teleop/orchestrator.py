@@ -29,7 +29,7 @@ class RIMTeleopOrchestrator:
     ) -> None:
         self.cfg = config
         self._setup_fn = setup_fn
-        self._frame = InterfaceFrame.from_direction(config.interface.rim_direction)
+        self._frame = InterfaceFrame.from_direction(config.interface.rim_direction)  # TODO: Rename to interface_frame
 
         self._robot = Robot(namespace=config.robot.namespace)
         if config.robot.wrench_filter_alpha is not None:
@@ -46,7 +46,7 @@ class RIMTeleopOrchestrator:
         self.haply: Inverse3Device  # created in start() once home pose is known
         self.teleop_interface: TeleopInterfaceAdapter  # created in start()
 
-        integrator = RIMIntegrator(
+        integrator = RIMIntegrator(  # TODO: Initialize in the RIM
             interface_dim=self._frame.dim,
             dt=1.0 / config.rates.rim_rate_hz,
             stiffness=config.interface.stiffness,
