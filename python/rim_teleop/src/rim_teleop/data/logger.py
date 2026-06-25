@@ -113,6 +113,63 @@ def _to_quaternion_xyzw(values: Any) -> fg_msgs.Quaternion | None:
         return None
 
 
+_IDENTITY_QUAT = fg_msgs.Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
+
+
+def _scene_update_from_payload(values: dict[str, Any], ts: fg_msgs.Timestamp) -> "fg_msgs.SceneUpdate | None":
+    """Build a SceneUpdate from a ``viz/scene`` payload.
+
+    Payload: ``{leader:[x,y,z], mass:[x,y,z], surface: float|None,
+    rim_direction:[x,y,z], frame_id: str}``. Renders the leader and mass as
+    spheres and (when ``surface`` is set) the contact surface as a thin slab
+    perpendicular to ``rim_direction``.
+    """
+    leader = _to_vector3(values.get("leader"))
+    mass = _to_vector3(values.get("mass"))
+    if leader is None or mass is None:
+        return None
+    frame_id = str(values.get("frame_id", "bench"))
+
+    spheres = [
+        fg_msgs.SpherePrimitive(
+            pose=fg_msgs.Pose(position=leader, orientation=_IDENTITY_QUAT),
+            size=fg_msgs.Vector3(x=0.03, y=0.03, z=0.03),
+            color=fg_msgs.Color(r=0.1, g=0.4, b=1.0, a=1.0),  # leader = blue
+        ),
+        fg_msgs.SpherePrimitive(
+            pose=fg_msgs.Pose(position=mass, orientation=_IDENTITY_QUAT),
+            size=fg_msgs.Vector3(x=0.03, y=0.03, z=0.03),
+            color=fg_msgs.Color(r=1.0, g=0.5, b=0.0, a=1.0),  # virtual mass = orange
+        ),
+    ]
+
+    cubes: list[fg_msgs.CubePrimitive] = []
+    surface = values.get("surface")
+    if surface is not None:
+        n = np.asarray(values.get("rim_direction", [0.0, 0.0, 1.0]), dtype=float)
+        norm = float(np.linalg.norm(n))
+        n = n / norm if norm > 0 else np.array([0.0, 0.0, 1.0])
+        lead = np.asarray(values.get("leader"), dtype=float)
+        # Plane point nearest the leader: project the leader onto the surface.
+        center = lead - (float(lead @ n) - float(surface)) * n
+        # Thin dimension along the dominant axis of n (bench directions are axis-aligned).
+        size = [0.4, 0.4, 0.4]
+        size[int(np.argmax(np.abs(n)))] = 0.002
+        cubes.append(
+            fg_msgs.CubePrimitive(
+                pose=fg_msgs.Pose(
+                    position=fg_msgs.Vector3(x=float(center[0]), y=float(center[1]), z=float(center[2])),
+                    orientation=_IDENTITY_QUAT,
+                ),
+                size=fg_msgs.Vector3(x=size[0], y=size[1], z=size[2]),
+                color=fg_msgs.Color(r=0.6, g=0.6, b=0.6, a=0.4),  # contact surface = translucent gray
+            )
+        )
+
+    entity = fg_msgs.SceneEntity(timestamp=ts, frame_id=frame_id, id="bench", spheres=spheres, cubes=cubes)
+    return fg_msgs.SceneUpdate(entities=[entity])
+
+
 def _typed_records_for_sample(sample: dict[str, Any], topic_prefix: str) -> list[tuple[str, foxglove.Schema, bytes]]:
     """Build typed Foxglove records for selected streams."""
     stream = str(sample.get("stream", "samples"))
@@ -122,6 +179,25 @@ def _typed_records_for_sample(sample: dict[str, Any], topic_prefix: str) -> list
 
     ts = _to_fg_timestamp(sample.get("ts"))
     prefix = topic_prefix.rstrip("/")
+
+    if stream == "viz/scene":
+        upd = _scene_update_from_payload(values, ts)
+        if upd is None:
+            return []
+        frame_id = str(values.get("frame_id", "bench"))
+        # Publish an identity transform so the 3D panel registers `frame_id` as a
+        # selectable Display frame — SceneEntity.frame_id alone does not add a frame.
+        tf = fg_msgs.FrameTransform(
+            timestamp=ts,
+            parent_frame_id="world",
+            child_frame_id=frame_id,
+            translation=fg_msgs.Vector3(x=0.0, y=0.0, z=0.0),
+            rotation=_IDENTITY_QUAT,
+        )
+        return [
+            (f"{prefix}/tf", fg_msgs.FrameTransform.get_schema(), tf.encode()),
+            (f"{prefix}/scene", fg_msgs.SceneUpdate.get_schema(), upd.encode()),
+        ]
 
     if stream == "robot/joint_states":
         names = values.get("name", [])

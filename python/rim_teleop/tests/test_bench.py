@@ -1,6 +1,7 @@
 """Tests for the haptic stability bench, driven by a fake Inverse3 device."""
 
 import numpy as np
+import pytest
 
 from rim_teleop.bench import HapticBench, HapticBenchConfig
 from rim_teleop.bench.haptic_bench import SAMPLE_COLUMNS
@@ -79,3 +80,95 @@ def test_stable_gains_do_not_diverge():
     x_leader = samples[:, SAMPLE_COLUMNS.index("x_leader")]
     # The mass tracks the moving leader within a small bounded lag.
     assert np.max(np.abs(x_mass - x_leader)) < 0.1
+
+
+def test_contact_wall_blocks_mass():
+    """With a contact surface enabled, the mass never penetrates the wall."""
+    surface = 0.49
+    cfg = _stable_cfg(stiffness=1000.0, damping=90.0, duration_s=0.1, contact_surface=surface)
+    # Leader driven downward (−z) below the surface; the mass should clamp at it.
+    fake = FakeInverse3(start=(0.4, 0.0, 0.5), vel=(0.0, 0.0, -0.5))
+    samples = HapticBench(cfg).run(device=fake)
+    x_mass = samples[:, SAMPLE_COLUMNS.index("x_mass")]
+    assert np.min(x_mass) >= surface - 1e-9
+    # Sanity: the leader actually went below the surface (so the wall was tested).
+    assert np.min(samples[:, SAMPLE_COLUMNS.index("x_leader")]) < surface
+
+
+def test_free_space_default_has_no_wall():
+    cfg = _stable_cfg()
+    assert cfg.contact_surface is None
+    # The mass is free to move below any finite level (no clamp) — driven down.
+    fake = FakeInverse3(start=(0.4, 0.0, 0.5), vel=(0.0, 0.0, -0.5))
+    samples = HapticBench(cfg).run(device=fake)
+    assert np.min(samples[:, SAMPLE_COLUMNS.index("x_mass")]) < 0.5
+
+
+# ---------------------------------------------------------------------------
+# Foxglove scene encoder (no live server)
+# ---------------------------------------------------------------------------
+
+def test_scene_encoder_with_surface():
+    from rim_teleop.data.logger import _scene_update_from_payload, _to_fg_timestamp
+
+    payload = {
+        "leader": [0.4, 0.0, 0.5],
+        "mass": [0.4, 0.0, 0.48],
+        "surface": 0.45,
+        "rim_direction": [0.0, 0.0, 1.0],
+        "frame_id": "bench",
+    }
+    upd = _scene_update_from_payload(payload, _to_fg_timestamp(0.0))
+    assert upd is not None
+    assert len(upd.encode()) > 0
+
+
+def test_scene_encoder_without_surface():
+    from rim_teleop.data.logger import _scene_update_from_payload, _to_fg_timestamp
+
+    payload = {"leader": [0.4, 0.0, 0.5], "mass": [0.4, 0.0, 0.48], "surface": None}
+    upd = _scene_update_from_payload(payload, _to_fg_timestamp(0.0))
+    assert upd is not None
+    assert len(upd.encode()) > 0
+
+
+def test_scene_encoder_missing_data_returns_none():
+    from rim_teleop.data.logger import _scene_update_from_payload, _to_fg_timestamp
+
+    assert _scene_update_from_payload({"leader": [0.0, 0.0, 0.0]}, _to_fg_timestamp(0.0)) is None
+
+
+# ---------------------------------------------------------------------------
+# Freshness monitor (stale/duplicate device-read detection)
+# ---------------------------------------------------------------------------
+
+def test_freshness_monitor_all_fresh():
+    from rim_teleop.monitoring import FreshnessMonitor
+
+    m = FreshnessMonitor()
+    for i in range(20):
+        m.update(np.array([float(i), 0.0, 0.0, 0.0, 0.0, 0.0]))  # changing each read
+    assert m.summary().stale_fraction == 0.0
+
+
+def test_freshness_monitor_detects_duplicates():
+    from rim_teleop.monitoring import FreshnessMonitor
+
+    m = FreshnessMonitor()
+    for _ in range(10):
+        m.update(np.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0]))  # bit-identical re-reads
+    # First read is fresh, the remaining 9 are stale.
+    assert m.summary().stale_fraction == pytest.approx(0.9, abs=1e-9)
+
+
+def test_bench_freshness_moving_vs_stationary():
+    # A moving fake changes position each read -> all fresh.
+    moving = HapticBench(_stable_cfg())
+    moving.run(device=FakeInverse3(vel=(0.0, 0.0, 0.05)))
+    assert moving.freshness.summary().stale_fraction < 0.05
+
+    # A motionless deterministic fake re-reads identical state -> mostly stale.
+    # (A real device has sensor noise, so stationary != stale on hardware.)
+    stationary = HapticBench(_stable_cfg())
+    stationary.run(device=FakeInverse3(vel=(0.0, 0.0, 0.0)))
+    assert stationary.freshness.summary().stale_fraction > 0.9

@@ -21,6 +21,7 @@ from pyrim import InterfaceFrame, RIMIntegrator, RIMModel
 
 from ..config import InterfaceConfig
 from ..data.logger import _git_info
+from ..monitoring import FreshnessMonitor, LoopRateMonitor
 
 
 @dataclass(kw_only=True)
@@ -29,10 +30,12 @@ class HapticBenchConfig:
 
     mass: float = 1.0  # virtual mass [kg]
     stiffness: float = 1000.0  # coupling stiffness K [N/m]
-    damping: float = 90.0  # coupling damping D [Ns/m]
-    rate_hz: float = 1000.0  # haptic feedback loop rate (the swept "feedback frequency")
+    damping: float = 0.0  # coupling damping D [Ns/m]
+    rate_hz: float = 100.0  # haptic feedback loop rate (the swept "feedback frequency")
     duration_s: float = 1000.0  # run length
     rim_direction: list = field(default_factory=lambda: [0.0, 0.0, 1.0])  # 1-DoF interface direction
+    contact_surface: float | None = None  # wall position along rim_direction; None = free space (no contact)
+    disable_ff: bool = False
     force_scale: float = 0.1  # device force scaling (applied before the cap)
     force_cap: float = 12.0  # max force rendered to the device [N]
     vel_filter_alpha: float = 0.2  # IIR alpha on leader velocity; 1.0 = no filter
@@ -49,8 +52,10 @@ class HapticBench:
     """Run the 1-DoF haptic loop coupling the Inverse3 to a constant virtual mass.
 
     The mass is stepped by ``RIMIntegrator`` seeded with a constant ``RIMModel``
-    (``M_eff = mass``, no Coriolis/external force) and a contact surface at -inf
-    so it never makes contact — pure free-space spring/damper coupling.
+    (``M_eff = mass``, no Coriolis/external force). With ``contact_surface=None``
+    the surface sits at -inf so the mass never makes contact (pure free-space
+    spring/damper coupling); set it to enable a unilateral wall along the
+    interface direction (the integrator's tested LCP contact handles it).
     """
 
     def __init__(self, cfg: HapticBenchConfig) -> None:
@@ -61,10 +66,11 @@ class HapticBench:
             dt=1.0 / cfg.rate_hz,
             stiffness=cfg.stiffness,
             damping=cfg.damping,
-            contact_surface=-np.inf,  # free space only; never contact
+            contact_surface=cfg.contact_surface if cfg.contact_surface is not None else -np.inf,
             vel_filter_alpha=cfg.vel_filter_alpha,
         )
         self._samples: list[list[float]] = []
+        self.freshness = FreshnessMonitor()  # reset per run()
 
     def _seed_mass(self, x0: float) -> None:
         """Initialize the constant virtual mass at rest at position ``x0``."""
@@ -79,16 +85,19 @@ class HapticBench:
             )
         )
 
-    def run(self, device: object | None = None) -> np.ndarray:
+    def run(self, device: object | None = None, visualizer: object | None = None) -> np.ndarray:
         """Run the bench loop for ``duration_s`` and return the recorded samples.
 
         ``device`` is duck-typed (Inverse3Device API); if None, a real
-        Inverse3Device is created and connected. The device force is always
-        zeroed on exit, even on error or KeyboardInterrupt.
+        Inverse3Device is created and connected. ``visualizer`` (optional,
+        BenchVisualizer API) receives scalars every tick and the 3D scene at
+        ~60 Hz for live Foxglove viz. The device force is always zeroed on exit,
+        even on error or KeyboardInterrupt.
         """
         owns_device = device is None
         if owns_device:
-            i3_cfg = Inverse3Config(uri=self.cfg.uri, force_cap=self.cfg.force_cap, enable_force_feedback=True)
+            ff_enabled = not self.cfg.disable_ff
+            i3_cfg = Inverse3Config(uri=self.cfg.uri, force_cap=self.cfg.force_cap, enable_force_feedback=ff_enabled)
             device = Inverse3Device(
                 initial_robot_position=np.asarray(self.cfg.initial_robot_position, dtype=float),
                 config=i3_cfg,
@@ -96,9 +105,15 @@ class HapticBench:
 
         interface = self._make_interface(device)
         self._samples = []
+        # Publish the scene + rate at ~60 Hz regardless of loop rate to bound message volume.
+        scene_every = max(1, int(round(self.cfg.rate_hz / 60.0)))
+        rate_monitor = LoopRateMonitor(self.cfg.rate_hz)
+        self.freshness = FreshnessMonitor()
 
         if owns_device:
             device.start()
+        if visualizer is not None:
+            visualizer.start()
 
         try:
             # Seed the mass at the current device position to avoid a startup jump.
@@ -110,6 +125,7 @@ class HapticBench:
             t_start = time.perf_counter()
             next_tick = t_start
             end = t_start + self.cfg.duration_s
+            tick = 0
 
             while True:
                 now = time.perf_counter()
@@ -117,16 +133,42 @@ class HapticBench:
                     break
 
                 interface.update()
-                x_l, v_l = interface.get_interface_state()
+                # Single device read per tick: full 3D leader state, then project
+                # to the 1-DoF interface. Freshness = exact-duplicate detection on
+                # the raw 3D state (re-reads of the cached sample are bit-identical).
+                leader3, leadervel3 = interface.get_cartesian_state()
+                self.freshness.update(np.concatenate([leader3, leadervel3]))
+                x_l = self.frame.project(leader3)
+                v_l = self.frame.project(leadervel3)
                 self.integrator.add_leader_state(x_l, v_l)
                 x_m, v_m = self.integrator.step()
                 force = self.integrator.get_interface_force()
                 interface.set_interface_force(force)
+                rate_monitor.tick()
 
-                self._samples.append(
-                    [now - t_start, float(x_l[0]), float(v_l[0]), float(x_m[0]), float(v_m[0]), float(force[0])]
-                )
+                t = now - t_start
+                self._samples.append([t, float(x_l[0]), float(v_l[0]), float(x_m[0]), float(v_m[0]), float(force[0])])
 
+                if visualizer is not None:
+                    visualizer.log_scalars(
+                        t, float(x_l[0]), float(v_l[0]), float(x_m[0]), float(v_m[0]), float(force[0])
+                    )
+                    if tick % scene_every == 0:
+                        mass3 = self.frame.compose(x_m, leader3)
+                        visualizer.log_scene(leader3, mass3, self.cfg.contact_surface)
+                        snap = rate_monitor.snapshot()
+                        fresh = self.freshness.snapshot()
+                        visualizer.log_rate(
+                            snap.measured_hz,
+                            snap.target_hz,
+                            snap.mean_dt_ms,
+                            snap.p95_dt_ms,
+                            snap.max_dt_ms,
+                            fresh.fresh_rate_hz,
+                            fresh.stale_fraction,
+                        )
+
+                tick += 1
                 next_tick += dt
                 time.sleep(max(0.0, next_tick - time.perf_counter()))
         except KeyboardInterrupt:
@@ -139,6 +181,8 @@ class HapticBench:
                 interface.set_interface_force(np.zeros(1))
             except Exception:
                 pass
+            if visualizer is not None:
+                visualizer.stop()
             if owns_device:
                 device.stop()
 

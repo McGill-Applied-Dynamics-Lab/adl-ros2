@@ -161,13 +161,16 @@
             "console": "internalConsole",
             "args": [
                 "--stiffness",
-                "2000",
+                "1000",
                 "--damping",
                 "0",
                 "--rate",
                 "1000",
                 "--duration",
-                "10"
+                "1000",
+                "--viz",
+                "--contact-surface",
+                "0.0",
             ],
         },
     ]
