@@ -52,7 +52,13 @@ def main() -> None:
     )
 
     bench = HapticBench(cfg)
-    samples = bench.run()  # connects to the real Inverse3; zeroes force on exit
+    try:
+        samples = bench.run()  # connects to the real Inverse3; zeroes force on exit
+    except KeyboardInterrupt:
+        # Belt-and-suspenders: HapticBench.run() already returns partial samples
+        # on Ctrl+C, but recover them here too so we always save/plot what ran.
+        print("\n[bench] interrupted — saving partial run")
+        samples = np.asarray(bench._samples, dtype=float)
 
     # Quick summary so the operator gets immediate feedback on stability.
     if samples.shape[0] > 0:

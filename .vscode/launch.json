@@ -161,7 +161,7 @@
             "console": "internalConsole",
             "args": [
                 "--stiffness",
-                "100",
+                "2000",
                 "--damping",
                 "0",
                 "--rate",

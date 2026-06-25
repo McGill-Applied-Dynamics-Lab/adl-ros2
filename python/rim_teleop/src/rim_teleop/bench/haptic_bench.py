@@ -31,11 +31,11 @@ class HapticBenchConfig:
     stiffness: float = 1000.0  # coupling stiffness K [N/m]
     damping: float = 90.0  # coupling damping D [Ns/m]
     rate_hz: float = 1000.0  # haptic feedback loop rate (the swept "feedback frequency")
-    duration_s: float = 10.0  # run length
+    duration_s: float = 1000.0  # run length
     rim_direction: list = field(default_factory=lambda: [0.0, 0.0, 1.0])  # 1-DoF interface direction
     force_scale: float = 0.1  # device force scaling (applied before the cap)
     force_cap: float = 12.0  # max force rendered to the device [N]
-    vel_filter_alpha: float = 1.0  # IIR alpha on leader velocity; 1.0 = no filter
+    vel_filter_alpha: float = 0.2  # IIR alpha on leader velocity; 1.0 = no filter
     initial_robot_position: list = field(default_factory=lambda: [0.4, 0.0, 0.5])  # device "robot" origin
     uri: str = "ws://localhost:10001"
     notes: str = ""  # free-text purpose, recorded in metadata
@@ -129,6 +129,11 @@ class HapticBench:
 
                 next_tick += dt
                 time.sleep(max(0.0, next_tick - time.perf_counter()))
+        except KeyboardInterrupt:
+            # Operator stopped the run early; keep whatever was recorded so the
+            # caller can still save/plot the partial trial.
+            pass
+
         finally:
             try:
                 interface.set_interface_force(np.zeros(1))
