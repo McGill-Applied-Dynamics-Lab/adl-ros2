@@ -136,6 +136,10 @@ class Robot:
 
         self.config = robot_config if robot_config else FR3Config()
 
+        # self.config.home_config = np.array(
+        #     [0, -np.pi / 4, 0, -3 * np.pi / 4, 0, np.pi, np.pi / 4],
+        # )
+
         self._prefix = f"{namespace}_" if namespace else ""
 
         self.controller_switcher_client = ControllerSwitcherClient(self.node)

@@ -82,17 +82,40 @@ def test_stable_gains_do_not_diverge():
     assert np.max(np.abs(x_mass - x_leader)) < 0.1
 
 
-def test_contact_wall_blocks_mass():
-    """With a contact surface enabled, the mass never penetrates the wall."""
-    surface = 0.49
-    cfg = _stable_cfg(stiffness=1000.0, damping=90.0, duration_s=0.1, contact_surface=surface)
-    # Leader driven downward (−z) below the surface; the mass should clamp at it.
+def test_contact_wall_offset_blocks_mass():
+    """contact_surface is an OFFSET from the initial position; the mass clamps at the wall."""
+    offset = -0.01  # 1 cm below the start (start z = 0.5 → wall at 0.49)
+    cfg = _stable_cfg(stiffness=1000.0, damping=90.0, duration_s=0.1, contact_surface=offset)
+    # Leader driven downward (−z) below the wall; the mass should clamp at it.
     fake = FakeInverse3(start=(0.4, 0.0, 0.5), vel=(0.0, 0.0, -0.5))
-    samples = HapticBench(cfg).run(device=fake)
+    bench = HapticBench(cfg)
+    samples = bench.run(device=fake)
+    # Wall resolves to (initial position + offset); ~0.49, modulo the first pre-seed read.
+    surface = bench._surface_abs
+    assert surface == pytest.approx(0.5 + offset, abs=2e-3)
     x_mass = samples[:, SAMPLE_COLUMNS.index("x_mass")]
     assert np.min(x_mass) >= surface - 1e-9
-    # Sanity: the leader actually went below the surface (so the wall was tested).
+    # Sanity: the leader actually went below the wall (so contact was tested).
     assert np.min(samples[:, SAMPLE_COLUMNS.index("x_leader")]) < surface
+
+
+def test_set_interface_force_caps_and_lifts():
+    """The 3D force sent to the device is on the interface axis and capped."""
+    from pyrim import InterfaceFrame
+    from rim_teleop.adapters import TeleopInterfaceAdapter
+    from rim_teleop.config import InterfaceConfig
+
+    dev = FakeInverse3()
+    adapter = TeleopInterfaceAdapter(
+        device=dev,
+        interface_cfg=InterfaceConfig(force_scale=1.0, force_cap=8.0),
+        frame=InterfaceFrame.from_direction([0.0, 0.0, 1.0]),
+    )
+    applied = adapter.set_interface_force(np.array([100.0]))  # huge → capped at 8 on z
+    np.testing.assert_allclose(applied, [0.0, 0.0, 8.0])
+    np.testing.assert_allclose(dev.last_force, [0.0, 0.0, 8.0])
+    # Negative saturates the other way; x/y stay zero.
+    np.testing.assert_allclose(adapter.set_interface_force(np.array([-100.0])), [0.0, 0.0, -8.0])
 
 
 def test_free_space_default_has_no_wall():

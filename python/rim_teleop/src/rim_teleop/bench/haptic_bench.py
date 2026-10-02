@@ -34,7 +34,7 @@ class HapticBenchConfig:
     rate_hz: float = 100.0  # haptic feedback loop rate (the swept "feedback frequency")
     duration_s: float = 1000.0  # run length
     rim_direction: list = field(default_factory=lambda: [0.0, 0.0, 1.0])  # 1-DoF interface direction
-    contact_surface: float | None = None  # wall position along rim_direction; None = free space (no contact)
+    contact_surface: float | None = None  # wall as an OFFSET from the device's initial position along the axis (e.g. -0.05 = 5cm toward -z); None = free space
     disable_ff: bool = False
     force_scale: float = 0.1  # device force scaling (applied before the cap)
     force_cap: float = 12.0  # max force rendered to the device [N]
@@ -52,10 +52,10 @@ class HapticBench:
     """Run the 1-DoF haptic loop coupling the Inverse3 to a constant virtual mass.
 
     The mass is stepped by ``RIMIntegrator`` seeded with a constant ``RIMModel``
-    (``M_eff = mass``, no Coriolis/external force). With ``contact_surface=None``
-    the surface sits at -inf so the mass never makes contact (pure free-space
-    spring/damper coupling); set it to enable a unilateral wall along the
-    interface direction (the integrator's tested LCP contact handles it).
+    (``M_eff = mass``, no Coriolis/external force). ``contact_surface`` is an
+    offset from the device's initial position along the interface axis, resolved
+    to an absolute wall in ``run()`` once the start position is known (None = free
+    space at -inf; the integrator's tested LCP contact handles the wall).
     """
 
     def __init__(self, cfg: HapticBenchConfig) -> None:
@@ -66,11 +66,12 @@ class HapticBench:
             dt=1.0 / cfg.rate_hz,
             stiffness=cfg.stiffness,
             damping=cfg.damping,
-            contact_surface=cfg.contact_surface if cfg.contact_surface is not None else -np.inf,
+            contact_surface=-np.inf,  # resolved from the offset in run() once x0 is known
             vel_filter_alpha=cfg.vel_filter_alpha,
         )
         self._samples: list[list[float]] = []
         self.freshness = FreshnessMonitor()  # reset per run()
+        self._surface_abs: float | None = None  # absolute wall position, set in run()
 
     def _seed_mass(self, x0: float) -> None:
         """Initialize the constant virtual mass at rest at position ``x0``."""
@@ -121,6 +122,13 @@ class HapticBench:
             x0, _ = interface.get_interface_state()
             self._seed_mass(float(x0[0]))
 
+            # Resolve the contact surface offset to an absolute wall along the axis.
+            if self.cfg.contact_surface is not None:
+                self._surface_abs = float(x0[0]) + self.cfg.contact_surface
+                self.integrator.contact_surface = self._surface_abs
+            else:
+                self._surface_abs = None
+
             dt = 1.0 / self.cfg.rate_hz
             t_start = time.perf_counter()
             next_tick = t_start
@@ -143,7 +151,7 @@ class HapticBench:
                 self.integrator.add_leader_state(x_l, v_l)
                 x_m, v_m = self.integrator.step()
                 force = self.integrator.get_interface_force()
-                interface.set_interface_force(force)
+                device_force = interface.set_interface_force(force)  # 3D force actually sent (scaled + capped)
                 rate_monitor.tick()
 
                 t = now - t_start
@@ -151,11 +159,12 @@ class HapticBench:
 
                 if visualizer is not None:
                     visualizer.log_scalars(
-                        t, float(x_l[0]), float(v_l[0]), float(x_m[0]), float(v_m[0]), float(force[0])
+                        t, float(x_l[0]), float(v_l[0]), float(x_m[0]), float(v_m[0]), float(force[0]),
+                        device_force=device_force,
                     )
                     if tick % scene_every == 0:
                         mass3 = self.frame.compose(x_m, leader3)
-                        visualizer.log_scene(leader3, mass3, self.cfg.contact_surface)
+                        visualizer.log_scene(leader3, mass3, self._surface_abs)
                         snap = rate_monitor.snapshot()
                         fresh = self.freshness.snapshot()
                         visualizer.log_rate(

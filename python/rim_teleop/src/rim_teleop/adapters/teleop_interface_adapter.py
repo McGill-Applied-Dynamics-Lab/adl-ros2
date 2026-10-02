@@ -45,8 +45,8 @@ class TeleopInterfaceAdapter:
         """Return the full 3D device position/velocity in the robot frame, shape (3,)."""
         return self._device_state()
 
-    def set_interface_force(self, force: np.ndarray) -> None:
-        """Scale/cap the subspace force and lift it into a 3D device force."""
+    def set_interface_force(self, force: np.ndarray) -> np.ndarray:
+        """Scale/cap the subspace force, lift it to 3D, send it, and return the applied 3D force."""
         f = np.asarray(force, dtype=float).reshape(-1)
         scalar = 0.0 if f.size == 0 else float(f[0])
 
@@ -60,6 +60,7 @@ class TeleopInterfaceAdapter:
 
         force_3d = self.frame.lift(scalar)
         self.device.apply_force(force_3d)
+        return force_3d
 
     def is_connected(self) -> bool:
         """Forward connected state from underlying device."""

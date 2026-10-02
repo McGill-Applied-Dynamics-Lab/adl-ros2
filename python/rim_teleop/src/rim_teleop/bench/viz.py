@@ -52,21 +52,25 @@ class BenchVisualizer:
         x_mass: float,
         v_mass: float,
         force: float,
+        device_force: np.ndarray | None = None,
         timestamp_s: float | None = None,
     ) -> None:
-        """Stream the 1-DoF scalars for live Plot panels."""
-        self.logger.log_sample(
-            "bench/state",
-            {
-                "t": t,
-                "x_leader": x_leader,
-                "v_leader": v_leader,
-                "x_mass": x_mass,
-                "v_mass": v_mass,
-                "force": force,
-            },
-            timestamp_s=timestamp_s,
-        )
+        """Stream the 1-DoF scalars (+ the 3D force actually sent to the device) for live plots."""
+        values = {
+            "t": t,
+            "x_leader": x_leader,
+            "v_leader": v_leader,
+            "x_mass": x_mass,
+            "v_mass": v_mass,
+            "force": force,  # 1-DoF coupling force (pre scale/cap)
+        }
+        if device_force is not None:
+            df = np.asarray(device_force, dtype=float).reshape(3)
+            # 3D force sent to the device (after scale + cap + lift) — verify x/y/z + cap.
+            values["device_force_x"] = float(df[0])
+            values["device_force_y"] = float(df[1])
+            values["device_force_z"] = float(df[2])
+        self.logger.log_sample("bench/state", values, timestamp_s=timestamp_s)
 
     def log_rate(
         self,

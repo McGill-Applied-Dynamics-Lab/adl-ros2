@@ -19,6 +19,8 @@ LOOP_HZ = 5
 # jax.config.update("jax_compilation_cache_dir", "/tmp/jax_cache")
 # os.makedirs("/tmp/jax_cache", exist_ok=True)
 
+start_pose = [0.327, -0.001, 0.785]
+
 
 def main():
     robot = Robot(namespace="fr3")

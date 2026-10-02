@@ -214,3 +214,14 @@ class TestRIMIntegratorModelUpdate:
         drim = make_integrator()
         x, v = drim.get_rim_state()
         assert x is None and v is None
+
+    def test_contact_surface_setter_takes_effect(self):
+        """Setting contact_surface after construction changes where the mass clamps."""
+        drim = make_integrator(contact_surface=-1e9)  # start in free space
+        drim.update_rim(make_rim(x=0.6, v=-5.0))
+        drim.add_leader_state(np.array([0.0]), np.zeros(1))
+        drim.contact_surface = 0.5
+        assert drim.contact_surface == 0.5
+        for _ in range(200):
+            x, _ = drim.step()
+            assert x[0] >= 0.5 - 1e-12

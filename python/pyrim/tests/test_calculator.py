@@ -3,7 +3,7 @@
 import numpy as np
 import numpy.testing as npt
 import pytest
-from pyrim import DynModel, RIMCalculator
+from pyrim import DynModel, FixedMassCalculator, RIMCalculator
 
 
 def make_model(M, J_i, c=None, b_i=None, tau_ext=None, x_i=None, v_i=None):
@@ -104,3 +104,47 @@ class TestRIMCalculatorMultiDOF:
         model = make_model(M=M, J_i=J_i, tau_ext=np.array([0.0, 9.0]))
         rim = self.calc.compute(model)
         assert rim.f_eff == pytest.approx([9.0])
+
+
+class TestFixedMassCalculator:
+    """Fixed-mass proxy baseline: constant M_eff, zeroed z_i/f_eff, state from the model."""
+
+    def test_constant_mass_ignores_dynamics(self):
+        calc = FixedMassCalculator(mass=2.5)
+        # Use a nontrivial robot mass/Coriolis/external torque; none should show up.
+        model = make_model(
+            M=np.diag([2.0, 3.0]),
+            J_i=np.array([[1.0, 0.0]]),
+            c=np.array([3.0, 1.0]),
+            b_i=np.array([1.0]),
+            tau_ext=np.array([6.0, 0.0]),
+        )
+        rim = calc.compute(model)
+        npt.assert_allclose(rim.M_eff, [[2.5]])
+        assert rim.z_i == pytest.approx([0.0])
+        assert rim.f_eff == pytest.approx([0.0])
+
+    def test_seeds_state_from_model(self):
+        calc = FixedMassCalculator(mass=1.0)
+        x_i = np.array([0.5])
+        v_i = np.array([1.2])
+        model = make_model(M=np.eye(1), J_i=np.ones((1, 1)), x_i=x_i, v_i=v_i)
+        rim = calc.compute(model)
+        assert rim.x == pytest.approx([0.5])
+        assert rim.v == pytest.approx([1.2])
+        # Source mutation must not leak into the RIM (copied, not aliased).
+        x_i[0] = 99.0
+        assert rim.x == pytest.approx([0.5])
+
+    def test_multi_dof_mass_is_scaled_identity(self):
+        calc = FixedMassCalculator(mass=4.0)
+        # m=2 interface: M_eff should be 4*I_2.
+        model = make_model(M=np.eye(3), J_i=np.eye(2, 3))
+        rim = calc.compute(model)
+        npt.assert_allclose(rim.M_eff, 4.0 * np.eye(2))
+
+    def test_rejects_nonpositive_mass(self):
+        with pytest.raises(ValueError):
+            FixedMassCalculator(mass=0.0)
+        with pytest.raises(ValueError):
+            FixedMassCalculator(mass=-1.0)

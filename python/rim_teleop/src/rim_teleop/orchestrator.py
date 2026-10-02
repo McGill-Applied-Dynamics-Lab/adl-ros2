@@ -9,7 +9,7 @@ from collections.abc import Callable
 import numpy as np
 from arm_client.robot import Pose, Robot
 from arm_client.teleop.inverse3_teleop import Inverse3Device
-from pyrim import RIM, InterfaceFrame, RIMIntegrator
+from pyrim import RIM, FixedMassCalculator, InterfaceFrame, RIMCalculator, RIMIntegrator
 from scipy.spatial.transform import Rotation
 
 from arm_client import CONFIG_DIR
@@ -54,7 +54,16 @@ class RIMTeleopOrchestrator:
             contact_surface=config.interface.contact_surface,
             vel_filter_alpha=config.interface.vel_filter_alpha,
         )
-        self.rim = RIM(self._frame, integrator)
+        # Proxy law: physically consistent RIM reduction, or a constant virtual-mass baseline.
+        if config.interface.proxy_model == "fixed_mass":
+            calculator = FixedMassCalculator(config.interface.fixed_mass)
+        elif config.interface.proxy_model == "rim":
+            calculator = RIMCalculator()
+        else:
+            raise ValueError(
+                f"unknown interface.proxy_model {config.interface.proxy_model!r}; expected 'rim' or 'fixed_mass'"
+            )
+        self.rim = RIM(self._frame, integrator, calculator)
         self.logger = ExperimentLogger(config.logging, full_config=config)
 
         self._running = False

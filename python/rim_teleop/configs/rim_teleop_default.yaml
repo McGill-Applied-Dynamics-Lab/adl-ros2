@@ -13,6 +13,8 @@ interface:
   force_scale: 0.1
   feedforward_force_cap: 25.0  # max feedforward sent to the robot [N]; keep below the OSC force limit
   rim_enabled: true
+  proxy_model: rim  # "rim" (reduced robot dynamics) | "fixed_mass" (constant virtual-inertia baseline)
+  fixed_mass: 1.0  # virtual inertia [kg] used when proxy_model == fixed_mass
   force_feedback: rim  # "none" | "robot" | "rim"
   vel_filter_alpha: 0.2  # IIR on leader velocity; 1.0 = off, ~35 Hz cutoff at 1 kHz
 

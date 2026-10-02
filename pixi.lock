@@ -712,6 +712,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/linux-64/qhull-static-2020.2-h434a139_5.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/qt-main-5.15.15-hc240232_7.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/qt6-main-6.10.2-hb82b983_4.conda
+      - conda: https://conda.anaconda.org/conda-forge/linux-64/rapidjson-1.1.0.post20250205-h54a6638_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/rav1e-0.8.1-h1fbca29_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/readline-8.3-h853b02a_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/rhash-1.4.3-hd590300_2.conda
@@ -824,6 +825,7 @@ environments:
       - conda: https://prefix.dev/robostack-humble/linux-64/ros-humble-foonathan-memory-vendor-1.2.0-np2py312h2ed9cc7_15.conda
       - conda: https://prefix.dev/robostack-humble/linux-64/ros-humble-force-torque-sensor-broadcaster-2.52.0-np2py312h2ed9cc7_15.conda
       - conda: https://prefix.dev/robostack-humble/linux-64/ros-humble-forward-command-controller-2.52.0-np2py312h2ed9cc7_15.conda
+      - conda: https://prefix.dev/robostack-humble/linux-64/ros-humble-foxglove-bridge-3.2.4-np2py312h2ed9cc7_15.conda
       - conda: https://prefix.dev/robostack-humble/linux-64/ros-humble-franka-bringup-1.0.0-np2py312h2ed9cc7_15.conda
       - conda: https://prefix.dev/robostack-humble/linux-64/ros-humble-franka-description-1.0.1-np2py312h2ed9cc7_15.conda
       - conda: https://prefix.dev/robostack-humble/linux-64/ros-humble-franka-example-controllers-1.0.0-np2py312h2ed9cc7_15.conda
@@ -1017,6 +1019,7 @@ environments:
       - conda: https://prefix.dev/robostack-humble/linux-64/ros-humble-rosidl-typesupport-interface-3.1.8-np2py312h2ed9cc7_15.conda
       - conda: https://prefix.dev/robostack-humble/linux-64/ros-humble-rosidl-typesupport-introspection-c-3.1.8-np2py312h2ed9cc7_15.conda
       - conda: https://prefix.dev/robostack-humble/linux-64/ros-humble-rosidl-typesupport-introspection-cpp-3.1.8-np2py312h2ed9cc7_15.conda
+      - conda: https://prefix.dev/robostack-humble/linux-64/ros-humble-rosx-introspection-1.0.2-np2py312h2ed9cc7_15.conda
       - conda: https://prefix.dev/robostack-humble/linux-64/ros-humble-rpyutils-0.2.2-np2py312h2ed9cc7_15.conda
       - conda: https://prefix.dev/robostack-humble/linux-64/ros-humble-rqt-action-2.0.1-np2py312h2ed9cc7_15.conda
       - conda: https://prefix.dev/robostack-humble/linux-64/ros-humble-rqt-bag-1.1.6-np2py312h2ed9cc7_15.conda
@@ -9041,6 +9044,18 @@ packages:
   purls: []
   size: 57423827
   timestamp: 1769655891299
+- conda: https://conda.anaconda.org/conda-forge/linux-64/rapidjson-1.1.0.post20250205-h54a6638_0.conda
+  sha256: 6f56a91c14ca82f7df65adeedbcd45d6496baa34535c231e18c5cc45ba284821
+  md5: faad3215cbf35faa42a37a77d44374c9
+  depends:
+  - __glibc >=2.17,<3.0.a0
+  - libgcc >=14
+  - libstdcxx >=14
+  license: MIT
+  license_family: MIT
+  purls: []
+  size: 156127
+  timestamp: 1784885303075
 - conda: https://conda.anaconda.org/conda-forge/linux-64/rav1e-0.8.1-h1fbca29_0.conda
   sha256: cf550bbc8e5ebedb6dba9ccaead3e07bd1cb86b183644a4c853e06e4b3ad5ac7
   md5: d83958768626b3c8471ce032e28afcd3
@@ -11331,6 +11346,30 @@ packages:
   license: Apache-2.0
   size: 213943
   timestamp: 1773690415560
+- conda: https://prefix.dev/robostack-humble/linux-64/ros-humble-foxglove-bridge-3.2.4-np2py312h2ed9cc7_15.conda
+  sha256: 46534de5357bdab82fe496d2dfc902ba733dfb5ee08fe92118159e8c7874b49c
+  md5: c513c22bfa68d1d17aff29018f58803a
+  depends:
+  - python
+  - ros-humble-ament-index-cpp
+  - ros-humble-rclcpp
+  - ros-humble-rclcpp-components
+  - ros-humble-resource-retriever
+  - ros-humble-ros-workspace
+  - ros-humble-rosgraph-msgs
+  - ros-humble-rosx-introspection
+  - ros-humble-std-msgs
+  - ros2-distro-mutex 0.8.* humble_*
+  - libstdcxx >=14
+  - libgcc >=14
+  - __glibc >=2.17,<3.0.a0
+  - python_abi 3.12.* *_cp312
+  - ros2-distro-mutex >=0.8.0,<0.9.0a0
+  - numpy >=1.23,<3
+  - openssl >=3.6.1,<4.0a0
+  license: MIT
+  size: 6377310
+  timestamp: 1773690466512
 - conda: https://prefix.dev/robostack-humble/linux-64/ros-humble-franka-bringup-1.0.0-np2py312h2ed9cc7_15.conda
   sha256: 190519929a74672bc85d505ca20a7e92d4417a71a100c8e28833ea1d8449e536
   md5: da26357f93c865ad4f993472e144fbf7
@@ -15714,6 +15753,26 @@ packages:
   license: Apache-2.0
   size: 46906
   timestamp: 1773561503965
+- conda: https://prefix.dev/robostack-humble/linux-64/ros-humble-rosx-introspection-1.0.2-np2py312h2ed9cc7_15.conda
+  sha256: 13770ad858ca570e815a5ecc930b1336abe3c13757c9973f4042e87f55a3439d
+  md5: 3c356bd04584be41b77c2468034fb6cf
+  depends:
+  - python
+  - rapidjson
+  - ros-humble-ament-index-cpp
+  - ros-humble-rclcpp
+  - ros-humble-ros-workspace
+  - ros-humble-rosbag2-cpp
+  - ros2-distro-mutex 0.8.* humble_*
+  - libgcc >=14
+  - __glibc >=2.17,<3.0.a0
+  - libstdcxx >=14
+  - ros2-distro-mutex >=0.8.0,<0.9.0a0
+  - python_abi 3.12.* *_cp312
+  - numpy >=1.23,<3
+  license: MIT
+  size: 216922
+  timestamp: 1773690292282
 - conda: https://prefix.dev/robostack-humble/linux-64/ros-humble-rpyutils-0.2.2-np2py312h2ed9cc7_15.conda
   sha256: c31dc98e09fd409105f11c93202e66a1eb7914802ecee5a816772cb492be2729
   md5: dd1d7d9116a3e1d6a0e5ee582efa89ce

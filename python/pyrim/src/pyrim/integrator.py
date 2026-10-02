@@ -49,6 +49,16 @@ class RIMIntegrator:
         """Dimension of the interface subspace (number of RIM DoF)."""
         return self._m
 
+    @property
+    def contact_surface(self) -> float:
+        """Unilateral contact surface position along the interface axis."""
+        return self._contact_surface
+
+    @contact_surface.setter
+    def contact_surface(self, value: float) -> None:
+        with self._lock:
+            self._contact_surface = value
+
     def add_leader_state(self, position: np.ndarray, velocity: np.ndarray) -> None:
         with self._lock:
             self._leader_pos = position.reshape(self._m).copy()

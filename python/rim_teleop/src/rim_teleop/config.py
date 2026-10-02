@@ -30,6 +30,8 @@ class InterfaceConfig:
     force_cap: float = 12.0  # max force rendered to the Inverse3 device
     feedforward_force_cap: float = 15.0  # max |feedforward| sent to the robot [N]; tune below the OSC force limit
     rim_enabled: bool = True
+    proxy_model: str = "rim"  # "rim" (reduced robot dynamics) | "fixed_mass" (constant virtual inertia baseline)
+    fixed_mass: float = 1.0  # virtual inertia [kg] when proxy_model == "fixed_mass"
     force_feedback: str = "rim"  # "none" | "robot" | "rim"
     vel_filter_alpha: float = 1.0  # IIR alpha for leader velocity; 1.0 = no filter
 
