@@ -25,29 +25,30 @@ print(f"Max width: {gripper.max_width} m")
 print(f"Min width: {gripper.min_width} m")
 
 # Demonstrate gripper functionality
-print("\nOpening gripper...")
-success = gripper.open()
-print(f"Open action {'succeeded' if success else 'failed'}")
+# print("\nOpening gripper...")
+# success = gripper.open()
+# print(f"Open action {'succeeded' if success else 'failed'}")
 
-if success:
-    time.sleep(2)
-    print(f"Gripper width after opening: {gripper.value:.4f} m")
+# if success:
+#     time.sleep(2)
+#     print(f"Gripper width after opening: {gripper.value:.4f} m")
 
-print("\nSetting target width to 0.04 m...")
-success = gripper.set_target(0.04)
+target_width = 0.05
+print(f"\nSetting target width to {target_width} m...")
+success = gripper.set_target(target_width)
 print(f"Set target action {'succeeded' if success else 'failed'}")
 
 if success:
     time.sleep(2)
     print(f"Gripper width after set target: {gripper.value:.4f} m")
 
-print("\nClosing gripper...")
-success = gripper.close()
-print(f"Close action {'succeeded' if success else 'failed'}")
+# print("\nClosing gripper...")
+# success = gripper.close()
+# print(f"Close action {'succeeded' if success else 'failed'}")
 
-if success:
-    time.sleep(2)
-    print(f"Gripper width after closing: {gripper.value:.4f} m")
+# if success:
+#     time.sleep(2)
+#     print(f"Gripper width after closing: {gripper.value:.4f} m")
 
 # print("\nResetting gripper...")
 # success = gripper.reset()

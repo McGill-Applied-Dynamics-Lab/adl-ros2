@@ -1,11 +1,14 @@
 {
     "python.defaultInterpreterPath": "${workspaceFolder}/.pixi/envs/humble/bin/python",
+    "python.envFile": "${workspaceFolder}/.vscode/.env.humble",
+    "python.terminal.activateEnvironment": false,
     "python.autoComplete.extraPaths": [
         "${workspaceFolder}/src",
         "${workspaceFolder}/build_humble",
         "${workspaceFolder}/install_humble",
         "${workspaceFolder}/install_humble/arm_client/lib/python3.12/site-packages",
-        "${workspaceFolder}/install_humble/arm_interfaces/lib/python3.12/site-packages"
+        "${workspaceFolder}/install_humble/arm_interfaces/lib/python3.12/site-packages",
+        "${workspaceFolder}/install_humble/arm_client_rim/lib/python3.12/site-packages",
     ],
     "python.analysis.extraPaths": [
         "${workspaceFolder}/src",
@@ -14,10 +17,12 @@
         "${workspaceFolder}/src/robot_arm",
         "${workspaceFolder}/src/robot_tasks",
         "${workspaceFolder}/src/teleop",
+        "${workspaceFolder}/src/robot_arm/arm_client_rim",
         "${workspaceFolder}/build_humble",
         "${workspaceFolder}/install_humble",
         "${workspaceFolder}/install_humble/arm_client/lib/python3.12/site-packages",
         "${workspaceFolder}/install_humble/arm_interfaces/lib/python3.12/site-packages",
+        "${workspaceFolder}/install_humble/arm_client_rim/lib/python3.12/site-packages",
         // "/opt/openrobots/lib/python3.10/site-packages",
         "/usr/local/lib/python3.10/site-packages",
     ],
@@ -119,7 +124,9 @@
     },
     //! Pytest
     "python.testing.pytestArgs": [
-        "src/",
+        "src/arm_client/test",
+        "-p",
+        "no:launch_testing_ros_pytest_entrypoint",
         "--ignore=src/_legacy",
     ],
     // "python.testing.pytestPath": "/usr/bin/pytest-3"
@@ -147,5 +154,19 @@
     },
     "ROS2.distro": "humble",
     "python-envs.defaultEnvManager": "renan-r-santos.pixi-code:pixi",
-    "python-envs.defaultPackageManager": "renan-r-santos.pixi-code:pixi"
+    "python-envs.defaultPackageManager": "renan-r-santos.pixi-code:pixi",
+    "[python]": {
+        "editor.defaultFormatter": "charliermarsh.ruff",
+        "editor.formatOnSave": true,
+        "editor.codeActionsOnSave": {
+            "source.organizeImports": "explicit"
+        }
+    },
+    "python-envs.pythonProjects": [
+        {
+            "path": ".",
+            "envManager": "renan-r-santos.pixi-code:pixi",
+            "packageManager": "renan-r-santos.pixi-code:pixi"
+        }
+    ]
 }

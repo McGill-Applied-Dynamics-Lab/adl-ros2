@@ -1,0 +1,69 @@
+rates:
+  control_rate_hz: 50.0
+  model_rate_hz: 50.0
+  rim_rate_hz: 1000.0
+  haptic_rate_hz: 1000.0
+
+interface:
+  rim_direction: [0.0, 0.0, 1.0]  # unit vector for RIM + contact + haptic force
+  free_space: leader  # "leader" -> device drives x/y (3D teleop) | "locked" -> held at home (1-DoF)
+  stiffness: 1000.0
+  damping: 90.0
+  contact_surface: 0.025  # 19.5mm, world height of the table
+  force_scale: 0.1
+  feedforward_force_cap: 25.0  # max feedforward sent to the robot [N]; keep below the OSC force limit
+  rim_enabled: true
+  proxy_model: rim  # "rim" (reduced robot dynamics) | "fixed_mass" (constant virtual-inertia baseline)
+  fixed_mass: 1.0  # virtual inertia [kg] used when proxy_model == fixed_mass
+  force_feedback: rim  # "none" | "robot" | "rim"
+  vel_filter_alpha: 0.2  # IIR on leader velocity; 1.0 = off, ~35 Hz cutoff at 1 kHz
+
+safety:
+  stale_state_timeout_s: 0.2
+  stale_model_timeout_s: 0.25
+  deadman_required: false
+
+# Config of the Inverse 3 device
+inverse3:
+  uri: ws://localhost:10001
+  interface_axis: z
+  scale: 1.0  # Position scale
+  i3_origin: [0.0, -0.17, 0.16]
+  i3_origin_rpy: [0.0, 0.0, 90.0]
+  i3_origin_rpy_degrees: true
+  center_on_start: true
+  enable_force_feedback: true
+  interface_force_scale: 0.1 
+  force_cap: 12.0
+
+robot:
+  namespace: fr3
+  controller_name: osc_pd_controller
+  wrench_filter_alpha: 0.1  # IIR alpha [0,1]; 1.0 = no filtering; ~17 Hz cutoff at 1 kHz update rate
+
+model:
+  urdf_package: franka_rim
+  urdf_relative_path: models/fr3_franka_hand.urdf
+  ee_frame_name: fr3_hand_tcp
+  filter_alpha_q: 0.3
+  filter_alpha_q_dot: 0.2
+  filter_alpha_tau: 0.2
+  # Offset from ee_frame_name to the tool tip, in the EE frame.
+  # For a peg of length L along the gripper z-axis: [0.0, 0.0, L]
+  tool_tip_offset: [0.0, 0.0, 0.043] # Peg: 0.043, pen: 0.050
+
+logging:
+  enabled: true
+  sinks: [file_sink, foxglove_sink]
+
+  file_sink:
+    enabled: true
+    output_dir: /home/athena/csirois/data/franka/rim
+    run_name: null
+    flush_hz: 20.0
+
+  foxglove_sink:
+    enabled: true
+    host: 0.0.0.0
+    port: 8765
+    topic_prefix: /rim

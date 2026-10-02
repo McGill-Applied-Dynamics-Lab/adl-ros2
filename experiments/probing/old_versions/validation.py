@@ -6,14 +6,15 @@ Tests: (1) plunge at multiple locations, (2) plot saved data.
 Based on the working structure of 07_follow_trajectory.py
 """
 
-import time
-import numpy as np
-import matplotlib.pyplot as plt
-from scipy.spatial.transform import Rotation as R
-from pathlib import Path
 import pickle
+import time
+from pathlib import Path
 
-from arm_client.robot import Robot, Pose, Twist
+import matplotlib.pyplot as plt
+import numpy as np
+from arm_client.robot import Pose, Robot, Twist
+from scipy.spatial.transform import Rotation as R
+
 from arm_client import CONFIG_DIR
 
 
@@ -75,7 +76,7 @@ def plunge(
 
     start_time = time.time()
     while robot.wait_for_trajectory_completion(plunge_time, timeout_margin=0.5):
-        ee_force = robot.end_effector_wrench["force"]
+        ee_force = robot.end_effector_external_wrench["force"]
         ee_pose = robot.end_effector_pose
         time_stamp = time.time() - start_time
 
@@ -105,41 +106,41 @@ def plot_results(data_file: Path):
 
     # Create figure with subplots
     fig, axes = plt.subplots(2, 2, figsize=(14, 10))
-    fig.suptitle("Probing Validation Results", fontsize=16, fontweight='bold')
+    fig.suptitle("Probing Validation Results", fontsize=16, fontweight="bold")
 
     # Plot 1: Z position over time for all probes
     ax = axes[0, 0]
-    for i in range(len(exp_dict['ts'])):
-        ts = exp_dict['ts'][i]
-        ee_positions = exp_dict['ee_positions'][i]
+    for i in range(len(exp_dict["ts"])):
+        ts = exp_dict["ts"][i]
+        ee_positions = exp_dict["ee_positions"][i]
         # Extract z positions from array of position arrays
         z_positions = [pos[2] for pos in ee_positions]
-        ax.plot(ts, z_positions, label=f"Probe {i+1}", alpha=0.7, linewidth=2)
+        ax.plot(ts, z_positions, label=f"Probe {i + 1}", alpha=0.7, linewidth=2)
     ax.set_xlabel("Time (s)", fontsize=12)
     ax.set_ylabel("Z Position (m)", fontsize=12)
-    ax.set_title("Z Position During Plunges", fontsize=13, fontweight='bold')
+    ax.set_title("Z Position During Plunges", fontsize=13, fontweight="bold")
     ax.legend()
     ax.grid(True, alpha=0.3)
 
     # Plot 2: Forces over time
     ax = axes[0, 1]
-    for i in range(len(exp_dict['ts'])):
-        ts = exp_dict['ts'][i]
-        forces = exp_dict['ee_forces'][i]
+    for i in range(len(exp_dict["ts"])):
+        ts = exp_dict["ts"][i]
+        forces = exp_dict["ee_forces"][i]
         # Calculate force magnitude from force vectors
         force_magnitude = [np.linalg.norm(f) for f in forces]
-        ax.plot(ts, force_magnitude, label=f"Probe {i+1}", alpha=0.7, linewidth=2)
+        ax.plot(ts, force_magnitude, label=f"Probe {i + 1}", alpha=0.7, linewidth=2)
     ax.set_xlabel("Time (s)", fontsize=12)
     ax.set_ylabel("Force Magnitude (N)", fontsize=12)
-    ax.set_title("Force Magnitude During Plunges", fontsize=13, fontweight='bold')
+    ax.set_title("Force Magnitude During Plunges", fontsize=13, fontweight="bold")
     ax.legend()
     ax.grid(True, alpha=0.3)
 
     # Plot 3: Force components for first probe
     ax = axes[1, 0]
-    if len(exp_dict['ee_forces']) > 0:
-        ts = exp_dict['ts'][0]
-        forces = exp_dict['ee_forces'][0]
+    if len(exp_dict["ee_forces"]) > 0:
+        ts = exp_dict["ts"][0]
+        forces = exp_dict["ee_forces"][0]
         # Convert to numpy array for easy indexing
         forces_array = np.array(forces)
         ax.plot(ts, forces_array[:, 0], label="Fx", alpha=0.8, linewidth=2)
@@ -147,33 +148,41 @@ def plot_results(data_file: Path):
         ax.plot(ts, forces_array[:, 2], label="Fz", alpha=0.8, linewidth=2)
         ax.set_xlabel("Time (s)", fontsize=12)
         ax.set_ylabel("Force (N)", fontsize=12)
-        ax.set_title("Force Components (First Probe)", fontsize=13, fontweight='bold')
+        ax.set_title("Force Components (First Probe)", fontsize=13, fontweight="bold")
         ax.legend()
         ax.grid(True, alpha=0.3)
-        ax.axhline(y=0, color='k', linestyle='--', alpha=0.3)
+        ax.axhline(y=0, color="k", linestyle="--", alpha=0.3)
 
     # Plot 4: Probe locations (top view)
     ax = axes[1, 1]
     probe_locations = exp_dict["probe_locations"]
-    scatter = ax.scatter(probe_locations[:, 0], probe_locations[:, 1],
-               s=150, c=range(len(probe_locations)), cmap='viridis',
-               edgecolors='black', linewidth=2, zorder=3)
+    scatter = ax.scatter(
+        probe_locations[:, 0],
+        probe_locations[:, 1],
+        s=150,
+        c=range(len(probe_locations)),
+        cmap="viridis",
+        edgecolors="black",
+        linewidth=2,
+        zorder=3,
+    )
     for i, loc in enumerate(probe_locations):
-        ax.annotate(f"{i+1}", (loc[0], loc[1]),
-                   ha='center', va='center', color='white', fontweight='bold', fontsize=10)
-    ax.scatter([0], [0], s=200, c='red', marker='x', linewidth=3, label='Home', zorder=4)
+        ax.annotate(
+            f"{i + 1}", (loc[0], loc[1]), ha="center", va="center", color="white", fontweight="bold", fontsize=10
+        )
+    ax.scatter([0], [0], s=200, c="red", marker="x", linewidth=3, label="Home", zorder=4)
     ax.set_xlabel("X offset (m)", fontsize=12)
     ax.set_ylabel("Y offset (m)", fontsize=12)
-    ax.set_title("Probe Locations (Relative to Home)", fontsize=13, fontweight='bold')
+    ax.set_title("Probe Locations (Relative to Home)", fontsize=13, fontweight="bold")
     ax.grid(True, alpha=0.3)
-    ax.axis('equal')
+    ax.axis("equal")
     ax.legend()
 
     plt.tight_layout()
 
     # Save figure
     plot_file = data_file.parent / f"{data_file.stem}_plot.png"
-    plt.savefig(plot_file, dpi=150, bbox_inches='tight')
+    plt.savefig(plot_file, dpi=150, bbox_inches="tight")
     print(f"Plot saved to: {plot_file}")
 
     plt.show(block=False)
@@ -191,17 +200,17 @@ HOME_Z = 0.30  # (m)
 
 # Probing parameters
 PLUNGE_DEPTH = 0.020  # 20mm plunge depth (m)
-PLUNGE_TIME = 1.0     # 1 second plunge duration (s)
-TRAJ_FREQ = 10.0      # Trajectory frequency (Hz) - reduced for stability
-SETTLE_TIME = 3.0     # Time to wait after moving to position (s)
+PLUNGE_TIME = 1.0  # 1 second plunge duration (s)
+TRAJ_FREQ = 10.0  # Trajectory frequency (Hz) - reduced for stability
+SETTLE_TIME = 3.0  # Time to wait after moving to position (s)
 
 # Test locations: small radius around home (relative offsets in meters)
 test_offsets = [
-    [0.0, 0.0],      # center (home)
-    [0.02, 0.0],     # +X
-    [0.0, 0.02],     # +Y
-    [-0.02, 0.0],    # -X
-    [0.0, -0.02],    # -Y
+    [0.0, 0.0],  # center (home)
+    [0.02, 0.0],  # +X
+    [0.0, 0.02],  # +Y
+    [-0.02, 0.0],  # -X
+    [0.0, -0.02],  # -Y
 ]
 
 # Base orientation (modify as needed)
@@ -316,15 +325,11 @@ print("\n5. Saving results...")
 
 # Convert to numpy arrays
 ts_array = np.array(ts_list, dtype=object)
-target_positions_array = np.array(
-    [[pose.position for pose in trial] for trial in target_poses_list], dtype=object
-)
+target_positions_array = np.array([[pose.position for pose in trial] for trial in target_poses_list], dtype=object)
 target_orientations_array = np.array(
     [[pose.orientation.as_quat() for pose in trial] for trial in target_poses_list], dtype=object
 )
-ee_positions_array = np.array(
-    [[pose.position for pose in trial] for trial in ee_poses_list], dtype=object
-)
+ee_positions_array = np.array([[pose.position for pose in trial] for trial in ee_poses_list], dtype=object)
 ee_orientations_array = np.array(
     [[pose.orientation.as_quat() for pose in trial] for trial in ee_poses_list], dtype=object
 )
@@ -345,7 +350,7 @@ exp_dict = {
         "plunge_depth": PLUNGE_DEPTH,
         "plunge_time": PLUNGE_TIME,
         "traj_freq": TRAJ_FREQ,
-    }
+    },
 }
 
 # Save to pickle file
@@ -371,4 +376,3 @@ print("Validation Complete!")
 print("=" * 60)
 
 input("Press Enter to exit...")
-

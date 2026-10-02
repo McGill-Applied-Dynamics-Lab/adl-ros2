@@ -230,7 +230,12 @@ class Gripper:
 
     @property
     def value(self) -> float | None:
-        """Returns the current width of the gripper or None if not initialized."""
+        """Returns the current width of the gripper or None if not initialized.
+
+        The width is measured as the distance between the two fignger, with the rubber pads installed.
+        Each rubber pad has a width of 9.50mm.
+
+        """
         if self._current_width is None:
             raise RuntimeError(f"{self._prefix}Gripper is not initialized. Call wait_until_ready() first.")
 
@@ -354,6 +359,9 @@ class Gripper:
         goal = Move.Goal()
         goal.width = target_width
         goal.speed = speed
+
+        print("Gripper goal:")
+        print(goal)
 
         if block:
             return self._send_goal_blocking(self._move_client, goal)

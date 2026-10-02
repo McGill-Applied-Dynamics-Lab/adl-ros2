@@ -1,15 +1,18 @@
-import time
-import numpy as np
-from scipy.spatial.transform import Rotation as R
-from arm_client.robot import Robot, Pose, Twist
-from arm_client import CONFIG_DIR
-from pathlib import Path
 import pickle
-from datetime import datetime
 import subprocess
+import time
+from datetime import datetime
+from pathlib import Path
+
+import numpy as np
+from arm_client.robot import Pose, Robot, Twist
+from scipy.spatial.transform import Rotation as R
+
+from arm_client import CONFIG_DIR
 
 SETTLE_SEC = 1.25  # wait time after moves (s)
-TRAJ_FREQ = 10.0 # Hz
+TRAJ_FREQ = 10.0  # Hz
+
 
 # Helper functions
 def probe(
@@ -19,7 +22,7 @@ def probe(
     probe_time: float,
     traj_freq: float = 5.0,
     fixed_ori: R | None = None,
-    plunge_func: str = 'cos'
+    plunge_func: str = "cos",
 ):
     """
     Complete plunge and retract motion.
@@ -54,10 +57,10 @@ def probe(
     # Include the endpoint (k = 0..N)
     for k in range(N + 1):
         s = k / N  # 0..1
-        if plunge_func == 'cos': # cosine-based plunge function
+        if plunge_func == "cos":  # cosine-based plunge function
             z = z_init + depth / 2 * (np.cos(2 * np.pi * s) - 1)
-        elif plunge_func == 'linear': # linear
-            z = z_init + depth * (np.abs(2*s - 1) - 1)
+        elif plunge_func == "linear":  # linear
+            z = z_init + depth * (np.abs(2 * s - 1) - 1)
         t = k * dt
 
         target_position = np.array([start_xyz[0], start_xyz[1], z], dtype=float)
@@ -80,14 +83,14 @@ def probe(
     t_min = 0.0
     z_min = z_init
     while robot.wait_for_trajectory_completion(probe_time, timeout_margin=0.5):
-        ee_force = robot.end_effector_wrench["force"]
+        ee_force = robot.end_effector_external_wrench["force"]
         ee_pose = robot.end_effector_pose
-        time_stamp = time.perf_counter() # absolute time
+        time_stamp = time.perf_counter()  # absolute time
 
         # Time-stamp when z-displacement is max
         if ee_pose.position[2] < z_min:
             z_min = ee_pose.position[2]
-            t_min = time_stamp # absolute time
+            t_min = time_stamp  # absolute time
 
         # Record data
         ee_poses.append(ee_pose.copy())
@@ -100,15 +103,16 @@ def probe(
     return ts, ee_poses, ee_forces, t_min
 
 
-Z_INIT = 0.15 # m
-BUTTON_X = 0.681 # m
-BUTTON_Y = -0.147 # m
-PROBE_DEPTH = 0.0400 # m (previously 0.0650 m)
-PROBE_TIME = 2.00 # plunge and retract time (s)
-TRIG_DEPTH = 0.0206 # m (previously 0.0250 m)
-TRIG_TIME = 2.0 # s
+Z_INIT = 0.15  # m
+BUTTON_X = 0.681  # m
+BUTTON_Y = -0.147  # m
+PROBE_DEPTH = 0.0400  # m (previously 0.0650 m)
+PROBE_TIME = 2.00  # plunge and retract time (s)
+TRIG_DEPTH = 0.0206  # m (previously 0.0250 m)
+TRIG_TIME = 2.0  # s
 BASE_ORI = R.from_euler("xyz", [-180, 0, 0], degrees=True)
-PROBE_START_Z = 0.10799 # start height for probing at the surface of the sensor (m) - 0.112 m
+PROBE_START_Z = 0.10799  # start height for probing at the surface of the sensor (m) - 0.112 m
+
 
 def main():
     # Setup
@@ -128,16 +132,16 @@ def main():
 
     # Run grid generator
     PROJECT_ROOT = Path(__file__).resolve().parent  # or Path.cwd()
-    subprocess.run(["python3", PROJECT_ROOT / "grid_generator_random.py"]) # run grid generator, ensure params are correct
+    subprocess.run(
+        ["python3", PROJECT_ROOT / "grid_generator_random.py"]
+    )  # run grid generator, ensure params are correct
 
     # Load probe locations from grid file
     grid_file = PROJECT_ROOT / "results" / "grids" / "grids.pkl"
 
     # Check if grid file exists
     if not grid_file.exists():
-        raise FileNotFoundError(
-            f"Grid file not found: {grid_file}. Please run grid_generator.py first."
-        )
+        raise FileNotFoundError(f"Grid file not found: {grid_file}. Please run grid_generator.py first.")
 
     with open(grid_file, "rb") as f:
         grids = pickle.load(f)
@@ -185,7 +189,7 @@ def main():
             probe_time=TRIG_TIME,
             traj_freq=TRAJ_FREQ,
             fixed_ori=BASE_ORI,
-            plunge_func='cos',
+            plunge_func="cos",
         )
 
         # --- Move to probe location ---
@@ -222,13 +226,10 @@ def main():
         ee_orientations = [pose.orientation.as_quat() for pose in ee_poses]
 
         # --- Store results ---
-        ts_adjusted = [t - t_ref for t in ts] # time referenced to trigger
+        ts_adjusted = [t - t_ref for t in ts]  # time referenced to trigger
         exp_dict["ts"].append(ts_adjusted)
         # Store numpy arrays instead of Pose objects
-        exp_dict["ee_poses"].append({
-            "positions": ee_positions,
-            "orientations": ee_orientations
-        })
+        exp_dict["ee_poses"].append({"positions": ee_positions, "orientations": ee_orientations})
         exp_dict["ee_forces"].append(ee_forces)  # already numpy arrays
         print("\tPlunge complete.")
 
@@ -249,7 +250,7 @@ def main():
     base_filename = "R_" + datetime.now().strftime("%m_%d")  # e.g., "R_01_01"
 
     counter = 0
-    filename = f"{base_filename}_{counter:02d}.pkl" # add number suffix if file exists (starting from 00)
+    filename = f"{base_filename}_{counter:02d}.pkl"  # add number suffix if file exists (starting from 00)
     full_path = results_dir / filename
 
     # Find the next available number

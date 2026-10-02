@@ -1,0 +1,16 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "rim_teleop"
+version = "0.1.0"
+description = "RIM-based bilateral teleoperation for the Franka FR3"
+requires-python = ">=3.10"
+dependencies = ["numpy", "pyrim", "pyyaml"]
+
+[project.scripts]
+rim_teleop = "rim_teleop.main:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/rim_teleop"]

@@ -1,0 +1,445 @@
+"""Single-script orchestrator for multi-rate RIM teleoperation."""
+
+from __future__ import annotations
+
+import threading
+import time
+from collections.abc import Callable
+
+import numpy as np
+from arm_client.robot import Pose, Robot
+from arm_client.teleop.inverse3_teleop import Inverse3Device
+from pyrim import RIM, FixedMassCalculator, InterfaceFrame, RIMCalculator, RIMIntegrator
+from scipy.spatial.transform import Rotation
+
+from arm_client import CONFIG_DIR
+
+from .adapters import ExperimentLogger, RobotModelAdapter, TeleopInterfaceAdapter
+from .config import RIMTeleopConfig
+from .monitoring import LoopRateMonitor
+
+
+class RIMTeleopOrchestrator:
+    """Coordinates adapters and multi-rate loops in one Python process."""
+
+    def __init__(
+        self,
+        config: RIMTeleopConfig,
+        setup_fn: Callable[[Robot], None] | None = None,
+    ) -> None:
+        self.cfg = config
+        self._setup_fn = setup_fn
+        self._frame = InterfaceFrame.from_direction(config.interface.rim_direction)  # TODO: Rename to interface_frame
+
+        self._robot = Robot(namespace=config.robot.namespace)
+        if config.robot.wrench_filter_alpha is not None:
+            self._robot.configure_wrench_filter(config.robot.wrench_filter_alpha)
+        self._home_pose: Pose | None = None
+
+        self.model_adapter = RobotModelAdapter(
+            node=self._robot.node,
+            robot=self._robot,
+            model_cfg=config.model,
+            frame=self._frame,
+        )
+
+        self.haply: Inverse3Device  # created in start() once home pose is known
+        self.teleop_interface: TeleopInterfaceAdapter  # created in start()
+
+        integrator = RIMIntegrator(  # TODO: Initialize in the RIM
+            interface_dim=self._frame.dim,
+            dt=1.0 / config.rates.rim_rate_hz,
+            stiffness=config.interface.stiffness,
+            damping=config.interface.damping,
+            contact_surface=config.interface.contact_surface,
+            vel_filter_alpha=config.interface.vel_filter_alpha,
+        )
+        # Proxy law: physically consistent RIM reduction, or a constant virtual-mass baseline.
+        if config.interface.proxy_model == "fixed_mass":
+            calculator = FixedMassCalculator(config.interface.fixed_mass)
+        elif config.interface.proxy_model == "rim":
+            calculator = RIMCalculator()
+        else:
+            raise ValueError(
+                f"unknown interface.proxy_model {config.interface.proxy_model!r}; expected 'rim' or 'fixed_mass'"
+            )
+        self.rim = RIM(self._frame, integrator, calculator)
+        self.logger = ExperimentLogger(config.logging, full_config=config)
+
+        self._running = False
+        self._deadman_active = not self.cfg.safety.deadman_required
+        # TCP − tool-tip offset projected onto the RIM subspace at home; applied when commanding.
+        self._tool_correction = np.zeros(self._frame.dim)
+        self._threads: list[threading.Thread] = []
+        self._loop_monitors = {
+            "haptic": LoopRateMonitor(config.rates.haptic_rate_hz),
+            "rim": LoopRateMonitor(config.rates.rim_rate_hz),
+            "control": LoopRateMonitor(config.rates.control_rate_hz),
+        }
+
+    def start(self) -> None:
+        if self.cfg.dry_run:
+            self._robot.node.get_logger().warn("DRY RUN: skipping robot init and controller switch.")
+            self._home_pose = Pose(
+                position=np.array([0.4, 0.0, 0.5]),
+                orientation=Rotation.identity(),
+            )
+            # Seed the RIM with a valid model at zero config so all loops produce real data.
+            n = self.model_adapter._model.nv
+            q0 = np.zeros(n)
+            synthetic = self.model_adapter.compute_at(q0, q0.copy(), q0.copy())
+            self.rim.update(synthetic)
+            # Tool correction not meaningful in dry-run; leave at 0.
+
+        else:
+            self._robot.wait_until_ready()
+            if self._setup_fn is not None:
+                self._setup_fn(self._robot)
+            self._robot.controller_switcher_client.switch_controller(self.cfg.robot.controller_name)
+            self._robot.osc_pd_controller_parameters_client.load_param_config(
+                file_path=CONFIG_DIR / "controllers" / "osc_pd" / "rim_controller.yaml"
+            )  # TODO: Specify param file in the config
+            self._home_pose = self._robot.end_effector_pose.copy()
+
+            # Compute TCP-to-tool-tip offset projected onto the interface axis at the home configuration.
+            # The OSC controller tracks the TCP; the RIM proxy tracks the tool tip. We apply this
+            # correction in _send_osc_command so the TCP is commanded to the right position.
+            home_model = self.model_adapter.compute()
+            if home_model is not None:
+                tool_tip_home = home_model.x_i  # tool tip projected onto the RIM subspace, (k,)
+                tcp_home = self.rim.project(self._home_pose.position)  # (k,)
+                self._tool_correction = tcp_home - tool_tip_home
+                self._robot.node.get_logger().info(
+                    f"Tool correction (RIM subspace): {np.array2string(self._tool_correction, precision=4)} m"
+                    f"  (TCP={np.array2string(tcp_home, precision=4)}, tip={np.array2string(tool_tip_home, precision=4)})"
+                )
+
+        self.haply = Inverse3Device(
+            initial_robot_position=self._home_pose.position.copy(),
+            config=self.cfg.inverse3,
+        )
+        self.teleop_interface = TeleopInterfaceAdapter(
+            device=self.haply, interface_cfg=self.cfg.interface, frame=self._frame
+        )
+
+        self.haply.start()
+        self.logger.start()
+        self._running = True
+        self._threads = [
+            threading.Thread(target=self._haptic_loop, daemon=True),
+            threading.Thread(target=self._rim_loop, daemon=True),
+            threading.Thread(target=self._control_loop, daemon=True),
+            threading.Thread(target=self._log_loop, daemon=True),
+        ]
+        for t in self._threads:
+            t.start()
+
+    def stop(self) -> None:
+        self._running = False
+        for t in self._threads:
+            if t.is_alive():
+                t.join(timeout=2.0)
+        if self.teleop_interface.is_connected():
+            self.teleop_interface.set_interface_force(np.zeros(1, dtype=float))
+        self.haply.stop()
+        self.logger.stop()
+        self._robot.shutdown()
+
+    @property
+    def _home_orientation(self):
+        if self._home_pose is None:
+            return self._robot.end_effector_pose.orientation
+        return self._home_pose.orientation
+
+    def _send_osc_command(self, target_position: np.ndarray, feedforward: np.ndarray) -> None:
+        """Publish the 3D target pose and inject the feedforward coupling force.
+
+        ``target_position`` is the full 3D Cartesian target (proxy along the RIM
+        subspace, leader/home in the complement). ``feedforward`` is the 3D coupling
+        force (= -λi, paper eq. 20), already lifted onto the RIM subspace.
+        """
+        self._robot.set_target(position=target_position)
+
+        cap = self.cfg.interface.feedforward_force_cap
+        norm = float(np.linalg.norm(feedforward))
+        if norm > cap > 0.0:
+            feedforward = feedforward * (cap / norm)
+            self._robot.node.get_logger().warn(
+                f"Feedforward force {norm:.1f} N clamped to {cap:.1f} N (feedforward_force_cap={cap} N)",
+                throttle_duration_sec=0.5,
+            )
+
+        self._robot.set_target_wrench(force=feedforward, torque=np.zeros(3))
+
+    def _free_source(self) -> np.ndarray:
+        """3D source for the complement of the RIM subspace: live leader, or home when locked.
+
+        How to control the non-rim axis. When 'leader' is selected, they follow the I3 pose.
+        When 'locked', they remain in their starting position.
+        """
+        if self.cfg.interface.free_space == "leader":
+            pos3, _ = self.teleop_interface.get_cartesian_state()
+            return pos3
+        return self._home_pose.position
+
+    def set_deadman(self, active: bool) -> None:
+        """Set deadman state. When inactive, command and force outputs are gated off."""
+        self._deadman_active = active
+
+    def _is_robot_state_fresh(self, now: float) -> bool:
+        if self.cfg.dry_run:
+            return True
+        stamps = self._robot.get_state_update_times()
+        timeout = self.cfg.safety.stale_state_timeout_s
+
+        joint_stamp = stamps["joint"]
+        pose_stamp = stamps["pose"]
+        if joint_stamp is None or pose_stamp is None:
+            return False
+        return (now - joint_stamp) < timeout and (now - pose_stamp) < timeout
+
+    def _is_model_fresh(self, model: DynModel | None, now: float) -> bool:
+        return model is not None and (now - model.stamp_s) < self.cfg.safety.stale_model_timeout_s
+
+    def _robot_state_allows_output(self, now: float) -> bool:
+        """Safety gate requiring only fresh robot state — used in direct (no-RIM) mode."""
+        if self.cfg.safety.deadman_required and not self._deadman_active:
+            return False
+        return self._is_robot_state_fresh(now)
+
+    def _safety_allows_output(self, now: float) -> bool:
+        """Full safety gate: fresh robot state + fresh dynamics model."""
+        if self.cfg.safety.deadman_required and not self._deadman_active:
+            return False
+        if not self._is_robot_state_fresh(now):
+            return False
+        model = self.model_adapter.latest()
+        if not self._is_model_fresh(model, now):
+            return False
+        return True
+
+    def _haptic_loop(self) -> None:
+        dt = 1.0 / self.cfg.rates.haptic_rate_hz
+        next_tick = time.perf_counter()
+        while self._running:
+            self.teleop_interface.update()
+            leader_pos, leader_vel = self.teleop_interface.get_interface_state()
+
+            self.rim.add_leader_state(leader_pos, leader_vel)
+            self.rim.step()
+            now = time.time()
+
+            ff_mode = self.cfg.interface.force_feedback
+
+            haptic_force = None  # Force to send to the haptic device
+            rim_interface_force = self.rim.get_interface_force()
+
+            try:
+                robot_force = self.rim.project(
+                    np.asarray(self._robot.end_effector_external_wrench["force"], dtype=float)
+                )
+            except RuntimeError:
+                robot_force = np.zeros(self._frame.dim, dtype=float)
+
+            if ff_mode == "rim" and self._safety_allows_output(now):
+                haptic_force = rim_interface_force
+
+            elif ff_mode == "robot" and self._robot_state_allows_output(now):
+                haptic_force = robot_force
+
+            else:
+                haptic_force = np.zeros(1, dtype=float)
+
+            self.teleop_interface.set_interface_force(haptic_force)
+
+            haptic_log: dict = {
+                "leader_pos": leader_pos,  # Position of the I3 in the robot base frame
+                "leader_vel": leader_vel,  # Raw velocity from the I3
+                "leader_vel_filt": self.rim.get_leader_vel(),  # Filtered velocity used by RIMIntegrator
+                "force_cmd": haptic_force,  # Force command sent to the haptic device
+                "rim_interface_force": rim_interface_force,  # Force from the RIM interface
+                "robot_force": robot_force,  # Force from the robot
+                "deadman_active": self._deadman_active,
+            }
+            if ff_mode == "robot":
+                try:
+                    haptic_log["force_raw"] = self.rim.project(
+                        np.asarray(self._robot.end_effector_external_wrench_raw["force"], dtype=float)
+                    )
+                except RuntimeError:
+                    pass
+            self.logger.log_sample("haptic", haptic_log, timestamp_s=now)
+
+            self._loop_monitors["haptic"].tick()
+            next_tick += dt
+            time.sleep(max(0.0, next_tick - time.perf_counter()))
+
+    def _rim_loop(self) -> None:
+        dt = 1.0 / self.cfg.rates.rim_rate_hz
+        next_tick = time.perf_counter()
+        while self._running:
+            x_rim, v_rim = self.rim.get_rim_state()
+            interface_force = self.rim.get_interface_force()
+            if x_rim is not None and v_rim is not None:
+                self.logger.log_sample(
+                    "rim",
+                    {
+                        "x_rim": x_rim,
+                        "v_rim": v_rim,
+                        "interface_force": interface_force,
+                    },
+                )
+            self._loop_monitors["rim"].tick()
+            next_tick += dt
+            time.sleep(max(0.0, next_tick - time.perf_counter()))
+
+    def _control_loop(self) -> None:
+        dt = 1.0 / self.cfg.rates.control_rate_hz
+        next_tick = time.perf_counter()
+        while self._running:
+            now = time.time()
+
+            # Always log robot telemetry at control-loop rate for Foxglove.
+            tcp_axis_pos: float | None = None
+            ee_orientation_xyzw: list | None = None
+            try:
+                q = self._robot.q
+                dq = self._robot.dq
+                tau = self._robot.tau
+                ee_pose = self._robot.end_effector_pose
+                tcp_axis_pos = float(self.rim.project(ee_pose.position)[0])
+                ee_orientation_xyzw = ee_pose.orientation.as_quat().tolist()
+                ee_twist = self._robot.end_effector_twist
+                ee_wrench = self._robot.end_effector_external_wrench
+
+                self.logger.log_sample(
+                    "robot/joint_states",
+                    {
+                        "name": list(self._robot.config.joint_names),
+                        "position": q,
+                        "velocity": dq,
+                        "effort": tau,
+                    },
+                    timestamp_s=now,
+                )
+                self.logger.log_sample(
+                    "robot/end_effector/pose",
+                    {
+                        "frame_id": self._robot.config.base_frame,
+                        "position": ee_pose.position,
+                        "orientation_xyzw": ee_pose.orientation.as_quat(),
+                    },
+                    timestamp_s=now,
+                )
+                self.logger.log_sample(
+                    "robot/end_effector/velocity",
+                    {
+                        "linear": ee_twist.linear,
+                        "angular": ee_twist.angular,
+                    },
+                    timestamp_s=now,
+                )
+                self.logger.log_sample(
+                    "robot/end_effector/force",
+                    {
+                        "frame_id": self._robot.config.base_frame,
+                        "force": ee_wrench["force"],
+                        "torque": ee_wrench["torque"],
+                    },
+                    timestamp_s=now,
+                )
+            except RuntimeError as e:
+                # One or more robot streams unavailable yet.
+                self._robot.node.get_logger().warn(f"Error occurred while logging robot telemetry: {e}")
+
+            if self.cfg.interface.rim_enabled:
+                model = self.model_adapter.compute()
+                if model is not None:
+                    reduced = self.rim.update(model)
+                    rim_x, _ = self.rim.get_rim_state()
+                    interface_force = self.rim.get_interface_force()
+
+                    if rim_x is not None and self._safety_allows_output(now) and not self.cfg.dry_run:
+                        if self.cfg.interface.force_feedback == "robot":
+                            interface_force = np.zeros_like(interface_force)
+
+                        commanded_s = rim_x + self._tool_correction
+                        target = self.rim.compose(commanded_s, self._free_source())
+                        feedforward = self.rim.lift(-interface_force)
+                        self._send_osc_command(target, feedforward)
+
+                    self.logger.log_sample(
+                        "control",
+                        {
+                            "rim_x": rim_x,
+                            "interface_force": interface_force,
+                            "model_stamp_s": model.stamp_s,
+                        },
+                        timestamp_s=now,
+                    )
+                    self.logger.log_sample(
+                        "rim_model",
+                        {
+                            "M_eff": reduced.M_eff,
+                            "z_i": reduced.z_i,
+                            "f_eff": reduced.f_eff,
+                            "x": reduced.x,
+                            "v": reduced.v,
+                        },
+                        timestamp_s=now,
+                    )
+                    self.logger.log_sample(
+                        "tracking",
+                        {
+                            "tcp": tcp_axis_pos,
+                            "tool_tip": float(model.x_i[0]),
+                            "rim": float(rim_x[0]) if rim_x is not None else None,
+                            "target": float((rim_x + self._tool_correction)[0]) if rim_x is not None else None,
+                            "orientation_xyzw": ee_orientation_xyzw,
+                        },
+                        timestamp_s=now,
+                    )
+            else:
+                leader3, _ = self.teleop_interface.get_cartesian_state()
+                if self._robot_state_allows_output(now) and not self.cfg.dry_run:
+                    # Direct teleop: RIM direction follows the leader (no proxy); complement per free_space.
+                    commanded_s = self.rim.project(leader3) + self._tool_correction
+                    free_src = leader3 if self.cfg.interface.free_space == "leader" else self._home_pose.position
+                    target = self.rim.compose(commanded_s, free_src)
+                    self._send_osc_command(target, np.zeros(3))
+
+                self.logger.log_sample(
+                    "control",
+                    {"leader_pos_direct": leader3},
+                    timestamp_s=now,
+                )
+            self._loop_monitors["control"].tick()
+            next_tick += dt
+            time.sleep(max(0.0, next_tick - time.perf_counter()))
+
+    def _log_loop(self) -> None:
+        """
+        To log metrics.
+
+        Log loop monitoring data to '/metrics'
+        """
+        log_period = 5.0  # sec
+        while self._running:
+            summaries = []
+            snapshot_payload: dict[str, dict[str, float]] = {}
+            for name, monitor in self._loop_monitors.items():
+                snap = monitor.snapshot()
+                summaries.append(
+                    f"{name}: {snap.measured_hz:.1f}Hz target={snap.target_hz:.1f}Hz p95={snap.p95_dt_ms:.2f}ms"
+                )
+                snapshot_payload[name] = {
+                    "measured_hz": snap.measured_hz,
+                    "target_hz": snap.target_hz,
+                    "mean_dt_ms": snap.mean_dt_ms,
+                    "p95_dt_ms": snap.p95_dt_ms,
+                    "max_dt_ms": snap.max_dt_ms,
+                }
+
+            self.logger.log_sample("metrics", snapshot_payload)
+            self._robot.node.get_logger().info(" | ".join(summaries), throttle_duration_sec=log_period)
+            time.sleep(log_period)

@@ -1,11 +1,11 @@
 # %%
-import matplotlib.pyplot as plt
-import numpy as np
-from scipy.spatial.transform import Rotation as R
-
 import time
 
+import matplotlib.pyplot as plt
+import numpy as np
 from arm_client.robot import Robot
+from scipy.spatial.transform import Rotation as R
+
 from arm_client import CONFIG_DIR
 
 robot = Robot(namespace="fr3")
@@ -14,7 +14,7 @@ robot.wait_until_ready()
 # %%
 print(robot.end_effector_pose)
 print(robot.joint_values)
-print(robot.end_effector_wrench)  # added to print initial wrench
+print(robot.end_effector_external_wrench)  # added to print initial wrench
 
 # # %%
 # print("Going to home position...")
@@ -99,7 +99,7 @@ while t < max_time:
 
     data_start = time.perf_counter()
     ee_poses.append(robot.end_effector_pose.copy())
-    ee_forces.append(robot.end_effector_wrench["force"].copy())
+    ee_forces.append(robot.end_effector_external_wrench["force"].copy())
     target_poses.append(target_pose.copy())
     ts.append(t)
 

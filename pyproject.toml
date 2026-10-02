@@ -29,6 +29,7 @@ select = [
     "F",   # Pyflakes warning codes
     "W",   # PEP8 warning codes
     "C90", # McCabe complexity
+    "I",   # isort import sorting
 ]
 
 # Exclude specific directories or files

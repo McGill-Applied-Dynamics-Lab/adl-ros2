@@ -6,49 +6,31 @@
             "type": "debugpy",
             "request": "launch",
             "program": "${file}",
-            // "python": "${workspaceFolder}/.pixi/envs/humble/bin/python",
-            "envFile": "${workspaceFolder}/.vscode/.env.humble",
-            "console": "integratedTerminal",
-            "pathMappings": [
-                {
-                    "localRoot": "${workspaceFolder}/src",
-                    "remoteRoot": "/home/athena/csirois/git/adl-ros2/build_humble"
-                },
-                {
-                    "localRoot": "${workspaceFolder}/src",
-                    "remoteRoot": "/home/athena/csirois/git/adl-ros2/install_humble"
-                },
-                {
-                    "localRoot": "${workspaceFolder}/",
-                    "remoteRoot": "/home/athena/csirois/git/adl-ros2/"
-                }
-            ]
-        },
-        {
-            "name": "Python: Current File (with args)",
-            "type": "debugpy",
-            "request": "launch",
-            "program": "${file}",
-            "console": "integratedTerminal",
-            "args": [],
-            "justMyCode": false,
-            "pathMappings": [
-                {
-                    "localRoot": "${workspaceFolder}/src",
-                    "remoteRoot": "/home/athena/csirois/git/adl-ros2/build_humble"
-                },
-                {
-                    "localRoot": "${workspaceFolder}/src",
-                    "remoteRoot": "/home/athena/csirois/git/adl-ros2/install_humble"
-                },
-                {
-                    "localRoot": "${workspaceFolder}/src",
-                    "remoteRoot": "/home/athena/csirois/git/adl-ros2/src"
-                }
+            "python": "${workspaceFolder}/.pixi/envs/humble/bin/python",
+            "pythonArgs": [
+                "-Xfrozen_modules=off"
             ],
+            "args": [],
+            // "preLaunchTask": "gen-vscode-env",
+            "envFile": "${workspaceFolder}/.vscode/.env.humble",
             "env": {
-                "PYTHONPATH": "${workspaceFolder}/src:${workspaceFolder}/install_humble/arm_client/lib/python3.12/site-packages:${workspaceFolder}/install_humble/franka_rim/lib/python3.12/site-packages"
-            }
+                "PYDEVD_DISABLE_FILE_VALIDATION": "1"
+            },
+            "console": "integratedTerminal",
+            "pathMappings": [
+                // {
+                //     "localRoot": "${workspaceFolder}/src",
+                //     "remoteRoot": "/home/athena/csirois/git/adl-ros2/build_humble"
+                // },
+                // {
+                //     "localRoot": "${workspaceFolder}/src",
+                //     "remoteRoot": "/home/athena/csirois/git/adl-ros2/install_humble"
+                // },
+                // {
+                //     "localRoot": "${workspaceFolder}/",
+                //     "remoteRoot": "/home/athena/csirois/git/adl-ros2/"
+                // }
+            ]
         },
         {
             "name": "Python Debugger: Remote Attach",
@@ -64,6 +46,10 @@
             "type": "debugpy",
             "request": "launch",
             "module": "pytest",
+            "python": "${workspaceFolder}/.pixi/envs/humble/bin/python",
+            "pythonArgs": [
+                "-Xfrozen_modules=off"
+            ],
             "args": [
                 "${file}",
                 "-v",
@@ -87,7 +73,8 @@
                 }
             ],
             "env": {
-                "PYTHONPATH": "${workspaceFolder}/src:${workspaceFolder}/install_humble/arm_client/lib/python3.12/site-packages:${workspaceFolder}/install_humble/franka_rim/lib/python3.12/site-packages"
+                "PYTHONPATH": "${workspaceFolder}/src:${workspaceFolder}/install_humble/arm_client/lib/python3.12/site-packages:${workspaceFolder}/install_humble/franka_rim/lib/python3.12/site-packages",
+                "PYDEVD_DISABLE_FILE_VALIDATION": "1"
             }
         },
         {
@@ -95,6 +82,10 @@
             "type": "debugpy",
             "request": "launch",
             "module": "pytest",
+            "python": "${workspaceFolder}/.pixi/envs/humble/bin/python",
+            "pythonArgs": [
+                "-Xfrozen_modules=off"
+            ],
             "args": [
                 "${workspaceFolder}/src/robot_arm/robot_arm_testing/test/",
                 "-v",
@@ -104,8 +95,83 @@
             "console": "integratedTerminal",
             "justMyCode": false,
             "env": {
-                "PYTHONPATH": "${workspaceFolder}/src:${workspaceFolder}/install_humble/arm_client/lib/python3.12/site-packages:${workspaceFolder}/install_humble/franka_rim/lib/python3.12/site-packages"
+                "PYTHONPATH": "${workspaceFolder}/src:${workspaceFolder}/install_humble/arm_client/lib/python3.12/site-packages:${workspaceFolder}/install_humble/franka_rim/lib/python3.12/site-packages",
+                "PYDEVD_DISABLE_FILE_VALIDATION": "1"
             }
-        }
+        },
+        {
+            "name": "Python Debugger: rim_teleop",
+            "type": "debugpy",
+            "request": "launch",
+            // "program": "${workspaceFolder}/python/rim_teleop/src/rim_teleop/main.py",
+            "program": "${workspaceFolder}/python/rim_teleop/scripts/run_experiment.py",
+            "python": "${workspaceFolder}/.pixi/envs/humble/bin/python",
+            "pythonArgs": [
+                "-Xfrozen_modules=off", // To speed up debugger launch
+            ],
+            // "preLaunchTask": "gen-vscode-env",
+            "envFile": "${workspaceFolder}/.vscode/.env.humble",
+            "env": {
+                "PYDEVD_DISABLE_FILE_VALIDATION": "1" // To speed up debugger launch
+            },
+            "console": "internalConsole",
+            "args": [
+                "--config",
+                "${workspaceFolder}/python/rim_teleop/configs/rim_teleop_default.yaml",
+                // "--dry-run"
+            ],
+            "pathMappings": [
+                // {
+                //     "localRoot": "${workspaceFolder}/src",
+                //     "remoteRoot": "/home/athena/csirois/git/adl-ros2/build_humble"
+                // },
+                // {
+                //     "localRoot": "${workspaceFolder}/src",
+                //     "remoteRoot": "/home/athena/csirois/git/adl-ros2/install_humble"
+                // },
+                // {
+                //     "localRoot": "${workspaceFolder}/src/robot_arm/arm_client_rim",
+                //     "remoteRoot": "/home/athena/csirois/git/adl-ros2/build_humble/arm_client_rim"
+                // },
+                // {
+                //     "localRoot": "${workspaceFolder}/src/robot_arm/arm_client_rim",
+                //     "remoteRoot": "/home/athena/csirois/git/adl-ros2/install_humble/arm_client_rim"
+                // },
+                // {
+                //     "localRoot": "${workspaceFolder}/",
+                //     "remoteRoot": "/home/athena/csirois/git/adl-ros2/"
+                // }
+            ]
+        },
+        {
+            "name": "Python: haptic stability bench",
+            "type": "debugpy",
+            "request": "launch",
+            // "program": "${workspaceFolder}/python/rim_teleop/src/rim_teleop/main.py",
+            "program": "${workspaceFolder}/python/rim_teleop/examples/stability_bench.py",
+            "python": "${workspaceFolder}/.pixi/envs/humble/bin/python",
+            "pythonArgs": [
+                "-Xfrozen_modules=off", // To speed up debugger launch
+            ],
+            // "preLaunchTask": "gen-vscode-env",
+            "envFile": "${workspaceFolder}/.vscode/.env.humble",
+            "env": {
+                "PYDEVD_DISABLE_FILE_VALIDATION": "1" // To speed up debugger launch
+            },
+            "console": "internalConsole",
+            "args": [
+                "--stiffness",
+                "1000",
+                "--damping",
+                "0",
+                "--rate",
+                "1000",
+                "--duration",
+                "1000",
+                "--viz",
+                "--contact-surface",
+                "0.0",
+            ],
+        },
     ]
 }

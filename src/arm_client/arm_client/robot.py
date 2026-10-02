@@ -1,6 +1,7 @@
 """Provides a client to control the franka robot. It is the easiest way to control the robot using ROS2."""
 
 import threading
+import time
 from dataclasses import dataclass
 from typing import Any, List, Sequence
 
@@ -8,7 +9,8 @@ import numpy as np
 import rclpy
 import rclpy.executors
 from builtin_interfaces.msg import Duration
-from geometry_msgs.msg import PoseStamped, WrenchStamped, TwistStamped
+from franka_msgs.msg import FrankaRobotState
+from geometry_msgs.msg import PoseStamped, TwistStamped, WrenchStamped
 from numpy.typing import NDArray
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.node import Node
@@ -26,8 +28,6 @@ from arm_client.planning.waypoints import generate_linear_waypoints
 from arm_client.robot_config import FR3Config, RobotConfig
 from arm_client.utils.callback_monitor import CallbackMonitor
 from arm_interfaces.msg import CartesianTrajectory
-
-import time
 
 
 @dataclass
@@ -136,6 +136,10 @@ class Robot:
 
         self.config = robot_config if robot_config else FR3Config()
 
+        # self.config.home_config = np.array(
+        #     [0, -np.pi / 4, 0, -3 * np.pi / 4, 0, np.pi, np.pi / 4],
+        # )
+
         self._prefix = f"{namespace}_" if namespace else ""
 
         self.controller_switcher_client = ControllerSwitcherClient(self.node)
@@ -172,6 +176,14 @@ class Robot:
         self._target_wrench = None
         self._target_twist = None
         self._current_wrench = None  # added current wrench
+        self._current_wrench_filtered: dict | None = None
+        self._wrench_filter_alpha: float | None = None
+        self._tau_ext_current: np.ndarray | None = None
+
+        self._last_pose_update_time: float | None = None
+        self._last_joint_update_time: float | None = None
+        self._last_twist_update_time: float | None = None
+        self._last_wrench_update_time: float | None = None
 
         # Flag to disable target_pose publishing during trajectory execution
         self._trajectory_mode_active = False
@@ -188,7 +200,7 @@ class Robot:
             CartesianTrajectory, self.config.target_trajectory_topic, qos_profile_system_default
         )
         self._target_wrench_publisher = self.node.create_publisher(
-            WrenchStamped, "target_wrench", qos_profile_system_default
+            WrenchStamped, self.config.target_wrench_topic, qos_profile_system_default
         )
         self._target_joint_publisher = self.node.create_publisher(
             JointState, self.config.target_joint_topic, qos_profile_system_default
@@ -219,6 +231,22 @@ class Robot:
             WrenchStamped,
             self.config.current_wrench_topic,
             self._callback_monitor.monitor(f"{namespace.capitalize()} Current Wrench", self._callback_current_wrench),
+            qos_profile_sensor_data,
+            callback_group=ReentrantCallbackGroup(),
+        )
+        # Franka robot state — provides tau_ext_hat_filtered (momentum observer external torque estimate)
+        self.node.create_subscription(
+            FrankaRobotState,
+            self.config.franka_robot_state_topic,
+            self._callback_monitor.monitor(f"{namespace.capitalize()} Robot State", self._callback_robot_state),
+            qos_profile_sensor_data,
+            callback_group=ReentrantCallbackGroup(),
+        )
+        # end-effector twist
+        self.node.create_subscription(
+            TwistStamped,
+            self.config.current_twist_topic,
+            self._callback_monitor.monitor(f"{namespace.capitalize()} Current Twist", self._callback_current_twist),
             qos_profile_sensor_data,
             callback_group=ReentrantCallbackGroup(),
         )
@@ -277,6 +305,7 @@ class Robot:
         """Lazy-loaded Pyroki robot instance."""
         if not hasattr(self, "_pyroki_robot"):
             import pyroki as pk
+
             from arm_client.planning.ik_pyroki import load_fr3_urdf
 
             self._pyroki_robot = pk.Robot.from_urdf(load_fr3_urdf())
@@ -305,17 +334,61 @@ class Robot:
         return self._current_pose.copy()
 
     @property
-    def end_effector_wrench(self) -> dict:
-        """Get the current wrench applied at the end effector.
+    def end_effector_external_wrench(self) -> dict:
+        """Get the external wrench at the end effector, filtered if a filter is configured.
+
+        Returns the low-pass filtered wrench when configure_wrench_filter() has been called
+        and data is available; otherwise returns the raw wrench.
+
+        Read from `self.config.current_wrench_topic` (default: "/fr3/franka_robot_state_broadcaster/external_wrench_in_base_frame")
 
         Returns:
-            dict: The current wrench applied at the end effector, or None if not available.
+            dict: External wrench with 'force' and 'torque' numpy arrays.
+        """
+        if self._current_wrench is None:
+            raise RuntimeError(
+                "The robot has not received any wrenches yet. Run wait_until_ready() before running anything else."
+            )
+        if self._wrench_filter_alpha is not None and self._current_wrench_filtered is not None:
+            return self._current_wrench_filtered.copy()
+        return self._current_wrench.copy()
+
+    @property
+    def end_effector_external_wrench_raw(self) -> dict:
+        """Get the raw (unfiltered) external wrench at the end effector.
+
+        Returns:
+            dict: Raw wrench with 'force' and 'torque' numpy arrays.
         """
         if self._current_wrench is None:
             raise RuntimeError(
                 "The robot has not received any wrenches yet. Run wait_until_ready() before running anything else."
             )
         return self._current_wrench.copy()
+
+    def configure_wrench_filter(self, alpha: float) -> None:
+        """Configure a first-order IIR low-pass filter for end_effector_external_wrench.
+
+        Args:
+            alpha: Weight on the new measurement in [0, 1].
+                   1.0 = no filtering (pass-through); smaller values give heavier smoothing.
+                   Typical: 0.1 ≈ 17 Hz cutoff at 1 kHz update rate.
+        """
+        self._wrench_filter_alpha = float(np.clip(alpha, 0.0, 1.0))
+        self._current_wrench_filtered = None
+
+    @property
+    def end_effector_twist(self) -> Twist:
+        """Get the current end-effector twist.
+
+        Returns:
+            Twist: The current end-effector twist, or None if not available.
+        """
+        if self._current_twist is None:
+            raise RuntimeError(
+                "The robot has not received any twists yet. Run wait_until_ready() before running anything else."
+            )
+        return self._current_twist.copy()
 
     @property
     def target_pose(self) -> Pose:
@@ -386,7 +459,7 @@ class Robot:
     def tau(self) -> NDArray:
         """Get the current joint torques of the robot.
 
-        Returns:
+        # Returns:
             numpy.ndarray: Copy of current joint torques, or None if not available.
         """
         if self._tau_current is None:
@@ -394,6 +467,20 @@ class Robot:
                 "The robot has not received any joints yet. Run wait_until_ready() before running anything else."
             )
         return self._tau_current.copy()
+
+    @property
+    def external_joint_torques(self) -> NDArray:
+        """Get the external joint torques from the Franka momentum observer (tau_ext_hat_filtered).
+
+        These are the contact/external torques only — gravity, friction, and control torques
+        are excluded. Use this (not tau) as tau_ext in the RIM DynModel.
+
+        Raises:
+            RuntimeError: If FrankaRobotState has not been received yet.
+        """
+        if self._tau_ext_current is None:
+            raise RuntimeError("External joint torques not yet received from franka_robot_state_broadcaster.")
+        return self._tau_ext_current.copy()
 
     @property
     def tau_target(self) -> NDArray:
@@ -577,8 +664,30 @@ class Robot:
             msg (WrenchStamped): ROS message containing the current wrench.
         """
         self._current_wrench = self._wrench_msg_to_wrench(msg)
+
+        # Flip the franka convention, so it's the external wrench
+        self._current_wrench["force"] = -self._current_wrench["force"]
+        self._current_wrench["torque"] = -self._current_wrench["torque"]
+
+        if self._wrench_filter_alpha is not None:
+            a = self._wrench_filter_alpha
+            if self._current_wrench_filtered is None:
+                self._current_wrench_filtered = self._current_wrench.copy()
+            else:
+                self._current_wrench_filtered = {
+                    "force": a * self._current_wrench["force"] + (1.0 - a) * self._current_wrench_filtered["force"],
+                    "torque": a * self._current_wrench["torque"] + (1.0 - a) * self._current_wrench_filtered["torque"],
+                }
+
+        self._last_wrench_update_time = time.time()
         if self._target_wrench is None:
-            self._target_wrench = self._current_wrench.copy()
+            self._target_wrench = {"force": [0.0, 0.0, 0.0], "torque": [0.0, 0.0, 0.0]}
+
+    def _callback_robot_state(self, msg: FrankaRobotState) -> None:
+        efforts = msg.tau_ext_hat_filtered.effort
+        n = self.nq
+        if len(efforts) >= n:
+            self._tau_ext_current = np.array(efforts[:n], dtype=float)
 
     def _callback_current_pose(self, msg: PoseStamped):
         """Update the current pose from a ROS message.
@@ -590,8 +699,20 @@ class Robot:
             msg (PoseStamped): ROS message containing the current pose.
         """
         self._current_pose = self._pose_msg_to_pose(msg)
+        self._last_pose_update_time = time.time()
         if self._target_pose is None:
             self._target_pose = self._current_pose.copy()
+
+    def _callback_current_twist(self, msg: TwistStamped):
+        """Update the current end-effector twist from a ROS message.
+
+        Args:
+            msg (TwistStamped): ROS message containing end-effector twist.
+        """
+        self._current_twist = self._twist_msg_to_twist(msg)
+        self._last_twist_update_time = time.time()
+        if self._target_twist is None:
+            self._target_twist = self._current_twist.copy()
 
     def _callback_current_joint(self, msg: JointState):
         """Update the current joint state (position, velocity and torque) from a ROS message.
@@ -631,6 +752,17 @@ class Robot:
 
         if self._tau_target is None:
             self._tau_target = self._tau_current.copy()
+
+        self._last_joint_update_time = time.time()
+
+    def get_state_update_times(self) -> dict[str, float | None]:
+        """Return last update timestamps (unix seconds) for key robot streams."""
+        return {
+            "pose": self._last_pose_update_time,
+            "joint": self._last_joint_update_time,
+            "twist": self._last_twist_update_time,
+            "wrench": self._last_wrench_update_time,
+        }
 
     # =======================
     # MARK: Utilities
@@ -719,6 +851,12 @@ class Robot:
         msg.twist.angular.x, msg.twist.angular.y, msg.twist.angular.z = twist.angular
 
         return msg
+
+    def _twist_msg_to_twist(self, msg: TwistStamped) -> Twist:
+        """Convert a ROS2 twist msg to a twist."""
+        linear = np.array([msg.twist.linear.x, msg.twist.linear.y, msg.twist.linear.z])
+        angular = np.array([msg.twist.angular.x, msg.twist.angular.y, msg.twist.angular.z])
+        return Twist(linear=linear, angular=angular)
 
     def _parse_pose_or_position(self, position: List | NDArray | None = None, pose: Pose | None = None) -> Pose:
         """Parse a pose from a desired position or pose.
@@ -959,6 +1097,41 @@ class Robot:
         arm_joint_count = len(self.config.joint_names)
         return self._online_planning_sols[0, :arm_joint_count].copy()
 
+    def build_online_planning_step_trajectory(
+        self,
+        target_position: NDArray,
+        target_orientation: NDArray | Rotation,
+        trajectory_length: int = 5,
+        dt: float = 0.1,
+    ) -> PlannedJointTrajectory:
+        """Build a single-step `PlannedJointTrajectory` from online planning output.
+
+        This method provides a public API for teleoperation loops to obtain a
+        smooth immediate command point without depending on private attributes.
+        """
+        self.online_planning(
+            target_position=target_position,
+            target_orientation=target_orientation,
+            trajectory_length=trajectory_length,
+            dt=dt,
+        )
+
+        if not hasattr(self, "_online_planning_sols"):
+            raise RuntimeError("Online planning solutions are unavailable.")
+
+        arm_joint_count = len(self.config.joint_names)
+        horizon_positions = self._online_planning_sols[:, :arm_joint_count]
+        horizon_velocities = np.gradient(horizon_positions, dt, axis=0)
+        horizon_accelerations = np.gradient(horizon_velocities, dt, axis=0)
+
+        return PlannedJointTrajectory(
+            joint_names=self.config.joint_names,
+            time_from_start=[dt],
+            joint_positions=horizon_positions[:1],
+            joint_velocities=horizon_velocities[:1],
+            joint_accelerations=horizon_accelerations[:1],
+        )
+
     def execute_sequence(
         self,
         steps: Sequence[Any],
@@ -1028,8 +1201,6 @@ class Robot:
             raise ValueError("Trajectory times must be strictly increasing")
 
         shifted_times = [t + settle_time for t in original_times]
-        duration = original_times[-1]
-
         first_q = np.array(trajectory.joint_positions[0], dtype=float)
         last_q = np.array(trajectory.joint_positions[-1], dtype=float)
         first_dq = np.array(trajectory.joint_velocities[0], dtype=float)
@@ -1161,7 +1332,7 @@ class Robot:
         if time_to_move is None:
             time_to_move = float(distance / speed)
 
-        print(f"[debug] Moving to target pose {desired_pose} with time_to_move: {time_to_move} sec")
+        # print(f"[debug] Moving to target pose {desired_pose} with time_to_move: {time_to_move} sec")
 
         active_controller = self.controller_switcher_client.get_active_controller()
         if active_controller is not None and self._is_joint_controller(active_controller):

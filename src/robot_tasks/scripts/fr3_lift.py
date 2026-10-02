@@ -1,23 +1,20 @@
-import rclpy
-from robot_arm_client.FrankaArm import FrankaArm
-from robot_arm_client.teleop_node import TeleopNode
-from rclpy.duration import Duration
 import argparse
-from rclpy.action import ActionClient
-from arm_interfaces.action import PegInHole, RlAgent
+import time
+from datetime import datetime
+from pathlib import Path
 
 import numpy as np
-from numpy import pi as PI
-
-import time
-import pinocchio as pin
-from pathlib import Path
-from ament_index_python.packages import get_package_share_directory
-from tf2_ros import TransformBroadcaster, StaticTransformBroadcaster
-from geometry_msgs.msg import TransformStamped
 import pandas as pd
-from datetime import datetime
-import signal
+import pinocchio as pin
+import rclpy
+from geometry_msgs.msg import TransformStamped
+from numpy import pi as PI
+from rclpy.action import ActionClient
+from rclpy.duration import Duration
+from robot_arm_client.FrankaArm import FrankaArm
+from tf2_ros import StaticTransformBroadcaster
+
+from arm_interfaces.action import RlAgent
 
 # Experiment parameters
 OBJECT_POSITIONS = [

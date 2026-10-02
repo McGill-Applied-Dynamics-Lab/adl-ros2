@@ -1,11 +1,13 @@
-import time
-import numpy as np
-from scipy.spatial.transform import Rotation as R
-from arm_client.robot import Robot, Pose, Twist
-from arm_client import CONFIG_DIR
-from pathlib import Path
 import pickle
+import time
+from pathlib import Path
+
+import numpy as np
+from arm_client.robot import Pose, Robot, Twist
+from scipy.spatial.transform import Rotation as R
 from waveguide_gripper_grid_generator import fetch_landmarks
+
+from arm_client import CONFIG_DIR
 
 SETTLE_SEC = 2.00  # wait time after moves (s)
 TRAJ_FREQ = 10.0  # Hz
@@ -19,7 +21,7 @@ def probe(
     probe_time: float,
     traj_freq: float = 5.0,
     fixed_ori: R | None = None,
-    probe_func: str = 'cos'
+    probe_func: str = "cos",
 ):
     """
     Complete plunge and retract motion.
@@ -54,10 +56,10 @@ def probe(
     # Include the endpoint (k = 0..N)
     for k in range(N + 1):
         s = k / N  # 0..1
-        if probe_func == 'cos':
+        if probe_func == "cos":
             z = z_init + depth / 2 * (np.cos(2 * np.pi * s) - 1)
-        elif probe_func == 'linear':
-            z = z_init + depth * (np.abs(2*s - 1) - 1)
+        elif probe_func == "linear":
+            z = z_init + depth * (np.abs(2 * s - 1) - 1)
         t = k * dt
 
         target_position = np.array([start_xyz[0], start_xyz[1], z], dtype=float)
@@ -81,7 +83,7 @@ def probe(
     t_min = 0.0
     z_min = z_init
     while robot.wait_for_trajectory_completion(probe_time, timeout_margin=0.5):
-        ee_force = robot.end_effector_wrench["force"]
+        ee_force = robot.end_effector_external_wrench["force"]
         ee_pose = robot.end_effector_pose
         time_stamp = time.perf_counter() - t0  # time since trajectory start
 
@@ -120,9 +122,7 @@ def main():
 
     # Load landmark file
     PROJECT_ROOT = Path(__file__).resolve().parent
-    landmark_file = (
-        PROJECT_ROOT / "results" / "grids" / "landmarks.txt"
-    )
+    landmark_file = PROJECT_ROOT / "results" / "grids" / "landmarks.txt"
 
     # Check if landmark file exists
     if not landmark_file.exists():
@@ -142,9 +142,7 @@ def main():
 
     # Check if grid file exists
     if not grid_file.exists():
-        raise FileNotFoundError(
-            f"Grid file not found: {grid_file}. Please run grid_generator.py first."
-        )
+        raise FileNotFoundError(f"Grid file not found: {grid_file}. Please run grid_generator.py first.")
 
     with open(grid_file, "rb") as f:
         grids = pickle.load(f)
@@ -196,7 +194,7 @@ def main():
             probe_time=PROBE_TIME,
             traj_freq=TRAJ_FREQ,
             fixed_ori=BASE_ORI,
-            probe_func='cos'
+            probe_func="cos",
         )
 
         # Convert Pose objects to numpy arrays for saving
@@ -206,10 +204,7 @@ def main():
         # --- Store results ---
         exp_dict["ts"].append(ts)
         # Store numpy arrays instead of Pose objects
-        exp_dict["ee_poses"].append({
-            "positions": ee_positions,
-            "orientations": ee_orientations
-        })
+        exp_dict["ee_poses"].append({"positions": ee_positions, "orientations": ee_orientations})
         exp_dict["ee_forces"].append(ee_forces)  # already numpy arrays
         print("\tProbe complete.")
 

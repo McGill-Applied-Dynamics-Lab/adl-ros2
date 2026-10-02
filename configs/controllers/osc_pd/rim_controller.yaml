@@ -1,0 +1,45 @@
+# controller: OSC PD Controller
+# Default parameters for the OSC PD controller
+gains.k_pos_x: 800.0
+gains.k_pos_y: 800.0
+gains.k_pos_z: 800.0
+
+gains.d_pos_x: -1.0
+gains.d_pos_y: -1.0
+gains.d_pos_z: -1.0
+
+gains.k_rot_x: 30.0
+gains.k_rot_y: 30.0
+gains.k_rot_z: 10.0   # wrist spin — irrelevant for z-axis interface; keep low to avoid ff cross-coupling oscillation
+
+gains.d_rot_x: -1.0   # auto-damp: 2*sqrt(k * Lambda_ii)
+gains.d_rot_y: -1.0
+gains.d_rot_z: -1.0
+
+# -- EMA Filters (0.0: Max filtering, 1.0: No filtering) --
+# filter.joint_targets: 1.0  # No filtering
+filter.target_pose: 0.8  # No filtering
+filter.target_twist: 1.0  # No filtering
+
+filter.joint_velocity: 0.3  # No filtering
+filter.output_torque: 0.7  # No filtering
+
+
+
+
+nullspace.damping: 0.0  # Joint-space damping in redundant DOFs (N·m·s/rad)
+
+workspace.force_limit: 90.0  # Maximum allowed force magnitude (N) (at EE)
+workspace.torque_limit: 10.0  # Maximum allowed torque magnitude (Nm) (at EE)
+
+tool.length: -0.06 # length of the tool attached to the flange, in meters
+
+feedforward.enabled: true   # Set to true to use feedforward wrench
+feedforward.timeout_ticks: 100  # Zero ff after 100 ms without a new wrench msg
+
+log.enabled: true
+log.timing: true
+log.robot_state: false  #  ee position, velocity, joint states, ...
+log.targets: true  # target pose
+log.virtual_coupling: false  # interface variables and forces
+log.controller_parameters: true  # Gains

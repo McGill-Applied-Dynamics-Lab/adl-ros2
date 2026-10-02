@@ -1,27 +1,30 @@
 #!/usr/bin/env python3
-import time
-import numpy as np
-from scipy.spatial.transform import Rotation as R
-from arm_client.robot import Robot, Pose, Twist
-from arm_client import CONFIG_DIR
-from pathlib import Path
 import pickle
-from waveguide_gripper_grid_generator import fetch_landmarks
 
 # -------------------- ROS/acoustic imports --------------------
 import threading
+import time
 from collections import deque
+from pathlib import Path
+
+import numpy as np
 import rclpy
-from rclpy.node import Node
+from arm_client.robot import Pose, Robot, Twist
 from rclpy.context import Context
-from scipy.signal import butter, filtfilt
-from acoustic_sensing.msg import AcousticPacket
+from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
+from scipy.signal import butter, filtfilt
+from scipy.spatial.transform import Rotation as R
+from waveguide_gripper_grid_generator import fetch_landmarks
+
+from acoustic_sensing.msg import AcousticPacket
+from arm_client import CONFIG_DIR
+
 # -------------------------------------------------------------
 
 # Keep only ONE copy of these (your pasted code had duplicates)
 SETTLE_SEC = 1.00  # wait time after moves (s)
-TRAJ_FREQ = 10.0   # Hz
+TRAJ_FREQ = 10.0  # Hz
 
 
 # -------------------- Acoustic processing params --------------------
@@ -54,6 +57,7 @@ class AcousticRecorderNode(Node):
       - wait_for_first_packet(timeout)
       - last_rx_age_sec()
     """
+
     def __init__(self, topic="/acoustic/raw", max_packets=200000, context=None, store_raw=True):
         super().__init__("acoustic_recorder_node", context=context)
         # IMPORTANT: match publisher QoS (sensor data is typically BEST_EFFORT)
@@ -148,7 +152,7 @@ class AcousticRecorderNode(Node):
             if not self._seg_active:
                 return {"t0_perf": None, "bbb0_ms": None, "packets": []}
 
-            pkts = list(self._buf)[self._seg_start_len:]
+            pkts = list(self._buf)[self._seg_start_len :]
             t0 = float(self._seg_t0)
 
             bbb0 = int(pkts[0]["time_offset_ms"]) if len(pkts) else None
@@ -187,8 +191,8 @@ def probe(
     probe_time: float,
     traj_freq: float = 5.0,
     fixed_ori: R | None = None,
-    probe_func: str = 'cos',
-    t0_perf: float | None = None
+    probe_func: str = "cos",
+    t0_perf: float | None = None,
 ):
     """
     Complete plunge and retract motion.
@@ -211,9 +215,9 @@ def probe(
 
     for k in range(N + 1):
         s = k / N
-        if probe_func == 'cos':
+        if probe_func == "cos":
             z = z_init + depth / 2 * (np.cos(2 * np.pi * s) - 1)
-        elif probe_func == 'linear':
+        elif probe_func == "linear":
             z = z_init + depth * (np.abs(2 * s - 1) - 1)
         t = k * dt
 
@@ -237,7 +241,7 @@ def probe(
     t_min = 0.0
     z_min = z_init
     while robot.wait_for_trajectory_completion(probe_time, timeout_margin=0.5):
-        ee_force = robot.end_effector_wrench["force"]
+        ee_force = robot.end_effector_external_wrench["force"]
         ee_pose = robot.end_effector_pose
         time_stamp = time.perf_counter() - t0
 
@@ -314,9 +318,7 @@ def main():
 
         grid_file = PROJECT_ROOT / "results" / "grids" / "grids.pkl"
         if not grid_file.exists():
-            raise FileNotFoundError(
-                f"Grid file not found: {grid_file}. Please run grid_generator.py first."
-            )
+            raise FileNotFoundError(f"Grid file not found: {grid_file}. Please run grid_generator.py first.")
 
         with open(grid_file, "rb") as f:
             grids = pickle.load(f)
@@ -368,7 +370,7 @@ def main():
                 probe_time=PROBE_TIME,
                 traj_freq=TRAJ_FREQ,
                 fixed_ori=BASE_ORI,
-                probe_func='linear',
+                probe_func="linear",
                 t0_perf=t0_perf,
             )
 
