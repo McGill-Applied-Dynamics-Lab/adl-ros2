@@ -251,28 +251,34 @@ class Robot:
             callback_group=ReentrantCallbackGroup(),
         )
 
-        self.node.create_timer(
-            1.0 / 100.0,
-            self._callback_monitor.monitor(f"{namespace.capitalize()} Target Pose", self._callback_publish_target_pose),
-            ReentrantCallbackGroup(),
-        )
-        self.node.create_timer(
-            1.0 / self.config.publish_frequency,
-            self._callback_monitor.monitor(
-                f"{namespace.capitalize()} Target Joint", self._callback_publish_target_joint
+        # Periodic target republishing; paused in streaming mode (see set_target_streaming)
+        self._streaming = False
+        self._target_publish_timers = [
+            self.node.create_timer(
+                1.0 / 100.0,
+                self._callback_monitor.monitor(
+                    f"{namespace.capitalize()} Target Pose", self._callback_publish_target_pose
+                ),
+                ReentrantCallbackGroup(),
             ),
-            ReentrantCallbackGroup(),
-        )
-        self.node.create_timer(
-            1.0 / self.config.publish_frequency,
-            self._callback_publish_target_wrench,
-            ReentrantCallbackGroup(),
-        )
-        self.node.create_timer(
-            1.0 / self.config.publish_frequency,
-            self._callback_publish_target_twist,
-            ReentrantCallbackGroup(),
-        )
+            self.node.create_timer(
+                1.0 / self.config.publish_frequency,
+                self._callback_monitor.monitor(
+                    f"{namespace.capitalize()} Target Joint", self._callback_publish_target_joint
+                ),
+                ReentrantCallbackGroup(),
+            ),
+            self.node.create_timer(
+                1.0 / self.config.publish_frequency,
+                self._callback_publish_target_wrench,
+                ReentrantCallbackGroup(),
+            ),
+            self.node.create_timer(
+                1.0 / self.config.publish_frequency,
+                self._callback_publish_target_twist,
+                ReentrantCallbackGroup(),
+            ),
+        ]
 
         self._rate = self.node.create_rate(100)  # 100 Hz check rate for smooth data collection
 
@@ -587,6 +593,65 @@ class Robot:
         assert len(torque) == 3, "Torque must be a 3D vector"
 
         self._target_wrench = {"force": np.array(force), "torque": np.array(torque)}
+
+    @property
+    def streaming(self) -> bool:
+        """True while periodic target republishing is paused (see `set_target_streaming`)."""
+        return self._streaming
+
+    def set_target_streaming(self, enabled: bool) -> None:
+        """Pause or resume the periodic republishing of the targets.
+
+        By default the latest target pose, joint, wrench and twist are republished by timers
+        (pose at 100 Hz, the others at ``config.publish_frequency``). A caller that streams its
+        own targets at a chosen rate (e.g. haptic teleoperation) enables streaming mode, which
+        cancels those timers, and publishes with `publish_target`.
+
+        `publish_target` also stores what it sends, so leaving streaming mode resumes
+        republishing the last streamed targets, not older ones.
+
+        Args:
+            enabled (bool): True to pause the timers and stream with `publish_target`, False to
+                resume periodic republishing.
+        """
+        if enabled == self._streaming:
+            return
+        for timer in self._target_publish_timers:
+            if enabled:
+                timer.cancel()
+            else:
+                timer.reset()
+        self._streaming = enabled
+
+    def publish_target(
+        self,
+        pose: Pose | None = None,
+        twist: Twist | None = None,
+        force: List | NDArray | None = None,
+        torque: List | NDArray | None = None,
+    ) -> None:
+        """Publish targets immediately, and store them as the current targets.
+
+        Meant for streaming mode (see `set_target_streaming`). Only the given targets are
+        published: ``pose`` on ``target_pose``, ``twist`` on ``target_twist``, and the wrench on
+        ``target_wrench`` if ``force`` or ``torque`` is given (the other one defaults to zero).
+
+        Args:
+            pose (Pose, optional): Target end-effector pose (base frame).
+            twist (Twist, optional): Target end-effector twist (base frame).
+            force (list, optional): Feedforward force [fx, fy, fz] in N.
+            torque (list, optional): Feedforward torque [tx, ty, tz] in Nm.
+        """
+        if pose is not None:
+            self._target_pose = pose.copy()
+            self._trajectory_mode_active = False
+            self._target_pose_publisher.publish(self._pose_to_pose_msg(self._target_pose))
+        if twist is not None:
+            self._target_twist = twist.copy()
+            self._target_twist_publisher.publish(self._twist_to_twist_msg(self._target_twist))
+        if force is not None or torque is not None:
+            self.set_target_wrench(force=force, torque=torque)
+            self._target_wrench_publisher.publish(self._wrench_to_wrench_msg(self._target_wrench))
 
     def _is_joint_controller(self, controller_name: str) -> bool:
         """Return True if the controller name corresponds to a joint-space controller."""

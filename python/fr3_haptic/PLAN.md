@@ -43,14 +43,24 @@ along the axis. `PlantState.lam` is the operator-should-feel sign, i.e. its nega
 - [x] adl-python: declare `websockets` in `haptic_teleop` (submodule branch `feat/fr3-haptic`, not pushed); adl-python tests pass in the `humble` env (Python 3.12, 312 tests).
 - [ ] `CLAUDE.md`: update the RIM section for `fr3_haptic` (deferred to Phase 2; `main` has uncommitted edits there).
 
-### Phase 1 — FR3 plant adapter
-- `FR3Plant` state side: mailbox `(updates, PlantSample)`; `x_i`, `v_i` from EE state projected on the
-  interface axis (`pyrim.InterfaceFrame`); `λ` from `task_wrench`; `t_s` from the header stamp.
-- `FR3Plant` command side: `aim(x_l, v_l)` → `target_pose` + `target_twist` (other axes at home, orientation fixed);
-  `command(x_proxy, f_ff)` adds `target_wrench` for RIM / fixed-mass.
-- `FR3System(pyrim.SystemInterface)` wrapping `RobotModelAdapter` → `DynModel`.
-- Direct publishers: `Robot` needs a streaming mode that disables its 100 Hz / 50 Hz republish timers.
-- Staleness watchdog: stale plant sample → ramp haptic force to zero, freeze the robot target.
+### Phase 1 — FR3 plant adapter (`fr3_haptic/plant.py`)
+- [x] `FR3Plant` state side: `/fr3/osc/ee_state` + `/fr3/osc/task_wrench` paired by identical stamp into
+  `FR3PlantSample` (satisfies `haptic_teleop.PlantState`); mailbox `(updates, sample)`; `x_i`, `v_i` projected on
+  the interface frame; `lam = −project(task force)`; `t_s` = controller stamp; `rx_s` = local receive time.
+  Optional `sample_period_s` decimation to emulate a slower plant.
+- [x] `FR3Plant` command side: `aim(x_l, v_l)` → `target_pose` + `target_twist` (free axes and orientation from
+  `hold_pose`); `command(x, v, f_ff)` adds `target_wrench`; `freeze()`; optional interface limits.
+- [x] `FR3System(pyrim.SystemInterface)` over `RobotModelAdapter`.
+- [x] `Robot.set_target_streaming()` + `Robot.publish_target()` (arm_client): pause the republish timers and
+  publish immediately; streamed targets are stored, so leaving streaming does not resume older targets.
+- [x] `StalenessWatchdog`: force gain ramps to 0 when the sample age exceeds `max_age_s` (latching by default).
+- [x] franka-server `c63df93`: `osc_controller` publishes `ee_state` (`nav_msgs/Odometry`, same tick as `task_wrench`).
+- [ ] Hardware check (Phase 3 step 0): `ros2 topic hz /fr3/osc/ee_state` ≈ 1 kHz, pairing rate on the client,
+  executor load with two 1 kHz subscriptions in Python.
+
+Moved to Phase 2: set the `osc_controller` interface gains from the same config that builds the rendering
+method (so the server-side `K`, `D` cannot drift from what ZOH assumes), with decoupling off and wide limits.
+`FR3System` vs `FR3Plant` interface point: Pinocchio EE / tool tip vs libfranka `kEndEffector` — must match.
 
 ### Phase 2 — harness
 - One entry point mirroring adl-python `examples/04_i3_newton_fr3_coupling.py`: `Inverse3Device.settle_and_zero`
