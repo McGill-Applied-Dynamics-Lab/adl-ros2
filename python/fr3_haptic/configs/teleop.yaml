@@ -1,0 +1,55 @@
+# fr3_teleop defaults. Every key is a CLI flag's dest; the CLI overrides this file.
+#   pixi run -e humble fr3_teleop --conf python/fr3_haptic/configs/teleop.yaml [--force] [--method ...]
+
+method:
+  method: zoh                # zoh | linear | tdpa-zoh | tdpa-linear | proxy-rim | proxy-fixed-mass
+  kv: 500.0                  # coupling stiffness, world [N/m]; = osc_controller interface-axis stiffness
+  dv: 30.0                   # coupling damping, world [N·s/m]
+  linear_max_extrapolation: 1.0
+  tdpa_max_damping: 10.0
+  proxy_mass: 1.0
+  contact_surface: null      # proxy methods: wall on the interface axis [m], model interface point
+
+rates:
+  haptic_hz: 1000.0
+  plant_hz: 50.0             # target streaming + model updates
+  sample_hz: null            # plant samples kept; null = plant_hz, 0 = every controller tick (1 kHz)
+
+interface:
+  interface_axis: z
+  interface_min: null        # commanded interface position bounds [m], robot base frame
+  interface_max: null
+  free_axis_stiffness: 0.0   # handle spring keeping the hand on the axis [world N/m]
+  free_axis_damping: 0.0
+
+inverse3:
+  uri: ws://localhost:10001
+  axes: "y,-x,z"             # signed device axis per robot base axis
+  scale: 1.0                 # robot metres per device metre
+  force_gain: 0.1            # handle N per world N: felt stiffness = kv * scale * force_gain
+  max_i3_force: 3.0          # clamp at the handle [N]
+  vel_filter_hz: 8.0
+  force_ramp_s: 1.0
+
+safety:
+  energy_budget_mj: 0.0
+  saturation_abort_ms: 0.0
+  chatter_hz: 25.0
+  chatter_deadband_n: 1.0
+  guard_cooldown_s: 3.0
+  plant_max_age_ms: 50.0     # watchdog: freeze the robot and end the run past this
+  watchdog_ramp_ms: 100.0
+  feedforward_cap: 15.0
+
+robot:
+  namespace: fr3
+  controller: osc_controller
+  osc_params: python/fr3_haptic/configs/osc_teleop.yaml
+  ee_state_topic: /fr3/osc/ee_state
+  task_wrench_topic: /fr3/osc/task_wrench
+  tool_tip_offset: null      # proxy-rim: model interface point offset from fr3_hand_tcp [m]
+
+run:
+  seconds: 60.0
+  output_dir: /home/athena/csirois/data/franka/fr3_haptic
+  notes: ""

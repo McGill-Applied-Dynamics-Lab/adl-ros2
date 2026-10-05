@@ -15,9 +15,12 @@ Roles, matching adl-python ``examples/04_i3_newton_fr3_coupling.py``:
 - each [FR3PlantSample][] is built from ``/fr3/osc/ee_state`` and ``/fr3/osc/task_wrench``
   published by the same controller tick, paired by their identical header stamp.
 
-Threading: subscription callbacks run on the `Robot` executor and replace
-[FR3Plant.sample][] whole, as an ``(updates, sample)`` tuple. The haptic thread reads it without
-a lock and detects a fresh sample by the update counter, as in example 04.
+Threading: the two 1 kHz subscriptions live on the plant's own node, spun by its own
+``SingleThreadedExecutor`` thread. Not on the `Robot` node: rclpy's ``MultiThreadedExecutor``
+(which `Robot` uses) delivered only ~14 Hz of a 1 kHz best-effort topic on the lab PC, against
+the full 1 kHz with a single-threaded executor. Callbacks replace [FR3Plant.sample][] whole, as
+an ``(updates, sample)`` tuple; the haptic thread reads it without a lock and detects a fresh
+sample by the update counter, as in example 04.
 
 Clocks: ``t_s`` is the controller's stamp (franka-pc clock). It is only differenced against
 other stamps from the same clock. Staleness uses the local receive time (``rx_s``) instead,
@@ -35,7 +38,10 @@ from arm_client.robot import Pose, Robot, Twist
 from geometry_msgs.msg import WrenchStamped
 from nav_msgs.msg import Odometry
 from pyrim import DynModel, InterfaceFrame
+import rclpy
+from rclpy.executors import SingleThreadedExecutor
 from rclpy.qos import qos_profile_sensor_data
+from scipy.spatial.transform import Rotation
 
 from .adapters import RobotModelAdapter
 
@@ -58,6 +64,7 @@ class FR3PlantSample:
         rx_s: local ``time.monotonic()`` when the sample was completed [s].
         ee_position: ``(3,)`` measured EE position, base frame [m].
         ee_velocity: ``(3,)`` measured EE linear velocity, base frame [m/s].
+        ee_orientation: ``(4,)`` measured EE orientation quaternion ``(x, y, z, w)``, base frame.
         task_force: ``(3,)`` task force applied to the robot, base frame [N].
     """
 
@@ -68,7 +75,13 @@ class FR3PlantSample:
     rx_s: float
     ee_position: np.ndarray
     ee_velocity: np.ndarray
+    ee_orientation: np.ndarray
     task_force: np.ndarray
+
+    @property
+    def ee_pose(self) -> Pose:
+        """The measured EE pose, in the controller's own end-effector frame."""
+        return Pose(self.ee_position.copy(), Rotation.from_quat(self.ee_orientation))
 
 
 def _stamp_ns(msg) -> int:
@@ -85,13 +98,18 @@ class FR3Plant:
         robot: a ready `Robot` (``wait_until_ready`` done). Its node and executor are reused.
         frame: the interface frame; ``frame.dim`` is the method's ``dim``.
         hold_pose: the pose held on the axes the interface does not control, and the
-            orientation target. Usually the pose at the start of the run.
+            orientation target. ``None`` until set with [set_hold_pose][FR3Plant.set_hold_pose],
+            typically from the first sample (``wait_for_sample().ee_pose``), which is in the
+            controller's own end-effector frame.
         ee_state_topic: ``osc_controller`` EE state topic (``nav_msgs/Odometry``).
         task_wrench_topic: ``osc_controller`` task wrench topic (``WrenchStamped``).
         sample_period_s: keep at most one sample per this many seconds of controller time,
             to emulate a slower plant. 0 keeps every controller tick.
         interface_limits: ``(low, high)`` bounds on the commanded interface coordinate [m],
             applied to every component. ``None`` disables them.
+        record: keep every sample (after decimation) in [history][FR3Plant.history], for logging.
+        node: subscribe on this node, which the caller spins. ``None`` (the default) creates
+            the plant's own node and a single-threaded executor thread for it.
     """
 
     _MAX_PENDING = 16
@@ -100,20 +118,26 @@ class FR3Plant:
         self,
         robot: Robot,
         frame: InterfaceFrame,
-        hold_pose: Pose,
+        hold_pose: Pose | None = None,
         ee_state_topic: str = "/fr3/osc/ee_state",
         task_wrench_topic: str = "/fr3/osc/task_wrench",
         sample_period_s: float = 0.0,
         interface_limits: tuple[float, float] | None = None,
+        record: bool = False,
+        node=None,
     ) -> None:
         if interface_limits is not None and interface_limits[0] >= interface_limits[1]:
             raise ValueError(f"interface_limits must be (low, high) with low < high, got {interface_limits}")
         self._robot = robot
         self._frame = frame
-        self._hold_pose = hold_pose.copy()
+        self._hold_pose = None if hold_pose is None else hold_pose.copy()
         self._sample_period_ns = round(float(sample_period_s) * 1e9)
         self._limits = interface_limits
 
+        self._frozen_x: np.ndarray | None = None
+        self._record = record
+        self.history: list[FR3PlantSample] = []
+        """Every sample, in order, when ``record`` is set."""
         self.sample: tuple[int, FR3PlantSample] | None = None
         """Latest ``(updates, sample)``, replaced whole; ``None`` before the first one."""
 
@@ -124,12 +148,20 @@ class FR3Plant:
         self._pending_wrench: dict[int, WrenchStamped] = {}
 
         robot.set_target_streaming(True)
+        self._executor = None
+        self._spin_thread: threading.Thread | None = None
+        if node is None:
+            node = rclpy.create_node("fr3_plant")
+            self._executor = SingleThreadedExecutor()
+            self._executor.add_node(node)
+            self._spin_thread = threading.Thread(target=self._spin, name="fr3_plant_spin", daemon=True)
+        self._node = node
         self._subs = [
-            robot.node.create_subscription(Odometry, ee_state_topic, self._on_ee_state, qos_profile_sensor_data),
-            robot.node.create_subscription(
-                WrenchStamped, task_wrench_topic, self._on_task_wrench, qos_profile_sensor_data
-            ),
+            node.create_subscription(Odometry, ee_state_topic, self._on_ee_state, qos_profile_sensor_data),
+            node.create_subscription(WrenchStamped, task_wrench_topic, self._on_task_wrench, qos_profile_sensor_data),
         ]
+        if self._spin_thread is not None:
+            self._spin_thread.start()
 
     # ---------------------------------------------------------------- state side
 
@@ -137,6 +169,29 @@ class FR3Plant:
     def dim(self) -> int:
         """Interface dimension."""
         return self._frame.dim
+
+    @property
+    def hold_pose(self) -> Pose | None:
+        """The pose held on the free axes, and the orientation target."""
+        return None if self._hold_pose is None else self._hold_pose.copy()
+
+    def set_hold_pose(self, pose: Pose) -> None:
+        """Set the pose held on the free axes and the orientation target."""
+        self._hold_pose = pose.copy()
+
+    def wait_for_sample(self, timeout_s: float = 2.0, poll_s: float = 0.005) -> FR3PlantSample:
+        """Block until a sample arrives and return it.
+
+        Raises:
+            TimeoutError: if none arrives within ``timeout_s`` (is ``osc_controller`` active and
+                publishing ``ee_state`` and ``task_wrench``?).
+        """
+        deadline = time.monotonic() + timeout_s
+        while self.sample is None:
+            if time.monotonic() > deadline:
+                raise TimeoutError(f"no plant sample within {timeout_s} s")
+            time.sleep(poll_s)
+        return self.sample[1]
 
     def sample_age_s(self, now_s: float | None = None) -> float:
         """Seconds since the latest sample was received (local clock), ``inf`` before the first."""
@@ -176,6 +231,8 @@ class FR3Plant:
             sample = self._make_sample(ee, wrench, key * 1e-9)
             self._updates += 1
             self.sample = (self._updates, sample)
+            if self._record:
+                self.history.append(sample)
 
     def _store(self, pending: dict, key: int, msg) -> None:
         pending[key] = msg
@@ -184,6 +241,7 @@ class FR3Plant:
 
     def _make_sample(self, ee: Odometry, wrench: WrenchStamped, t_s: float) -> FR3PlantSample:
         p = ee.pose.pose.position
+        o = ee.pose.pose.orientation
         v = ee.twist.twist.linear
         f = wrench.wrench.force
         position = np.array([p.x, p.y, p.z])
@@ -197,6 +255,7 @@ class FR3Plant:
             rx_s=time.monotonic(),
             ee_position=position,
             ee_velocity=velocity,
+            ee_orientation=np.array([o.x, o.y, o.z, o.w]),
             task_force=force,
         )
 
@@ -222,13 +281,35 @@ class FR3Plant:
         """
         self._publish(x, np.zeros(self.dim) if v is None else v, f_ff)
 
+    @property
+    def frozen(self) -> bool:
+        """True after [freeze][FR3Plant.freeze], until [release][FR3Plant.release]."""
+        return self._frozen_x is not None
+
     def freeze(self) -> None:
-        """Hold the robot where it is: last measured interface position, zero velocity and force."""
-        latest = self.sample
-        x = latest[1].x_i if latest is not None else self._frame.project(self._hold_pose.position)
-        self._publish(x, np.zeros(self.dim), np.zeros(self.dim))
+        """Hold the robot where it is, with zero velocity and feedforward force.
+
+        The first call latches the last measured interface position (the hold pose before any
+        sample) and every call publishes that same target, so repeated calls do not let the
+        robot drift with its own tracking error.
+        """
+        if self._frozen_x is None:
+            latest = self.sample
+            if latest is not None:
+                self._frozen_x = latest[1].x_i.copy()
+            elif self._hold_pose is not None:
+                self._frozen_x = self._frame.project(self._hold_pose.position)
+            else:
+                return  # nothing measured or held yet: the controller still holds its activation pose
+        self._publish(self._frozen_x, np.zeros(self.dim), np.zeros(self.dim))
+
+    def release(self) -> None:
+        """Forget the frozen target; the next [aim][FR3Plant.aim] / [command][FR3Plant.command] takes over."""
+        self._frozen_x = None
 
     def _publish(self, x: np.ndarray, v: np.ndarray, f_ff: np.ndarray | None) -> None:
+        if self._hold_pose is None:
+            raise RuntimeError("FR3Plant has no hold pose: call set_hold_pose() before streaming targets")
         x = np.asarray(x, dtype=float)
         v = np.asarray(v, dtype=float).copy()
         if self._limits is not None:
@@ -243,11 +324,24 @@ class FR3Plant:
         force = None if f_ff is None else self._frame.lift(np.asarray(f_ff, dtype=float))
         self._robot.publish_target(pose=pose, twist=twist, force=force)
 
+    def _spin(self) -> None:
+        try:
+            self._executor.spin()
+        except Exception:  # noqa: BLE001 - the context is shut down under a spinning executor at exit
+            if rclpy.ok():
+                raise
+
     def close(self) -> None:
-        """Destroy the subscriptions and leave streaming mode."""
+        """Destroy the subscriptions (and the plant's own node), and leave streaming mode."""
         for sub in self._subs:
-            self._robot.node.destroy_subscription(sub)
+            self._node.destroy_subscription(sub)
         self._subs = []
+        if self._executor is not None:
+            self._executor.shutdown(timeout_sec=1.0)
+            if self._spin_thread is not None:
+                self._spin_thread.join(timeout=1.0)
+            self._node.destroy_node()
+            self._executor = None
         self._robot.set_target_streaming(False)
 
 

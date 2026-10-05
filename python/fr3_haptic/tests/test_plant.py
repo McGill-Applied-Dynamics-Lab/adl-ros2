@@ -47,7 +47,7 @@ HOLD = Pose(np.array([0.4, 0.1, 0.3]), Rotation.from_euler("x", 180, degrees=Tru
 
 def make_plant(**kwargs) -> tuple[FR3Plant, FakeRobot]:
     robot = FakeRobot()
-    plant = FR3Plant(robot, InterfaceFrame.from_direction([0.0, 0.0, 1.0]), HOLD, **kwargs)
+    plant = FR3Plant(robot, InterfaceFrame.from_direction([0.0, 0.0, 1.0]), HOLD, node=robot.node, **kwargs)
     return plant, robot
 
 
@@ -98,10 +98,19 @@ def test_pairs_halves_by_stamp_in_either_order():
     np.testing.assert_allclose(sample.v_i, [-0.1])
     np.testing.assert_allclose(sample.lam, [-3.0])  # operator-should-feel sign
     np.testing.assert_allclose(sample.task_force, [1.0, 2.0, 3.0])
+    np.testing.assert_allclose(sample.ee_pose.position, [0.4, 0.1, 0.25])
     assert sample.t_s == pytest.approx(5.000000123)
 
     feed(robot, wrench=wrench_msg(stamp + 1_000_000), ee=ee_msg(stamp + 1_000_000))
     assert plant.sample[0] == 2
+    assert plant.history == []  # record is off by default
+
+
+def test_record_keeps_every_sample():
+    plant, robot = make_plant(record=True)
+    for k in range(5):
+        feed(robot, ee=ee_msg(k), wrench=wrench_msg(k))
+    assert [s.t_s for s in plant.history] == pytest.approx([k * 1e-9 for k in range(5)])
 
 
 def test_unmatched_and_stale_halves_are_not_paired():
@@ -172,12 +181,35 @@ def test_freeze_holds_last_measured_position():
     plant, robot = make_plant()
     plant.freeze()  # no sample yet: hold pose
     np.testing.assert_allclose(robot.published[-1]["pose"].position, HOLD.position)
+    plant.release()
     feed(robot, ee=ee_msg(1, position=(0.4, 0.1, 0.22)), wrench=wrench_msg(1))
     plant.freeze()
+    assert plant.frozen
     cmd = robot.published[-1]
     np.testing.assert_allclose(cmd["pose"].position[2], 0.22)
     np.testing.assert_allclose(cmd["twist"].linear, 0.0)
     np.testing.assert_allclose(cmd["force"], 0.0)
+    # Latched: the robot sagging does not move the frozen target
+    feed(robot, ee=ee_msg(2, position=(0.4, 0.1, 0.20)), wrench=wrench_msg(2))
+    plant.freeze()
+    np.testing.assert_allclose(robot.published[-1]["pose"].position[2], 0.22)
+    plant.release()
+    assert not plant.frozen
+
+
+def test_hold_pose_from_first_sample():
+    robot = FakeRobot()
+    plant = FR3Plant(robot, InterfaceFrame.from_direction([0.0, 0.0, 1.0]), node=robot.node)
+    with pytest.raises(RuntimeError):
+        plant.aim(np.array([0.2]), np.array([0.0]))
+    plant.freeze()  # nothing to hold yet: no-op, no target published
+    assert robot.published == []
+    with pytest.raises(TimeoutError):
+        plant.wait_for_sample(timeout_s=0.01)
+    feed(robot, ee=ee_msg(1, position=(0.5, -0.1, 0.4)), wrench=wrench_msg(1))
+    plant.set_hold_pose(plant.wait_for_sample().ee_pose)
+    plant.aim(np.array([0.3]), np.array([0.0]))
+    np.testing.assert_allclose(robot.published[-1]["pose"].position, [0.5, -0.1, 0.3])
 
 
 def test_close_unsubscribes_and_leaves_streaming():

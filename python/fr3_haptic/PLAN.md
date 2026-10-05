@@ -62,12 +62,25 @@ Moved to Phase 2: set the `osc_controller` interface gains from the same config 
 method (so the server-side `K`, `D` cannot drift from what ZOH assumes), with decoupling off and wide limits.
 `FR3System` vs `FR3Plant` interface point: Pinocchio EE / tool tip vs libfranka `kEndEffector` — must match.
 
-### Phase 2 — harness
-- One entry point mirroring adl-python `examples/04_i3_newton_fr3_coupling.py`: `Inverse3Device.settle_and_zero`
-  (origin at TCP), `RenderingConfigs.build`, `gc_paused`, force ramp, `SafetyMonitor`, deadman.
-- Logging: `TickLog` (haptic) + plant streams via `experiment_logger`. YAML config via `--conf`.
+### Phase 2 — harness (`fr3_haptic/session.py`, `fr3_haptic/teleop.py`, `fr3_teleop` entry point)
+- [x] `TeleopSession`: haptic tick (device → method → force × start ramp × watchdog gain, guard cooldown,
+  optional free-axis handle spring, passivity observer + guard, `TickLog`) and plant tick (model update for
+  `proxy-rim`, `aim` for coupling methods, `command(proxy + tool_correction, v, −f clamped)` for proxy methods,
+  freeze + end of run on a watchdog trip). Hardware injected; tested with fakes.
+- [x] `fr3_teleop` CLI (+ `--conf configs/teleop.yaml`): safe setup order — streaming on *before* the controller
+  switch; hold pose and device origin from the controller's own first `ee_state`; controller gains set from the
+  same `kv`, `dv` that build the method (coupling methods), on top of `configs/osc_teleop.yaml`; forces off
+  unless `--force`. Logs `haptic` (every tick), `plant` (every sample), `command` streams + run metadata.
+- [x] `proxy-rim`: leader origin shifted onto the model interface point; target shifted back by
+  `tool_correction = x_i(ee_state) − x_i(model)`.
+- [x] Measured (local DDS, isolated domain): rclpy `MultiThreadedExecutor` delivers ~14 Hz of a 1 kHz topic;
+  `FR3Plant` now spins its own node on a `SingleThreadedExecutor` → 1000 Hz paired, gaps p99 1.1 ms.
+- [ ] Deadman (Inverse3 has no button; keyboard or foot pedal?).
+- [ ] `CLAUDE.md` RIM section → `fr3_haptic` (deferred: `main` has uncommitted edits there).
 
 ### Phase 3 — bring-up and system ID (hardware)
+0. Without `--force`: `ros2 topic hz /fr3/osc/ee_state`; the arm follows the handle; check the printed
+   plant age and haptic rate; GIL load of haptic loop + plant spin + `Robot` executor in one process.
 1. Loop jitter, end-to-end `T_eff` (leader → target → measured), handle `b` → `K_max = 2b/T_eff`.
 2. ZOH, low `K`, free space. 3. Linear, TDPA. 4. RIM, fixed-mass against the table.
 
@@ -102,6 +115,9 @@ API differences between the former local `pyrim` fork and adl-python `pyrim`, an
   `haptic_teleop.FixedMassProxyRendering` seeds once from the leader — a different ablation condition.
 
 ## Open questions
+
+- `Robot` itself spins on a `MultiThreadedExecutor`: its own subscriptions (joint states, pose, wrench) may be
+  far below their publish rate too. Worth measuring for the rest of `arm_client`.
 
 - Fixed-mass condition for the study: adl-python's (seed once from the leader) or the legacy one (re-seed from the plant)?
 - `DynModel` for the real arm: gravity-compensated plant (`f_ext` = measured external torque only), or the

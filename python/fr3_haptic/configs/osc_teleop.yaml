@@ -1,0 +1,45 @@
+# controller: OSC Controller (fr3_controllers/OSCController), haptic teleoperation preset.
+# Loaded by fr3_teleop (--osc-params) before it sets the interface-axis gains itself:
+# for the coupling methods, gains.{k,d}_pos_<interface axis> become the coupling kv, dv.
+# inertia_decoupling is off, so gains are in N/m, N·s/m, Nm/rad, Nm·s/rad.
+# Damping -1.0 = critically damped from the task-space inertia (2*sqrt(k*Lambda_ii)).
+
+control.inertia_decoupling: false
+control.partial_inertia_decoupling: false
+control.coriolis_compensation: true
+
+# Free axes and orientation: stiff hold. The interface axis value is overridden per run.
+gains.k_pos_x: 1500.0
+gains.k_pos_y: 1500.0
+gains.k_pos_z: 1000.0
+gains.d_pos_x: -1.0
+gains.d_pos_y: -1.0
+gains.d_pos_z: -1.0
+gains.k_rot_x: 60.0
+gains.k_rot_y: 60.0
+gains.k_rot_z: 60.0
+gains.d_rot_x: -1.0
+gains.d_rot_y: -1.0
+gains.d_rot_z: -1.0
+
+feedforward.twist: true
+feedforward.accel: false
+feedforward.wrench: false
+feedforward.timeout_ticks: 100
+
+nullspace.stiffness: 10.0
+nullspace.damping: -1.0
+nullspace.posture_from_activation: true
+
+# Wide error clamp: the coupling must stay a linear spring over the teleop range,
+# or the methods' model of it is wrong. The force limit still bounds the pull.
+limits.max_position_error: 0.3
+limits.max_rotation_error: 0.3
+limits.force_limit: 80.0
+limits.torque_limit: 15.0
+limits.delta_tau_max: 1.0
+
+filter.joint_velocity: 1.0
+filter.target_pose: 1.0
+
+log.enabled: false

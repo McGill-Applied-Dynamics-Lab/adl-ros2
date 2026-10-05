@@ -80,8 +80,8 @@ class ParametersClient:
         t_start = time.time()
         while (
             not self.get_params_client.service_is_ready()
-            and not self.list_params_client.service_is_ready()
-            and not self.set_parameters_client.service_is_ready()
+            or not self.list_params_client.service_is_ready()
+            or not self.set_parameters_client.service_is_ready()
         ):
             time.sleep(0.01)
             if time.time() - t_start > timeout_sec:
