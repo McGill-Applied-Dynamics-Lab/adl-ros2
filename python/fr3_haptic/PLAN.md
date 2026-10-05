@@ -19,16 +19,64 @@ then harden one method into a daily-use teleop.
 | Timing | Both PCs use `systemd-timesyncd` (NTP, ~ms). Do not compare stamps across machines: header stamps are used for ordering and staleness only; latency is measured client-side as round trip. |
 | adl-python | Git submodule at `external/adl-python` (branch `dev`), installed editable. |
 
-## Data flow
+## Architecture
 
+What runs where, at what rate, and what crosses each boundary. Solid arrows carry data every
+tick of the sender; dashed arrows are in-process mailboxes (a Python attribute replaced whole,
+read without a lock).
+
+```mermaid
+flowchart LR
+    subgraph CLIENT["Client PC"]
+        HAPLY["Haply Inlet service<br/>(separate process)"]
+
+        subgraph PROC["fr3_teleop process · Python 3.12 · one GIL"]
+            direction TB
+            HAPTIC["<b>Haptic thread</b> · 1 kHz<br/>run_loop + RateTicker<br/>Inverse3Device.read/write<br/>RenderingMethod: add_leader_state,<br/>update_plant, update_model, step, haptic_force<br/>× start ramp × watchdog gain · guard · TickLog"]
+            PLANTLOOP["<b>Plant loop</b> (main thread) · plant_hz 50–1000 Hz<br/>coupling: FR3Plant.aim(x_l, v_l)<br/>proxy: FR3Plant.command(x_proxy + tool_corr, v, −f)<br/>proxy-rim: FR3System.update → DynModel (Pinocchio)<br/>watchdog tripped → freeze + end run"]
+            SPIN["<b>fr3_plant node</b> · SingleThreadedExecutor thread<br/>ee_state + task_wrench, ~1 kHz each<br/>paired by stamp → FR3PlantSample<br/>(decimated to sample_hz)"]
+            ROBOT["<b>Robot node</b> · MultiThreadedExecutor thread<br/>joint_states, current_pose, … (for the model)<br/>publish_target · controller switch · params<br/>streaming mode: republish timers off"]
+
+            HAPTIC -. "session.leader (x_l, v_l)" .-> PLANTLOOP
+            SPIN -. "plant.sample (updates, sample)" .-> HAPTIC
+            PLANTLOOP -. "session.model (updates, DynModel)<br/>proxy-rim only" .-> HAPTIC
+            ROBOT -. "q, dq" .-> PLANTLOOP
+            PLANTLOOP -- "publish_target()" --> ROBOT
+        end
+
+        HAPLY <-- "websocket localhost:10001<br/>1 kHz request/response<br/>position, velocity ⇄ force" --> HAPTIC
+    end
+
+    subgraph SERVER["franka-pc · ros2_control 1 kHz · C++"]
+        OSC["<b>osc_controller</b> · 1 kHz<br/>coupling axis: K = kv, D = dv (N/m)<br/>free axes + orientation held · posture<br/>τ = Jᵀ F + N τ₀ + c"]
+        JSB["joint_state_broadcaster<br/>pose / twist broadcasters"]
+        FR3["FR3 arm<br/>libfranka FCI · 1 kHz torque"]
+        OSC <--> FR3
+        FR3 --> JSB
+    end
+
+    ROBOT -- "/fr3/target_pose, /fr3/target_twist<br/>/fr3/target_wrench (proxy only)<br/>at plant_hz" --> OSC
+    OSC -- "/fr3/osc/ee_state (Odometry)<br/>/fr3/osc/task_wrench (λ)<br/>1 kHz, same stamp" --> SPIN
+    JSB -- "/fr3/joint_states, current_pose" --> ROBOT
 ```
-Inverse3 ──read──► haptic thread (1 kHz) ── method.add_leader_state / step / haptic_force ──► Inverse3
-                        │  leader (x, v)                   ▲ PlantSample (x_i, v_i, λ, t_s)
-                        ▼                                  │ DynModel (RIM)
-                  plant thread (rate R) ── target_pose / target_twist [/ target_wrench] ──► osc_controller (1 kHz, franka-pc)
-                        ▲                                                                   │
-                  rclpy mailbox ◄──────────── /fr3/osc/ee_state + /fr3/osc/task_wrench ◄────┘
-```
+
+| From → to | What | Rate | Transport |
+|---|---|---|---|
+| Inverse3 ⇄ haptic thread | handle position, velocity / force | 1 kHz | Inlet websocket (localhost), on the haptic thread |
+| haptic thread → plant loop | leader `(x_l, v_l)` on the interface axis | written 1 kHz, read at `plant_hz` | mailbox `session.leader` |
+| plant loop → `osc_controller` | target pose + twist (+ feedforward wrench for proxy methods) | `plant_hz` | DDS, client → franka-pc |
+| `osc_controller` → fr3_plant node | EE pose + twist, task force (same tick) | 1 kHz | DDS, franka-pc → client |
+| fr3_plant node → haptic thread | `FR3PlantSample (x_i, v_i, λ, t_s)` | `sample_hz` (≤ 1 kHz) | mailbox `plant.sample` |
+| plant loop → haptic thread | `DynModel` (proxy-rim) | `plant_hz` | mailbox `session.model` |
+| Robot node → plant loop | `q`, `dq` for the Pinocchio model | broadcaster rate | `Robot` properties |
+| `osc_controller` ⇄ FR3 | joint torques / robot state | 1 kHz | libfranka FCI |
+
+Timing notes:
+- The only jitter-critical loop on the client is the haptic thread, and it never goes through ROS.
+- The four client threads share one GIL; whether the executors stretch haptic ticks is unmeasured
+  (Phase 3 step 0, or offline with a fake device). If they do, split the haptic thread into its own
+  process with no rclpy and exchange the three mailboxes through shared memory.
+- Both ROS links cross the network: DDS adds ~0.1–0.5 ms, small next to the plant period.
 
 `λ` sign: `task_wrench` is the force applied to the robot, `K(x_l − x_i) + D(v_l − v_i)`
 along the axis. `PlantState.lam` is the operator-should-feel sign, i.e. its negative.
