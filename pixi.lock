@@ -256,8 +256,11 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/11/4f/426f91b96701ec2f37bb2b8cec664eff4f658a11f3fa9d94f0a887ea6d2b/xxhash-3.6.0-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/c8/60/4ea0d6df0b497d51bf2ef87eaab0eb26f8bc3b3313c012da5df3383cced9/yourdfpy-0.0.60-py3-none-any.whl
       - pypi: ./
-      - pypi: ./python/pyrim
-      - pypi: ./python/rim_teleop
+      - pypi: ./external/adl-python/packages/experiment_logger
+      - pypi: ./external/adl-python/packages/haptic_teleop
+      - pypi: ./external/adl-python/packages/pyrim
+      - pypi: ./external/adl-python/packages/utilities
+      - pypi: ./python/fr3_haptic
   humble:
     channels:
     - url: https://prefix.dev/robostack-humble/
@@ -1322,8 +1325,11 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/11/4f/426f91b96701ec2f37bb2b8cec664eff4f658a11f3fa9d94f0a887ea6d2b/xxhash-3.6.0-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/c8/60/4ea0d6df0b497d51bf2ef87eaab0eb26f8bc3b3313c012da5df3383cced9/yourdfpy-0.0.60-py3-none-any.whl
       - pypi: ./
-      - pypi: ./python/pyrim
-      - pypi: ./python/rim_teleop
+      - pypi: ./external/adl-python/packages/experiment_logger
+      - pypi: ./external/adl-python/packages/haptic_teleop
+      - pypi: ./external/adl-python/packages/pyrim
+      - pypi: ./external/adl-python/packages/utilities
+      - pypi: ./python/fr3_haptic
 packages:
 - conda: https://conda.anaconda.org/conda-forge/linux-64/_openmp_mutex-4.5-20_gnu.conda
   build_number: 20
@@ -2772,6 +2778,18 @@ packages:
   purls: []
   size: 146195
   timestamp: 1774719191740
+- pypi: ./external/adl-python/packages/experiment_logger
+  name: experiment-logger
+  version: 0.1.0
+  sha256: 1ba7e8e2a1cf9ad0abdbe65eb3d24511a29c454c43e51f56dbf7fee52ca5bb63
+  requires_dist:
+  - numpy
+  - foxglove-sdk
+  - mcap
+  - pandas
+  - matplotlib ; extra == 'plot'
+  - pytest ; extra == 'test'
+  requires_python: '>=3.10'
 - conda: https://conda.anaconda.org/conda-forge/linux-64/fcl-0.7.0-h543440a_8.conda
   sha256: b082e91c7309ffed0aa01d97aa7c7acc8deddad152211153dce381817a4ef4f6
   md5: eb7214feba07f44bff77a3ad510231a9
@@ -3017,6 +3035,17 @@ packages:
   - anywidget ; extra == 'notebook'
   - mcap ; extra == 'notebook'
   - traitlets ; extra == 'notebook'
+  requires_python: '>=3.10'
+- pypi: ./python/fr3_haptic
+  name: fr3-haptic
+  version: 0.1.0
+  sha256: 33e8213c6f465d31b3578373215c97e69fd12b8e74b03121208e72dcc855571f
+  requires_dist:
+  - numpy
+  - pyrim
+  - haptic-teleop
+  - experiment-logger
+  - pyyaml
   requires_python: '>=3.10'
 - conda: https://conda.anaconda.org/conda-forge/linux-64/freeglut-3.2.2-ha6d2627_3.conda
   sha256: 676540a8e7f73a894cb1fcb870e7bec623ec1c0a2d277094fd713261a02d8d56
@@ -3574,6 +3603,17 @@ packages:
   version: 0.16.0
   sha256: 63cf8bbe7522de3bf65932fda1d9c2772064ffb3dae62d55932da54b31cb6c86
   requires_python: '>=3.8'
+- pypi: ./external/adl-python/packages/haptic_teleop
+  name: haptic-teleop
+  version: 0.1.0
+  sha256: fee84711f61674d02d07cb66c7dbff028f35bb946a366ed5960b319df3b7234c
+  requires_dist:
+  - numpy
+  - pyrim
+  - experiment-logger
+  - websockets
+  - pytest ; extra == 'test'
+  requires_python: '>=3.10'
 - conda: https://conda.anaconda.org/conda-forge/linux-64/harfbuzz-13.2.1-h6083320_0.conda
   sha256: 477f2c553f72165020d3c56740ba354be916c2f0b76fd9f535e83d698277d5ec
   md5: 14470902326beee192e33719a2e8bb7f
@@ -8659,12 +8699,13 @@ packages:
   - pkg:pypi/pyqt5-sip?source=hash-mapping
   size: 85800
   timestamp: 1759495565076
-- pypi: ./python/pyrim
+- pypi: ./external/adl-python/packages/pyrim
   name: pyrim
   version: 0.1.0
-  sha256: b7b04e85519617e481028f8055fc5345625944987ebcb293b92daa4a0b7d0ff7
+  sha256: ddde73a8e7ffe4c46dd8334d4119185cea9be8f1c287af37b66a0a00b772075f
   requires_dist:
   - numpy
+  - pytest ; extra == 'test'
   requires_python: '>=3.10'
 - pypi: git+https://github.com/chungmin99/pyroki.git#59aa21ffc766533c66d22ff38dd6717e176f19c8
   name: pyroki
@@ -9145,15 +9186,6 @@ packages:
   - markdown-it-py>=2.2.0
   - pygments>=2.13.0,<3.0.0
   requires_python: '>=3.8.0'
-- pypi: ./python/rim_teleop
-  name: rim-teleop
-  version: 0.1.0
-  sha256: b267979f44e1ed4cb245f26961a9336318a268f6112b63268eb66ab0d1ea5c7a
-  requires_dist:
-  - numpy
-  - pyrim
-  - pyyaml
-  requires_python: '>=3.10'
 - pypi: https://files.pythonhosted.org/packages/fa/1b/78fff37a42652c190c3094e17d576df627712e9e31fb0c6b04f71d1c5ee5/robot_descriptions-1.23.0-py3-none-any.whl
   name: robot-descriptions
   version: 1.23.0
@@ -18525,6 +18557,14 @@ packages:
   purls: []
   size: 14226
   timestamp: 1767012219987
+- pypi: ./external/adl-python/packages/utilities
+  name: utilities
+  version: 0.1.0
+  sha256: 5dc81f5d9271926f80e0840478aa9e1f679dd1857d43c29fbcf395f6ebe02090
+  requires_dist:
+  - pyyaml
+  - pytest ; extra == 'test'
+  requires_python: '>=3.10'
 - pypi: https://files.pythonhosted.org/packages/94/98/d2a6aeb1c6570a1fc1be29ee03db795f643ab03c6df7635522f23796b39d/vhacdx-0.0.10-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl
   name: vhacdx
   version: 0.0.10

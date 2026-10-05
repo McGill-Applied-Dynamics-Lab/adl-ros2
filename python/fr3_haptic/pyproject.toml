@@ -1,0 +1,16 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "fr3_haptic"
+version = "0.1.0"
+description = "Haptic teleoperation of the real Franka FR3 with haptic_teleop (adl-python)"
+requires-python = ">=3.10"
+dependencies = ["numpy", "pyrim", "haptic_teleop", "experiment_logger", "pyyaml"]
+
+[project.scripts]
+fr3_haptic = "fr3_haptic.main:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/fr3_haptic"]

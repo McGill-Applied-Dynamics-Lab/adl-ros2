@@ -87,8 +87,12 @@ pyserial = ">=3.5,<4"
 
 [pypi-dependencies]
 adl-ros2 = { path = ".", editable = true }
-pyrim = { path = "python/pyrim", editable = true }
-rim_teleop = { path = "python/rim_teleop", editable = true }
+# adl-python (git submodule at external/adl-python)
+pyrim = { path = "external/adl-python/packages/pyrim", editable = true }
+haptic_teleop = { path = "external/adl-python/packages/haptic_teleop", editable = true }
+experiment_logger = { path = "external/adl-python/packages/experiment_logger", editable = true }
+utilities = { path = "external/adl-python/packages/utilities", editable = true }
+fr3_haptic = { path = "python/fr3_haptic", editable = true }
 colcon-ansi-colors = { git = "https://github.com/SimbeRobotics/colcon-ansi-colors" }
 pyroki = { git = "https://github.com/chungmin99/pyroki.git" }
 pyglet = ">=2.1.13, <3"

@@ -1,0 +1,4 @@
+[submodule "external/adl-python"]
+	path = external/adl-python
+	url = git@github.com:Applied-Dynamics-Lab/adl-python.git
+	branch = dev
