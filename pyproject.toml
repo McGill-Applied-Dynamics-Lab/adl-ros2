@@ -19,6 +19,12 @@ classifiers = [
 ]
 requires-python = ">=3.10"
 
+# Metadata-only project: ROS packages in src/ are built/installed by colcon.
+# Without this, setuptools auto-discovers src/ and the editable install puts it
+# on sys.path, so e.g. src/arm_client shadows the real arm_client package.
+[tool.setuptools]
+packages = []
+
 [tool.ruff]
 # Specify the line length
 line-length = 180
