@@ -26,7 +26,8 @@ HEADLINE = {
         "ss_error_mm_mean",
         "rot_err_max_mrad_max",
         "tau_cmd_rms_hf_max_Nm_max",
-        "dq_rms_hf_max_mrad_s_max",
+        "settled_tau_cmd_rms_hf_max_Nm_max",
+        "settled_dq_rms_hf_max_mrad_s_max",
     ],
     "tracking": [
         "err_rms_mm",

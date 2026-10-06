@@ -29,6 +29,7 @@ from _bench import (  # noqa: E402
 )
 
 AXES = {"x": 0, "y": 1, "z": 2}
+SETTLED_AFTER_S = 1.0  # chatter after this delay from the step command is reported as "settled_*"
 
 
 def step_metrics(data: dict, t0: float, t1: float, p_from: np.ndarray, p_to: np.ndarray, ref_rot, band: float) -> dict:
@@ -58,6 +59,8 @@ def step_metrics(data: dict, t0: float, t1: float, p_from: np.ndarray, p_to: np.
         "rot_err_max_mrad": orientation_error_mrad(quat, ref_rot).max(),
         "peak_speed_mm_s": np.linalg.norm(vel, axis=1).max() * 1e3,
         **chatter_metrics(data, t0, t1),
+        # After the transient: a sustained oscillation (limit cycle) shows here, the step itself does not
+        **{f"settled_{k}": v for k, v in chatter_metrics(data, t0 + SETTLED_AFTER_S, t1).items()},
     }
 
 
@@ -69,7 +72,7 @@ def main() -> None:
     parser.add_argument("--settle-band", type=float, default=0.001, help="Settling band around the final value (m)")
     add_common_args(parser)
     args = parser.parse_args()
-    if not 0.0 < args.amplitude <= 0.05:
+    if not 0.0 < args.amplitude <= 0.1:
         parser.error("--amplitude must be in (0, 0.05] m: larger steps saturate limits.max_position_error")
 
     robot, params = setup(args)
@@ -102,26 +105,40 @@ def main() -> None:
 
     metrics: dict = {"amplitude_m": args.amplitude, "steps": {}}
     print(f"\n=== step response, {args.amplitude * 1e3:.0f} mm ===")
-    print(f"{'step':5s} {'rise ms':>8s} {'overshoot':>9s} {'settle ms':>9s} {'ss err':>7s} {'off-axis':>8s} {'rot max':>8s} {'v max':>7s} {'tau_hf max':>10s} {'dq_hf max':>9s}")
-    print(f"{'':5s} {'':>8s} {'mm':>9s} {'':>9s} {'mm':>7s} {'mm':>8s} {'mrad':>8s} {'mm/s':>7s} {'Nm':>10s} {'mrad/s':>9s}")
+    print(
+        f"{'step':5s} {'rise ms':>8s} {'overshoot':>9s} {'settle ms':>9s} {'ss err':>7s} {'off-axis':>8s} {'rot max':>8s} {'v max':>7s} {'tau_hf max':>10s} {'settled':>8s} {'peak':>5s}"
+    )
+    print(f"{'':5s} {'':>8s} {'mm':>9s} {'':>9s} {'mm':>7s} {'mm':>8s} {'mrad':>8s} {'mm/s':>7s} {'Nm':>10s} {'Nm':>8s} {'Hz':>5s}")
     for label, t0, t1, p_from, p_to in steps:
         sm = step_metrics(data, t0, t1, p_from, p_to, start.orientation, args.settle_band)
         metrics["steps"][label] = sm
+        worst = int(np.nanargmax(sm["settled_tau_cmd_rms_hf_Nm"]))
         print(
             f"{label:5s} {sm['rise_ms']:8.0f} {sm['overshoot_mm']:9.2f} {sm['settle_ms']:9.0f} {sm['ss_error_mm']:7.2f} "
             f"{sm['off_axis_max_mm']:8.2f} {sm['rot_err_max_mrad']:8.1f} {sm['peak_speed_mm_s']:7.0f} "
-            f"{sm['tau_cmd_rms_hf_max_Nm']:10.3f} {sm['dq_rms_hf_max_mrad_s']:9.2f}"
+            f"{sm['tau_cmd_rms_hf_max_Nm']:10.3f} {sm['settled_tau_cmd_rms_hf_max_Nm']:8.3f} {sm['settled_tau_cmd_peak_hz'][worst]:5.0f}"
         )
 
     all_steps = list(metrics["steps"].values())
-    for key in ("rise_ms", "overshoot_mm", "settle_ms", "ss_error_mm", "off_axis_max_mm", "rot_err_max_mrad", "tau_cmd_rms_hf_max_Nm", "dq_rms_hf_max_mrad_s"):
+    for key in (
+        "rise_ms",
+        "overshoot_mm",
+        "settle_ms",
+        "ss_error_mm",
+        "off_axis_max_mm",
+        "rot_err_max_mrad",
+        "tau_cmd_rms_hf_max_Nm",
+        "dq_rms_hf_max_mrad_s",
+        "settled_tau_cmd_rms_hf_max_Nm",
+        "settled_dq_rms_hf_max_mrad_s",
+    ):
         vals = np.array([s[key] for s in all_steps], dtype=float)
         metrics[f"{key}_mean"] = float(np.nanmean(np.abs(vals)))
         metrics[f"{key}_max"] = float(np.nanmax(np.abs(vals)))
     print(
         f"mean |ss err| {metrics['ss_error_mm_mean']:.2f} mm, max overshoot {metrics['overshoot_mm_max']:.2f} mm, "
         f"mean rise {metrics['rise_ms_mean']:.0f} ms, max rot err {metrics['rot_err_max_mrad_max']:.1f} mrad, "
-        f"max tau chatter {metrics['tau_cmd_rms_hf_max_Nm_max']:.3f} Nm"
+        f"max tau chatter {metrics['tau_cmd_rms_hf_max_Nm_max']:.3f} Nm (settled {metrics['settled_tau_cmd_rms_hf_max_Nm_max']:.3f} Nm)"
     )
     save("step_response", args, params, data, metrics)
     teardown(robot)
