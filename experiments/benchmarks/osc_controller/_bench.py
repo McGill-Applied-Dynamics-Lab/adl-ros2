@@ -8,6 +8,7 @@ the metrics. Two runs are comparable when their YAMLs agree on everything but wh
 from __future__ import annotations
 
 import argparse
+import gc
 import subprocess
 import time
 from pathlib import Path
@@ -162,6 +163,30 @@ def _row_state(m: FrankaRobotState):
     return [*js.position[:7], *js.velocity[:7], *js.effort[:7], *m.tau_ext_hat_filtered.effort[:7]]
 
 
+class _Buffer:
+    """Growable float array of rows [arrival time, stamp, values...].
+
+    Samples go into a preallocated array: keeping ~7 kHz of Python objects alive instead made the
+    garbage collector stall the main thread for up to 95 ms (seen as gaps in streamed targets).
+    """
+
+    def __init__(self, width: int, capacity: int = 60_000):
+        self._data = np.empty((capacity, 2 + width))
+        self.n = 0
+
+    def append(self, t: float, stamp: float, values) -> None:
+        if self.n == len(self._data):
+            self._data = np.concatenate([self._data, np.empty_like(self._data)])
+        row = self._data[self.n]
+        row[0] = t
+        row[1] = stamp
+        row[2:] = values
+        self.n += 1
+
+    def view(self) -> np.ndarray:
+        return self._data[: self.n]
+
+
 class Recorder:
     """Records the controller and robot-state topics at 1 kHz on the Robot's node.
 
@@ -174,28 +199,28 @@ class Recorder:
 
     def __init__(self, robot: Robot):
         streams = {
-            "ee": (Odometry, "/fr3/osc/ee_state", _row_ee),
-            "err": (TwistStamped, "/fr3/osc/task_error", _row_twist),
-            "wrench": (WrenchStamped, "/fr3/osc/task_wrench", _row_wrench),
-            "tau": (JointState, "/fr3/osc/joint_torques", lambda m: list(m.effort[:7])),
-            "state": (FrankaRobotState, robot.config.franka_robot_state_topic, _row_state),
+            "ee": (Odometry, "/fr3/osc/ee_state", _row_ee, 13),
+            "err": (TwistStamped, "/fr3/osc/task_error", _row_twist, 6),
+            "wrench": (WrenchStamped, "/fr3/osc/task_wrench", _row_wrench, 6),
+            "tau": (JointState, "/fr3/osc/joint_torques", lambda m: m.effort[:7], 7),
+            "state": (FrankaRobotState, robot.config.franka_robot_state_topic, _row_state, 28),
         }
-        self._rows: dict[str, list] = {k: [] for k in streams}
+        self._buffers = {k: _Buffer(width) for k, (_, _, _, width) in streams.items()}
         self._last_arrival: dict[str, float] = {k: 0.0 for k in streams}
         self._recording = False
         self.events: list[tuple[float, str]] = []
-        for key, (msg_type, topic, row) in streams.items():
+        for key, (msg_type, topic, row, _) in streams.items():
             robot.node.create_subscription(msg_type, topic, self._callback(key, row), qos_profile_sensor_data)
         time.sleep(0.5)  # discovery
 
     def _callback(self, key, row):
-        rows = self._rows[key]
+        buffer = self._buffers[key]
 
         def cb(msg):
             now = time.time()
             self._last_arrival[key] = now
             if self._recording:
-                rows.append((now, _stamp(msg), row(msg)))
+                buffer.append(now, _stamp(msg), row(msg))
 
         return cb
 
@@ -210,6 +235,10 @@ class Recorder:
     def start(self) -> None:
         """Start recording; raises if the streams are not live, before any motion is commanded."""
         self.check_live()
+        # Move everything allocated so far (imports, JAX, the URDF...) out of the collector's reach
+        # so that a full collection during the run stays short
+        gc.collect()
+        gc.freeze()
         self._recording = True
 
     def stop(self) -> None:
@@ -222,12 +251,13 @@ class Recorder:
 
     def arrays(self) -> dict[str, np.ndarray]:
         out = {}
-        for key, rows in self._rows.items():
-            if not rows:
+        for key, buffer in self._buffers.items():
+            rows = buffer.view()
+            if not len(rows):
                 raise RuntimeError(f"No samples recorded on stream '{key}'")
-            out[f"{key}_t"] = np.array([r[0] for r in rows])
-            out[f"{key}_stamp"] = np.array([r[1] for r in rows])
-            out[key] = np.array([r[2] for r in rows])
+            out[f"{key}_t"] = rows[:, 0].copy()
+            out[f"{key}_stamp"] = rows[:, 1].copy()
+            out[key] = rows[:, 2:].copy()
         out["event_t"] = np.array([e[0] for e in self.events])
         out["event_label"] = np.array([e[1] for e in self.events])
         return out
