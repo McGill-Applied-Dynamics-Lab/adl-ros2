@@ -332,6 +332,13 @@ def save(name: str, args: argparse.Namespace, params: dict, data: dict, metrics:
     with open(path, "w") as f:
         yaml.safe_dump(meta, f, sort_keys=False)
     print(f"Saved -> {path} (+ .npz)")
+    try:
+        from plots import plot_run
+
+        for fig_path in plot_run(path):
+            print(f"Plot  -> {fig_path}")
+    except Exception as e:  # a plotting bug must never lose a run: redraw later with plots.py
+        print(f"Plotting failed ({type(e).__name__}: {e}); redraw with: python plots.py {path}")
     return path
 
 

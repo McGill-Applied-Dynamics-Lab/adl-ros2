@@ -92,6 +92,13 @@ def main() -> None:
             steps.append((label, t0, time.time(), p_from.copy(), target.position.copy()))
     rec.stop()
     data = rec.arrays()
+    data.update(
+        step_label=np.array([s[0] for s in steps]),
+        step_t0=np.array([s[1] for s in steps]),
+        step_t1=np.array([s[2] for s in steps]),
+        step_from=np.array([s[3] for s in steps]),
+        step_to=np.array([s[4] for s in steps]),
+    )
 
     metrics: dict = {"amplitude_m": args.amplitude, "steps": {}}
     print(f"\n=== step response, {args.amplitude * 1e3:.0f} mm ===")

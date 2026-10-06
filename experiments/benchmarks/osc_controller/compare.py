@@ -13,6 +13,7 @@ import argparse
 from pathlib import Path
 
 import yaml
+from plots import gains_label
 
 RESULTS_DIR = Path(__file__).parent / "results"
 
@@ -56,16 +57,17 @@ def main() -> None:
         if not runs:
             continue
 
-        # Parameters that differ between the listed runs
+        # Key gains always shown (a tag can lie, the recorded parameters cannot), plus any other
+        # parameter that differs between the listed runs
         keys = sorted({k for _, m in runs for k in m["params"]})
-        varying = [k for k in keys if len({repr(m["params"].get(k)) for _, m in runs}) > 1]
+        varying = [k for k in keys if len({repr(m["params"].get(k)) for _, m in runs}) > 1 and not k.startswith(("gains.k_", "control.inertia", "control.partial"))]
         cols = varying + HEADLINE[bench]
 
         print(f"\n### {bench}  ({len(runs)} runs)")
-        header = ["run"] + [c.replace("gains.", "").replace("control.", "") for c in cols]
+        header = ["run", "gains"] + [c.replace("gains.", "").replace("control.", "") for c in cols]
         rows = []
         for stem, meta in runs:
-            row = [stem.removeprefix(f"{bench}_")]
+            row = [stem.removeprefix(f"{bench}_"), gains_label(meta["params"])]
             for c in cols:
                 v = meta["params"].get(c) if c in varying else meta["metrics"].get(c)
                 row.append(f"{v:.3g}" if isinstance(v, float) else str(v))
