@@ -153,6 +153,8 @@ class Robot:
         )
         self.osc_pd_controller_parameters_client = ParametersClient(self.node, target_node="osc_pd_controller")
 
+        self.osc_controller_parameters_client = ParametersClient(self.node, target_node="osc_controller")
+
         self.joint_space_controller_parameters_client = ParametersClient(
             self.node, target_node="joint_space_controller"
         )
