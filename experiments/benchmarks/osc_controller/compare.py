@@ -18,7 +18,7 @@ from plots import gains_label
 RESULTS_DIR = Path(__file__).parent / "results"
 
 HEADLINE = {
-    "hold": ["err_pos_mean_mm", "err_rot_mean_mrad", "drift_mm", "tau_cmd_rms_hf_max_Nm", "dq_rms_hf_max_mrad_s"],
+    "hold": ["err_pos_mean_mm", "err_rot_mean_mrad", "drift_mm", "tau_cmd_rms_hf_max_Nm", "dq_rms_hf_max_mrad_s", "tau_rate_limited_pct_max"],
     "step_response": [
         "rise_ms_mean",
         "overshoot_mm_max",
@@ -26,8 +26,9 @@ HEADLINE = {
         "ss_error_mm_mean",
         "rot_err_max_mrad_max",
         "tau_cmd_rms_hf_max_Nm_max",
+        "transient_tau_rate_limited_pct_max_mean",
         "settled_tau_cmd_rms_hf_max_Nm_max",
-        "settled_dq_rms_hf_max_mrad_s_max",
+        "settled_tau_rate_limited_pct_max_max",
     ],
     "tracking": [
         "err_rms_mm",
@@ -37,6 +38,7 @@ HEADLINE = {
         "rot_err_max_mrad",
         "tau_cmd_rms_hf_max_Nm",
         "dq_rms_hf_max_mrad_s",
+        "tau_rate_limited_pct_max",
     ],
 }
 

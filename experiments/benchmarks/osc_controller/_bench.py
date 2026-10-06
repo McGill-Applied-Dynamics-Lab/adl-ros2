@@ -32,6 +32,7 @@ OSC_CONFIG_DIR = CONFIG_DIR / "controllers" / "osc"
 RESULTS_DIR = Path(__file__).parent / "results"
 FS = 1000.0  # controller rate (Hz)
 CHATTER_HP_HZ = 15.0  # motion content of the benchmarks is below this; torque content above is chatter
+DTAU_MAX = 1.0  # limits.delta_tau_max (Nm/tick); also the FR3 torque-rate limit (1000 Nm/s)
 
 
 # =======================
@@ -291,6 +292,25 @@ def chatter(x: np.ndarray, fs: float = FS, f_hp: float = CHATTER_HP_HZ) -> dict[
     return {"rms_hf": np.sqrt((hf**2).mean(0)), "peak_hz": peak}
 
 
+def rate_limit_metrics(data: dict[str, np.ndarray], mask: np.ndarray, dtau_max: float = DTAU_MAX) -> dict[str, Any]:
+    """How hard the commanded torque leans on the per-tick rate limit (limits.delta_tau_max).
+
+    A loop that keeps hitting the limit can sustain a ~50-60 Hz limit cycle: the limiter adds
+    phase lag. Only differences between consecutive controller ticks are counted.
+    """
+    tau, stamp = data["tau"][mask], data["tau_stamp"][mask]
+    if len(tau) < 2:
+        return {"tau_rate_limited_pct": np.full(7, np.nan), "dtau_p99_Nm": np.full(7, np.nan), "tau_rate_limited_pct_max": np.nan}
+    consecutive = np.abs(np.diff(stamp) - 1.0 / FS) < 0.3 / FS
+    dtau = np.abs(np.diff(tau, axis=0))[consecutive]
+    limited = (dtau >= 0.98 * dtau_max).mean(0) * 100.0
+    return {
+        "tau_rate_limited_pct": limited,
+        "dtau_p99_Nm": np.percentile(dtau, 99, axis=0),
+        "tau_rate_limited_pct_max": float(limited.max()),
+    }
+
+
 def chatter_metrics(data: dict[str, np.ndarray], t0: float, t1: float) -> dict[str, Any]:
     """Chatter of commanded torque, measured joint velocity and measured torque within [t0, t1)."""
     m_tau = (data["tau_t"] >= t0) & (data["tau_t"] < t1)
@@ -299,6 +319,7 @@ def chatter_metrics(data: dict[str, np.ndarray], t0: float, t1: float) -> dict[s
     dq = chatter(data["state"][m_st, 7:14])
     tau_j = chatter(data["state"][m_st, 14:21])
     return {
+        **rate_limit_metrics(data, m_tau),
         "tau_cmd_rms_hf_Nm": tau_cmd["rms_hf"],
         "tau_cmd_peak_hz": tau_cmd["peak_hz"],
         "dq_rms_hf_mrad_s": dq["rms_hf"] * 1e3,
@@ -382,6 +403,7 @@ __all__ = [
     "Recorder",
     "add_common_args",
     "chatter_metrics",
+    "rate_limit_metrics",
     "fmt",
     "orientation_error_mrad",
     "save",

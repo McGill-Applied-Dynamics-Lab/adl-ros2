@@ -147,6 +147,7 @@ def main() -> None:
     print(f"target stream {metrics['stream_rate_hz']:.0f} Hz, max gap {metrics['stream_gap_max_ms']:.1f} ms")
     print(f"chatter (>15 Hz RMS) tau_cmd {fmt(metrics['tau_cmd_rms_hf_Nm'], digits=3)} Nm  peak Hz {fmt(metrics['tau_cmd_peak_hz'], digits=0)}")
     print(f"                     dq      {fmt(metrics['dq_rms_hf_mrad_s'], digits=2)} mrad/s")
+    print(f"torque rate limit: ticks at limit {fmt(metrics['tau_rate_limited_pct'], digits=2)} %  |dtau| p99 {fmt(metrics['dtau_p99_Nm'], digits=2)} Nm")
     save("tracking", args, params, data, metrics)
     teardown(robot)
 

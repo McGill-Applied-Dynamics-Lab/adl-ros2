@@ -23,6 +23,7 @@ from _bench import (  # noqa: E402
     add_common_args,
     chatter_metrics,
     orientation_error_mrad,
+    rate_limit_metrics,
     save,
     setup,
     teardown,
@@ -30,6 +31,7 @@ from _bench import (  # noqa: E402
 
 AXES = {"x": 0, "y": 1, "z": 2}
 SETTLED_AFTER_S = 1.0  # chatter after this delay from the step command is reported as "settled_*"
+TRANSIENT_S = 0.3  # window after the step command reported as "transient_*"
 
 
 def step_metrics(data: dict, t0: float, t1: float, p_from: np.ndarray, p_to: np.ndarray, ref_rot, band: float) -> dict:
@@ -61,6 +63,8 @@ def step_metrics(data: dict, t0: float, t1: float, p_from: np.ndarray, p_to: np.
         **chatter_metrics(data, t0, t1),
         # After the transient: a sustained oscillation (limit cycle) shows here, the step itself does not
         **{f"settled_{k}": v for k, v in chatter_metrics(data, t0 + SETTLED_AFTER_S, t1).items()},
+        # Rate-limit saturation right after the target jump: what triggers the limit cycle
+        **{f"transient_{k}": v for k, v in rate_limit_metrics(data, (data["tau_t"] >= t0) & (data["tau_t"] < t0 + TRANSIENT_S)).items()},
     }
 
 
@@ -106,9 +110,10 @@ def main() -> None:
     metrics: dict = {"amplitude_m": args.amplitude, "steps": {}}
     print(f"\n=== step response, {args.amplitude * 1e3:.0f} mm ===")
     print(
-        f"{'step':5s} {'rise ms':>8s} {'overshoot':>9s} {'settle ms':>9s} {'ss err':>7s} {'off-axis':>8s} {'rot max':>8s} {'v max':>7s} {'tau_hf max':>10s} {'settled':>8s} {'peak':>5s}"
+        f"{'step':5s} {'rise ms':>8s} {'overshoot':>9s} {'settle ms':>9s} {'ss err':>7s} {'off-axis':>8s} {'rot max':>8s} {'v max':>7s} {'tau_hf max':>10s} "
+        f"{'lim tr':>6s} {'settled':>8s} {'lim st':>6s} {'peak':>5s}"
     )
-    print(f"{'':5s} {'':>8s} {'mm':>9s} {'':>9s} {'mm':>7s} {'mm':>8s} {'mrad':>8s} {'mm/s':>7s} {'Nm':>10s} {'Nm':>8s} {'Hz':>5s}")
+    print(f"{'':5s} {'':>8s} {'mm':>9s} {'':>9s} {'mm':>7s} {'mm':>8s} {'mrad':>8s} {'mm/s':>7s} {'Nm':>10s} {'%':>6s} {'Nm':>8s} {'%':>6s} {'Hz':>5s}")
     for label, t0, t1, p_from, p_to in steps:
         sm = step_metrics(data, t0, t1, p_from, p_to, start.orientation, args.settle_band)
         metrics["steps"][label] = sm
@@ -116,7 +121,8 @@ def main() -> None:
         print(
             f"{label:5s} {sm['rise_ms']:8.0f} {sm['overshoot_mm']:9.2f} {sm['settle_ms']:9.0f} {sm['ss_error_mm']:7.2f} "
             f"{sm['off_axis_max_mm']:8.2f} {sm['rot_err_max_mrad']:8.1f} {sm['peak_speed_mm_s']:7.0f} "
-            f"{sm['tau_cmd_rms_hf_max_Nm']:10.3f} {sm['settled_tau_cmd_rms_hf_max_Nm']:8.3f} {sm['settled_tau_cmd_peak_hz'][worst]:5.0f}"
+            f"{sm['tau_cmd_rms_hf_max_Nm']:10.3f} {sm['transient_tau_rate_limited_pct_max']:6.1f} "
+            f"{sm['settled_tau_cmd_rms_hf_max_Nm']:8.3f} {sm['settled_tau_rate_limited_pct_max']:6.1f} {sm['settled_tau_cmd_peak_hz'][worst]:5.0f}"
         )
 
     all_steps = list(metrics["steps"].values())
@@ -131,6 +137,8 @@ def main() -> None:
         "dq_rms_hf_max_mrad_s",
         "settled_tau_cmd_rms_hf_max_Nm",
         "settled_dq_rms_hf_max_mrad_s",
+        "transient_tau_rate_limited_pct_max",
+        "settled_tau_rate_limited_pct_max",
     ):
         vals = np.array([s[key] for s in all_steps], dtype=float)
         metrics[f"{key}_mean"] = float(np.nanmean(np.abs(vals)))
