@@ -140,7 +140,7 @@ class Robot:
 
         self._prefix = f"{namespace}_" if namespace else ""
 
-        self.controller_switcher_client = ControllerSwitcherClient(self.node)
+        self.controller_switcher_client = ControllerSwitcherClient(self.node, on_switch=self._reseed_targets)
         self.joint_trajectory_controller_client = JointTrajectoryControllerClient(self.node)
 
         self.cartesian_controller_parameters_client = ParametersClient(
@@ -534,6 +534,21 @@ class Robot:
         self._target_pose = None
         self._q_target = None
         self._target_wrench = None
+
+    def _reseed_targets(self) -> None:
+        """Re-seed the republished targets from the measured state.
+
+        The timers republish the targets to whichever controller is active, so a target left from
+        before (e.g. the pose before a joint-trajectory move) would make a newly activated
+        controller jump to it. Called around every controller switch and after blocking joint
+        trajectories. Feedforward targets (twist, wrench) are zeroed. Targets not measured yet
+        stay None and are seeded by the state callbacks.
+        """
+        self._target_pose = self._current_pose.copy() if self._current_pose is not None else None
+        self._q_target = self._q_current.copy() if self._q_current is not None else None
+        self._target_twist = Twist(np.zeros(3), np.zeros(3))
+        if self._target_wrench is not None:
+            self._target_wrench = {"force": np.zeros(3), "torque": np.zeros(3)}
 
     def wait_until_ready(self, timeout: float = 2.0, check_frequency: float = 10.0):
         """Wait until the robot is ready for operation.
@@ -1074,7 +1089,10 @@ class Robot:
             blocking=blocking,
         )
 
-        if len(trajectory.joint_positions) > 0:
+        if blocking:
+            # The arm is where the trajectory ended: Cartesian targets from before the move are stale
+            self._reseed_targets()
+        elif len(trajectory.joint_positions) > 0:
             self._q_target = np.array(trajectory.joint_positions[-1], dtype=float)
 
     def send_joint_trajectory(
