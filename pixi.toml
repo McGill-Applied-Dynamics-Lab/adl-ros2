@@ -6,7 +6,7 @@ platforms = ["linux-64"]
 version = "0.1.0"
 
 [activation]
-# scripts = ["install_humble/setup.sh"]
+scripts = ["scripts/activate_overlay.sh"]
 
 [activation.env]
 CMAKE_INSTALL_MODE = "SYMLINK"
@@ -44,6 +44,8 @@ test = { cmd = [
     "--install-base",
     "install_$ROS_DISTRO",
 ], depends-on = "build" }
+
+test-py = { cmd = "pytest python/pyrim/tests python/rim_teleop/tests", depends-on = "build" } # Python-only packages in python/
 
 gen-vscode-env = { cmd = """
 bash -c '

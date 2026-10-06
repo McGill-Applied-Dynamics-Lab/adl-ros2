@@ -777,7 +777,8 @@ class Robot:
         self._current_twist = self._twist_msg_to_twist(msg)
         self._last_twist_update_time = time.time()
         if self._target_twist is None:
-            self._target_twist = self._current_twist.copy()
+            # Target twist is a velocity feedforward: start at rest, not at the measured twist
+            self._target_twist = Twist(np.zeros(3), np.zeros(3))
 
     def _callback_current_joint(self, msg: JointState):
         """Update the current joint state (position, velocity and torque) from a ROS message.

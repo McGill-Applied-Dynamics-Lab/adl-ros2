@@ -1,0 +1,53 @@
+# controller: OSC Controller
+# Default parameters for the OSC controller (fr3_controllers/OSCController)
+# With control.inertia_decoupling: true, gains are in [1/s^2] (stiffness) and
+# [1/s] (damping). Damping -1.0 = critically damped (2*sqrt(k)).
+
+control.inertia_decoupling: true
+control.partial_inertia_decoupling: false
+control.coriolis_compensation: true
+
+gains.k_pos_x: 400.0
+gains.k_pos_y: 400.0
+gains.k_pos_z: 400.0
+
+gains.d_pos_x: -1.0
+gains.d_pos_y: -1.0
+gains.d_pos_z: -1.0
+
+gains.k_rot_x: 400.0
+gains.k_rot_y: 400.0
+gains.k_rot_z: 400.0
+
+gains.d_rot_x: -1.0
+gains.d_rot_y: -1.0
+gains.d_rot_z: -1.0
+
+# -- Feedforward terms (reset to zero after timeout_ticks without a message) --
+feedforward.twist: true
+feedforward.accel: true
+feedforward.wrench: false
+feedforward.timeout_ticks: 100
+
+# -- Nullspace posture task --
+nullspace.stiffness: 10.0
+nullspace.damping: -1.0
+nullspace.posture_from_activation: true
+
+# -- Safety limits --
+limits.max_position_error: 0.05  # (m) error clamp, bounds the pull of far targets
+limits.max_rotation_error: 0.3  # (rad)
+limits.force_limit: 60.0  # Maximum task force magnitude (N)
+limits.torque_limit: 15.0  # Maximum task torque magnitude (Nm)
+limits.delta_tau_max: 1.0  # Max torque change per tick (Nm)
+
+# -- EMA Filters (0.0: Max filtering, 1.0: No filtering) --
+filter.joint_velocity: 1.0
+filter.target_pose: 1.0
+
+log.enabled: false
+log.timing: false
+log.robot_state: false
+log.targets: false
+log.task_space: false
+log.controller_parameters: false
