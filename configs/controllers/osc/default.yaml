@@ -7,21 +7,21 @@ control.inertia_decoupling: true
 control.partial_inertia_decoupling: false
 control.coriolis_compensation: true
 
-gains.k_pos_x: 400.0
-gains.k_pos_y: 400.0
-gains.k_pos_z: 400.0
+gains.k_pos_x: 500.0
+gains.k_pos_y: 500.0
+gains.k_pos_z: 500.0
 
-gains.d_pos_x: -1.0
-gains.d_pos_y: -1.0
-gains.d_pos_z: -1.0
+gains.d_pos_x: 31.0
+gains.d_pos_y: 31.0
+gains.d_pos_z: 31.0
 
-gains.k_rot_x: 400.0
-gains.k_rot_y: 400.0
-gains.k_rot_z: 400.0
+gains.k_rot_x: 1250.0
+gains.k_rot_y: 1250.0
+gains.k_rot_z: 2500.0
 
-gains.d_rot_x: -1.0
-gains.d_rot_y: -1.0
-gains.d_rot_z: -1.0
+gains.d_rot_x: 50.0
+gains.d_rot_y: 50.0
+gains.d_rot_z: 70.0
 
 # -- Feedforward terms (reset to zero after timeout_ticks without a message) --
 feedforward.twist: true
@@ -45,9 +45,9 @@ limits.delta_tau_max: 1.0  # Max torque change per tick (Nm)
 filter.joint_velocity: 1.0
 filter.target_pose: 1.0
 
-log.enabled: false
+log.enabled: true
 log.timing: false
 log.robot_state: false
 log.targets: false
 log.task_space: false
-log.controller_parameters: false
+log.controller_parameters: true
