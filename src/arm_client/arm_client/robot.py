@@ -98,7 +98,6 @@ class Robot:
     switching, trajectory generation, and state monitoring.
 
     Attributes:
-        THREADS_REQUIRED (int): Number of threads required for the ROS2 executor
         node (Node): ROS2 node instance
         config (RobotConfig): Robot configuration parameters
         controller_switcher_client: Client for switching between controllers
@@ -106,7 +105,6 @@ class Robot:
         cartesian_controller_parameters_client: Client for Cartesian controller parameters
     """
 
-    THREADS_REQUIRED = 4
     _JOINT_CONTROLLER_KEYWORDS = ("joint_trajectory_controller", "joint_impedance_controller", "joint_space_controller")
 
     def __init__(
@@ -284,16 +282,24 @@ class Robot:
 
         self._rate = self.node.create_rate(100)  # 100 Hz check rate for smooth data collection
 
+        self._spin_thread = None
         if spin_node:
-            threading.Thread(target=self._spin_node, daemon=True).start()
+            self._spin_thread = threading.Thread(target=self._spin_node, daemon=True)
+            self._spin_thread.start()
 
     def _spin_node(self):
         if not rclpy.ok():
             rclpy.init()
-        executor = rclpy.executors.MultiThreadedExecutor(num_threads=self.THREADS_REQUIRED)
+        # Single-threaded on purpose: rclpy's MultiThreadedExecutor delivered ~11% of the 1 kHz
+        # robot_state/wrench topics (gaps up to ~240 ms) where this one gets all of them. All
+        # callbacks are short and every blocking wait (futures, Rate) runs on the caller's thread.
+        executor = rclpy.executors.SingleThreadedExecutor()
         executor.add_node(self.node)
-        while rclpy.ok():
-            executor.spin_once(timeout_sec=0.1)
+        try:
+            while rclpy.ok():
+                executor.spin_once(timeout_sec=0.1)
+        except rclpy.executors.ExternalShutdownException:
+            pass  # Robot.shutdown() / rclpy.shutdown() from another thread
 
     # =======================
     # MARK: Properties
@@ -673,6 +679,9 @@ class Robot:
         """Shutdown the node."""
         if rclpy.ok():
             rclpy.shutdown()
+        # Let the spin thread leave rclpy's wait before the interpreter tears down
+        if self._spin_thread is not None and self._spin_thread is not threading.current_thread():
+            self._spin_thread.join(timeout=1.0)
 
     # =======================
     # MARK: Callbacks

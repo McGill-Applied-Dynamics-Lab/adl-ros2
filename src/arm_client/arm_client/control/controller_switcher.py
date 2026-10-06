@@ -10,6 +10,8 @@ from controller_manager_msgs.srv import (
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.node import Node
 
+from arm_client.utils.futures import wait_for_future
+
 
 class ControllerSwitcherClient:
     """ControllerSwitcher class allows user to communicate with the controller_manager and manage controllers in an easy way."""
@@ -64,10 +66,7 @@ class ControllerSwitcherClient:
 
         future = self.list_client.call_async(ListControllers.Request())
 
-        while not future.done():
-            self.node.get_logger().debug("Waiting for controller list...", throttle_duration_sec=1.0)
-
-        response = future.result()
+        response = wait_for_future(future)
 
         return response.controller
 
@@ -94,9 +93,7 @@ class ControllerSwitcherClient:
         request.name = controller_name
         future = self.load_client.call_async(request)
 
-        while not future.done():
-            self.node.get_logger().debug("Waiting for load controller answer...", throttle_duration_sec=1.0)
-        response = future.result()
+        response = wait_for_future(future)
 
         return response.ok
 
@@ -106,9 +103,7 @@ class ControllerSwitcherClient:
         request.name = controller_name
         future = self.configure_client.call_async(request)
 
-        while not future.done():
-            self.node.get_logger().debug("Waiting for configure controller answer...", throttle_duration_sec=1.0)
-        response = future.result()
+        response = wait_for_future(future)
 
         return response.ok
 
@@ -123,9 +118,7 @@ class ControllerSwitcherClient:
 
         future = self.switch_client.call_async(request)
 
-        while not future.done():
-            self.node.get_logger().debug("Waiting for switch controller answer...", throttle_duration_sec=1.0)
-        response = future.result()
+        response = wait_for_future(future)
 
         return response.ok
 
