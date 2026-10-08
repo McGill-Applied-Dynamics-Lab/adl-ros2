@@ -1,8 +1,9 @@
 """Shared harness for osc_controller benchmarks: setup, 1 kHz recording, metrics, saving.
 
-Every run records the controller's own 1 kHz topics (not Robot properties) and saves, next to
-the data, a YAML with the full live controller parameters, the CLI arguments, the git commit and
-the metrics. Two runs are comparable when their YAMLs agree on everything but what you varied.
+Every run records the controller's own 1 kHz topics (not Robot properties) and saves, in its own
+directory results/<benchmark>/<timestamp>[_<tag>]/, the data and a YAML with the full live
+controller parameters, the CLI arguments, the git commit and the metrics. Two runs are comparable
+when their YAMLs agree on everything but what you varied.
 """
 
 from __future__ import annotations
@@ -16,6 +17,7 @@ from typing import Any
 
 import numpy as np
 import yaml
+from _layout import DATA_FILE, META_FILE, new_run_dir
 from arm_client.robot import Pose, Robot, Twist
 from franka_msgs.msg import FrankaRobotState
 from geometry_msgs.msg import TwistStamped, WrenchStamped
@@ -29,7 +31,6 @@ from arm_client import CONFIG_DIR
 
 CONTROLLER = "osc_controller"
 OSC_CONFIG_DIR = CONFIG_DIR / "controllers" / "osc"
-RESULTS_DIR = Path(__file__).parent / "results"
 FS = 1000.0  # controller rate (Hz)
 CHATTER_HP_HZ = 15.0  # motion content of the benchmarks is below this; torque content above is chatter
 DTAU_MAX = 1.0  # limits.delta_tau_max (Nm/tick); also the FR3 torque-rate limit (1000 Nm/s)
@@ -53,7 +54,7 @@ def add_common_args(parser: argparse.ArgumentParser) -> None:
         help="Parameter override applied after --config, e.g. --set gains.k_pos_x=1000 (repeatable)",
     )
     parser.add_argument("--home", action="store_true", help="Home with the JTC before switching to osc_controller")
-    parser.add_argument("--tag", default="", help="Free label stored in the result file name and metadata")
+    parser.add_argument("--tag", default="", help="Free label appended to the run directory name and stored in the metadata")
     parser.add_argument("--keep", action="store_true", help="Keep the --config/--set parameters after the run (default: restore)")
 
 
@@ -365,10 +366,12 @@ def _git_commit() -> str:
 
 
 def save(name: str, args: argparse.Namespace, params: dict, data: dict, metrics: dict) -> Path:
-    """Save data (.npz) and metadata + metrics (.yaml) under results/. Returns the YAML path."""
-    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
-    stem = "_".join(s for s in (name, args.tag, time.strftime("%Y%m%d_%H%M%S")) if s)
-    np.savez_compressed(RESULTS_DIR / f"{stem}.npz", **data)
+    """Save a run to results/<benchmark>/<timestamp>[_<tag>]/: meta.yaml, data.npz and the figures.
+
+    Returns the run directory.
+    """
+    out = new_run_dir(name, args.tag)
+    np.savez_compressed(out / DATA_FILE, **data)
     meta = {
         "benchmark": name,
         "tag": args.tag,
@@ -380,18 +383,17 @@ def save(name: str, args: argparse.Namespace, params: dict, data: dict, metrics:
         "stream_health": _plain(stream_health(data)),
         "metrics": _plain(metrics),
     }
-    path = RESULTS_DIR / f"{stem}.yaml"
-    with open(path, "w") as f:
+    with open(out / META_FILE, "w") as f:
         yaml.safe_dump(meta, f, sort_keys=False)
-    print(f"Saved -> {path} (+ .npz)")
+    print(f"Saved -> {out}/")
     try:
         from plots import plot_run
 
-        for fig_path in plot_run(path):
+        for fig_path in plot_run(out):
             print(f"Plot  -> {fig_path}")
     except Exception as e:  # a plotting bug must never lose a run: redraw later with plots.py
-        print(f"Plotting failed ({type(e).__name__}: {e}); redraw with: python plots.py {path}")
-    return path
+        print(f"Plotting failed ({type(e).__name__}: {e}); redraw with: python plots.py {out}")
+    return out
 
 
 def fmt(v: np.ndarray, scale: float = 1.0, digits: int = 2) -> str:

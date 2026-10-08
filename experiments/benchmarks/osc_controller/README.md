@@ -18,7 +18,7 @@ cd experiments/benchmarks/osc_controller
 python step_response.py --config default --tag base
 python step_response.py --config default --set gains.k_pos_x=1000 --set gains.k_pos_y=1000 --set gains.k_pos_z=1000 --tag kp1000
 python compare.py step_response
-python plots.py --compare results/step_response_base_*.yaml results/step_response_kp1000_*.yaml
+python plots.py --compare results/step_response/*_base results/step_response/*_kp1000
 ```
 
 Always pass `--config` (or `--set`) for runs you want to compare: without it the run uses whatever
@@ -27,13 +27,15 @@ were actually used are in each result YAML (`params`) and in every plot label.
 
 ## Results
 
-`results/<benchmark>_<tag>_<time>.{yaml,npz,png}` (git-ignored).
+One directory per run, `results/<benchmark>/<YYYYmmdd_HHMMSS>[_<tag>]/` (git-ignored); overlays from
+`plots.py --compare` go to `results/<benchmark>/compare/<YYYYmmdd_HHMMSS>/` with a `runs.yaml` listing the
+runs they overlay.
 
-- `.yaml`: CLI args, git commit, all live controller parameters, stream health, metrics
-- `.npz`: raw streams `ee`, `err`, `wrench`, `tau`, `state`, each with `<k>_t` (local arrival time,
+- `meta.yaml`: CLI args, git commit, all live controller parameters, stream health, metrics
+- `data.npz`: raw streams `ee`, `err`, `wrench`, `tau`, `state`, each with `<k>_t` (local arrival time,
   same clock as the event marks) and `<k>_stamp` (controller stamp); `event_t`/`event_label`;
   step targets (`step_*`) or the streamed reference (`ref_*`)
-- `.png`: response figure and per-joint spectra
+- `*.png`: response figure (`steps`, `hold` or `tracking`) and per-joint spectra (`spectra`)
 
 Chatter is the RMS of a signal above 15 Hz (all commanded motion is below that). In step runs it
 includes the step transient itself; compare the hold portion or the spectra for steady chatter.

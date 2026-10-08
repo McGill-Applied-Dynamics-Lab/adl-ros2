@@ -3,14 +3,14 @@
 The eight is a 2:1 Lissajous in the xy plane (as in examples/03_figure_eight.py): y = A_y sin(w t),
 x = A_x sin(2 w t). Time is warped with smooth ramps so the path starts and ends at rest. Targets
 are streamed at --rate with Robot's streaming mode; the analytic velocity is sent on target_twist
-unless --no-twist-ff.
+unless --no-twist-ff. The robot is homed first (JTC) unless --no-home.
 
 Metrics: position error vs the commanded target at the same instant (RMS / max / per axis), the
 lag that best aligns measured and commanded paths, orientation error, torque chatter.
 
 Usage:
     python tracking.py [--period 8] [--cycles 2] [--amp-x 0.08] [--amp-y 0.2] [--rate 500]
-                       [--no-twist-ff] [--config default] [--set ...] [--home] [--tag T]
+                       [--no-twist-ff] [--config default] [--set ...] [--no-home] [--tag T]
 """
 
 from __future__ import annotations
@@ -70,6 +70,9 @@ def main() -> None:
     parser.add_argument("--rate", type=float, default=500.0, help="Target streaming rate (Hz)")
     parser.add_argument("--no-twist-ff", action="store_true", help="Do not stream the target velocity")
     add_common_args(parser)
+    # Home by default: the eight has a fixed size, so it must start where it fits in the workspace
+    parser.add_argument("--no-home", dest="home", action="store_false", help="Start from the current pose instead of homing")
+    parser.set_defaults(home=True)
     args = parser.parse_args()
 
     robot, params = setup(args)

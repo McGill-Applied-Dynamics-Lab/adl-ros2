@@ -10,12 +10,10 @@ between the listed runs and the headline metrics of that benchmark.
 from __future__ import annotations
 
 import argparse
-from pathlib import Path
 
 import yaml
+from _layout import META_FILE, run_dirs
 from plots import gains_label
-
-RESULTS_DIR = Path(__file__).parent / "results"
 
 HEADLINE = {
     "hold": ["err_pos_mean_mm", "err_rot_mean_mrad", "drift_mm", "tau_cmd_rms_hf_max_Nm", "dq_rms_hf_max_mrad_s", "tau_rate_limited_pct_max"],
@@ -52,10 +50,10 @@ def main() -> None:
 
     for bench in [args.benchmark] if args.benchmark else sorted(HEADLINE):
         runs = []
-        for path in sorted(RESULTS_DIR.glob(f"{bench}_*.yaml")):
-            meta = yaml.safe_load(path.read_text())
-            if meta.get("benchmark") == bench and args.tag in (meta.get("tag") or ""):
-                runs.append((path.stem, meta))
+        for run in run_dirs(bench):
+            meta = yaml.safe_load((run / META_FILE).read_text())
+            if args.tag in (meta.get("tag") or ""):
+                runs.append((run.name, meta))
         runs = runs[-args.last :]
         if not runs:
             continue
@@ -69,8 +67,8 @@ def main() -> None:
         print(f"\n### {bench}  ({len(runs)} runs)")
         header = ["run", "gains"] + [c.replace("gains.", "").replace("control.", "") for c in cols]
         rows = []
-        for stem, meta in runs:
-            row = [stem.removeprefix(f"{bench}_"), gains_label(meta["params"])]
+        for name, meta in runs:
+            row = [name, gains_label(meta["params"])]
             for c in cols:
                 v = meta["params"].get(c) if c in varying else meta["metrics"].get(c)
                 row.append(f"{v:.3g}" if isinstance(v, float) else str(v))

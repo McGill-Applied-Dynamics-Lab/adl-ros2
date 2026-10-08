@@ -1,26 +1,25 @@
 """Try to follow a "figure eight" target on the xy plane, elongated along y and centered on the start pose."""
 
-# %%
 import matplotlib.pyplot as plt
 import numpy as np
 from arm_client.robot import Robot
 
 from arm_client import CONFIG_DIR
 
+# --- Setup ---
 robot = Robot(namespace="fr3")
 robot.wait_until_ready()
 
-# %%
 print(robot.end_effector_pose)
 print(robot.q)
 
-# # %%
-# print("Going to home position...")
-# robot.home()
-# homing_pose = robot.end_effector_pose.copy()
+# homing
+print("Going to home position...")
+robot.home()
+homing_pose = robot.end_effector_pose.copy()
 
 
-# %%
+# --- Parameters
 # Parameters for the figure eight (2:1 Lissajous; the slow axis is the long one)
 amplitude_y = 0.2  # [m] half-length of the eight along y
 amplitude_x = 0.08  # [m] half-width of each lobe along x
@@ -29,7 +28,7 @@ sin_freq_y = 0.125  # rot / s
 sin_freq_x = 0.25  # rot / s
 max_time = 8.0
 
-# %%
+# --- Controller setup
 # robot.controller_switcher_client.switch_controller("cartesian_impedance_controller")
 # robot.cartesian_controller_parameters_client.load_param_config(
 #     # file_path="config/control/gravity_compensation.yaml"
@@ -47,12 +46,12 @@ robot.controller_switcher_client.switch_controller("osc_controller")
 robot.osc_controller_parameters_client.load_param_config(file_path=CONFIG_DIR / "controllers" / "osc" / "default.yaml")
 
 
-# %%
+# --- Figure eight trajectory setup
 # Center the figure eight on the current end-effector position (the trajectory starts at the center)
 center = robot.end_effector_pose.position.copy()
 print(f"Figure eight center: {center}")
 
-# %%
+# --- Main control loop
 # The set_target will directly publish the pose to /target_pose
 ee_poses = []
 target_poses = []
@@ -94,7 +93,7 @@ while t < max_time + 1.0:
 print("Done drawing a figure eight!")
 
 
-# %%
+# --- Plotting results
 x_t = [target_pose_sample.position[0] for target_pose_sample in target_poses]
 y_t = [target_pose_sample.position[1] for target_pose_sample in target_poses]
 

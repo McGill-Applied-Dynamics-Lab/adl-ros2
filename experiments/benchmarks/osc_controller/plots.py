@@ -1,10 +1,10 @@
 """Figures for osc_controller benchmark runs.
 
-Every benchmark calls `plot_run` after saving, writing PNGs next to the result files. To redraw
+Every benchmark calls `plot_run` after saving, writing PNGs into the run directory. To redraw
 existing runs, or to overlay several runs (the way to compare gains):
 
-    python plots.py results/step_response_k400_*.yaml               # per-run figures
-    python plots.py --compare results/step_response_*.yaml          # overlays -> results/compare_*.png
+    python plots.py results/step_response/*_k400                     # per-run figures
+    python plots.py --compare results/step_response/2026*            # -> results/step_response/compare/<timestamp>/
 
 Overlays need runs of the same benchmark. Each run is labelled with its tag and key gains.
 """
@@ -12,7 +12,6 @@ Overlays need runs of the same benchmark. Each run is labelled with its tag and 
 from __future__ import annotations
 
 import argparse
-import time
 from pathlib import Path
 
 import matplotlib
@@ -21,6 +20,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
 import yaml  # noqa: E402
+from _layout import DATA_FILE, META_FILE, new_compare_dir, resolve_run  # noqa: E402
 from scipy.signal import butter, sosfiltfilt, welch  # noqa: E402
 from scipy.spatial.transform import Rotation  # noqa: E402
 
@@ -35,12 +35,12 @@ AXES = {"x": 0, "y": 1, "z": 2}
 # =======================
 
 
-def load(yaml_path: str | Path) -> tuple[dict, dict]:
-    yaml_path = Path(yaml_path)
-    meta = yaml.safe_load(yaml_path.read_text())
-    meta["_stem"] = yaml_path.stem
-    meta["_dir"] = yaml_path.parent
-    with np.load(yaml_path.with_suffix(".npz")) as npz:
+def load(run: str | Path) -> tuple[dict, dict]:
+    """(meta, data) of a run, given its directory or its meta.yaml."""
+    run = resolve_run(run)
+    meta = yaml.safe_load((run / META_FILE).read_text())
+    meta["_dir"] = run
+    with np.load(run / DATA_FILE) as npz:
         data = {k: npz[k] for k in npz.files}
     return meta, data
 
@@ -63,7 +63,7 @@ def gains_label(params: dict) -> str:
 
 
 def run_label(meta: dict) -> str:
-    tag = meta.get("tag") or meta["_stem"].split("_")[-1]
+    tag = meta.get("tag") or meta["_dir"].name
     return f"{tag}: {gains_label(meta['params'])}"
 
 
@@ -143,7 +143,7 @@ def step_traces(data: dict, seg: dict, ref_rot: Rotation) -> dict:
 
 
 def _save(fig, meta: dict, kind: str) -> Path:
-    path = meta["_dir"] / f"{meta['_stem']}_{kind}.png"
+    path = meta["_dir"] / f"{kind}.png"
     fig.savefig(path, dpi=110)
     plt.close(fig)
     return path
@@ -292,8 +292,8 @@ def plot_tracking_run(meta: dict, data: dict) -> list[Path]:
 PLOTTERS = {"step_response": plot_step_run, "hold": plot_hold_run, "tracking": plot_tracking_run}
 
 
-def plot_run(yaml_path: str | Path) -> list[Path]:
-    meta, data = load(yaml_path)
+def plot_run(run: str | Path) -> list[Path]:
+    meta, data = load(run)
     return PLOTTERS[meta["benchmark"]](meta, data)
 
 
@@ -349,7 +349,7 @@ def compare_steps(runs: list[tuple[dict, dict]], out: Path) -> list[Path]:
         ax.set_xlabel("time since step command [s]")
     fig.suptitle("step response comparison", fontsize=11)
     fig.tight_layout(rect=(0, 0, 1, 0.97))
-    paths = [out.with_name(out.name + "_steps.png")]
+    paths = [out / "steps.png"]
     fig.savefig(paths[0], dpi=110)
     plt.close(fig)
 
@@ -357,7 +357,7 @@ def compare_steps(runs: list[tuple[dict, dict]], out: Path) -> list[Path]:
     _overlay_spectra(axs, runs, [(d["tau_t"][0], d["tau_t"][-1] + 1e-3) for _, d in runs])
     fig.suptitle("spectra over the whole step sequence", fontsize=11)
     fig.tight_layout(rect=(0, 0, 1, 0.97))
-    paths.append(out.with_name(out.name + "_spectra.png"))
+    paths.append(out / "spectra.png")
     fig.savefig(paths[1], dpi=110)
     plt.close(fig)
     return paths
@@ -386,7 +386,7 @@ def compare_tracking(runs: list[tuple[dict, dict]], out: Path) -> list[Path]:
     _overlay_spectra(ax_s, runs, [(d["ref_t"][0], d["ref_t"][-1]) for _, d in runs])
     fig.suptitle("tracking comparison", fontsize=11)
     fig.tight_layout(rect=(0, 0, 1, 0.97))
-    path = out.with_name(out.name + "_tracking.png")
+    path = out / "tracking.png"
     fig.savefig(path, dpi=110)
     plt.close(fig)
     return [path]
@@ -397,7 +397,7 @@ def compare_hold(runs: list[tuple[dict, dict]], out: Path) -> list[Path]:
     _overlay_spectra(axs, runs, [(d["tau_t"][0], d["tau_t"][-1] + 1e-3) for _, d in runs])
     fig.suptitle("hold comparison", fontsize=11)
     fig.tight_layout(rect=(0, 0, 1, 0.97))
-    path = out.with_name(out.name + "_spectra.png")
+    path = out / "spectra.png"
     fig.savefig(path, dpi=110)
     plt.close(fig)
     return [path]
@@ -406,19 +406,20 @@ def compare_hold(runs: list[tuple[dict, dict]], out: Path) -> list[Path]:
 COMPARERS = {"step_response": compare_steps, "tracking": compare_tracking, "hold": compare_hold}
 
 
-def compare(yaml_paths: list[str | Path]) -> list[Path]:
-    runs = [load(p) for p in yaml_paths]
+def compare(run_paths: list[str | Path]) -> list[Path]:
+    runs = [load(p) for p in run_paths]
     benches = {m["benchmark"] for m, _ in runs}
     if len(benches) != 1:
         raise ValueError(f"Overlay runs of one benchmark at a time, got {sorted(benches)}")
     bench = benches.pop()
-    out = Path(yaml_paths[0]).parent / f"compare_{bench}_{time.strftime('%Y%m%d_%H%M%S')}"
+    out = new_compare_dir(bench)
+    (out / "runs.yaml").write_text(yaml.safe_dump([str(m["_dir"]) for m, _ in runs]))
     return COMPARERS[bench](runs, out)
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("runs", nargs="+", help="Result YAML files")
+    parser.add_argument("runs", nargs="+", help="Run directories (or their meta.yaml)")
     parser.add_argument("--compare", action="store_true", help="Overlay the runs instead of per-run figures")
     args = parser.parse_args()
     paths = compare(args.runs) if args.compare else [p for r in args.runs for p in plot_run(r)]
