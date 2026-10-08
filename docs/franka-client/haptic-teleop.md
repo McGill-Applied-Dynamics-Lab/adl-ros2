@@ -58,6 +58,27 @@ The method family decides what the plant loop streams:
 | `zoh`, `linear`, `tdpa-zoh`, `tdpa-linear` | the handle's position and velocity | `osc_controller`, with its interface-axis gains set to the coupling `kv`, `dv` |
 | `proxy-rim`, `proxy-fixed-mass` | the proxy's position and velocity, plus a feedforward force | the proxy, simulated in the haptic loop at 1 kHz |
 
+## Delays
+
+Each link can carry a simulated delay, a base value plus jitter, set in the `delays` section of
+the config (or the flags):
+
+| Link | Flags |
+|---|---|
+| feedback, robot → haptic | `--feedback-delay-ms`, `--feedback-jitter-ms` |
+| command, haptic → robot | `--command-delay-ms`, `--command-jitter-ms` |
+| both | `--jitter-dist uniform` (base ± jitter) or `normal` (σ = jitter), clipped at 0; `--delay-seed` |
+
+The delay is applied where each link starts: robot samples (and the RIM model) before they reach
+the haptic process, targets before they are published. A link is a stream of latest values: an
+item overtaken by a newer one (variable delay) is dropped, never delivered after it. Freezing the
+robot is not delayed and drops every target still in flight.
+
+With a delay, the staleness watchdog watches the time since the last *delivery* (the link went
+silent), not the sample age, which now includes the delay. The startup warns if the jitter could
+space deliveries close to `--plant-max-age-ms`. The seed is logged, and so is every delivery
+(`feedback_link`, `command_link` streams), so a delayed run can be reproduced and plotted.
+
 ## Running
 
 ```bash

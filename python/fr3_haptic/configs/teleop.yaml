@@ -19,6 +19,14 @@ rates:
   # haptic -> robot: targets sent to osc_controller; null = model_update_hz
   command_hz: null
 
+delays:                      # simulated, per link; 0 = none (the link is bypassed)
+  feedback_delay_ms: 0.0     # robot -> haptic: base delay [ms]
+  feedback_jitter_ms: 0.0    # robot -> haptic: jitter [ms]
+  command_delay_ms: 0.0      # haptic -> robot: base delay [ms]
+  command_jitter_ms: 0.0     # haptic -> robot: jitter [ms]
+  jitter_dist: uniform       # uniform (base +- jitter) | normal (sigma = jitter); clipped at 0
+  delay_seed: null           # null = drawn and logged in the run metadata
+
 interface:
   interface_axis: z
   interface_min: null        # commanded interface position bounds [m], robot base frame

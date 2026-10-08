@@ -56,11 +56,13 @@ from haptic_teleop import (
     run_loop,
 )
 from haptic_teleop.config import FixedMassConfig, LinearConfig, RenderingConfigs, SafetyConfig, TDPAConfig
+from haptic_teleop.delay import DelayConfig
 from pyrim import InterfaceFrame
 from utilities import apply_yaml_config
 
 from .adapters import RobotModelAdapter
 from .config import ModelConfig
+from .links import Links, LinksConfig
 from .plant import FR3Plant, FR3System
 from .recorder import RobotStateRecorder
 from .session import PROXY_METHODS, CommandLoop, CommandLoopConfig, RimModelLoop
@@ -158,6 +160,19 @@ def build_parser() -> argparse.ArgumentParser:
     )
     g.add_argument("--feedforward-cap", type=float, default=15.0, help="proxy methods: feedforward clamp [N]")
 
+    g = p.add_argument_group("delays (simulated, per link; 0 = none)")
+    g.add_argument("--feedback-delay-ms", type=float, default=0.0, help="robot -> haptic: base delay [ms]")
+    g.add_argument("--feedback-jitter-ms", type=float, default=0.0, help="robot -> haptic: jitter [ms]")
+    g.add_argument("--command-delay-ms", type=float, default=0.0, help="haptic -> robot: base delay [ms]")
+    g.add_argument("--command-jitter-ms", type=float, default=0.0, help="haptic -> robot: jitter [ms]")
+    g.add_argument(
+        "--jitter-dist",
+        choices=("uniform", "normal"),
+        default="uniform",
+        help="jitter distribution: uniform (base +- jitter) or normal (sigma = jitter), clipped at 0",
+    )
+    g.add_argument("--delay-seed", type=int, default=None, help="random seed for the delays; default: drawn and logged")
+
     g = p.add_argument_group("robot")
     g.add_argument("--namespace", default="fr3")
     g.add_argument("--controller", default="osc_controller")
@@ -222,6 +237,20 @@ def interface_limits(
     return low, high
 
 
+def links_config(args: argparse.Namespace) -> LinksConfig:
+    """Both links' delays from the flags. A missing seed is drawn here, so it can be logged and
+    the run reproduced; the command link uses ``seed + 1``."""
+    seed = args.delay_seed if args.delay_seed is not None else int(np.random.SeedSequence().entropy % 2**31)
+    return LinksConfig(
+        feedback=DelayConfig(
+            base_ms=args.feedback_delay_ms, jitter_ms=args.feedback_jitter_ms, jitter_dist=args.jitter_dist, seed=seed
+        ),
+        command=DelayConfig(
+            base_ms=args.command_delay_ms, jitter_ms=args.command_jitter_ms, jitter_dist=args.jitter_dist, seed=seed + 1
+        ),
+    )
+
+
 def controller_gains(args: argparse.Namespace) -> list[tuple[str, object]]:
     """``osc_controller`` parameters this run sets, after ``--osc-params``.
 
@@ -251,6 +280,7 @@ def main(argv: list[str] | None = None) -> None:
     frame = InterfaceFrame.from_direction(direction)
     dim = frame.dim
     model_update_hz, rim_update_hz, command_hz = resolve_rates(args)
+    links_cfg = links_config(args)
     limits = None
     if args.interface_min is not None or args.interface_max is not None:
         limits = (
@@ -266,6 +296,7 @@ def main(argv: list[str] | None = None) -> None:
     robot.set_target_streaming(True)  # before the switch: no stale target reaches the controller
     plant_box = PlantMailbox(dim)  # plant samples for the haptic process, written by the callbacks
     boxes = [plant_box]
+    links = Links(links_cfg)  # simulated delays; a zero-delay link is bypassed
     plant = FR3Plant(
         robot,
         frame,
@@ -274,8 +305,9 @@ def main(argv: list[str] | None = None) -> None:
         sample_period_s=0.0 if args.model_update_hz <= 0 else 1.0 / args.model_update_hz,
         interface_limits=limits,
         record=True,
-        mailbox=plant_box,
+        mailbox=links.plant_sink(plant_box),
     )
+    links.start()  # delivers the delayed samples (and later targets); no thread without a delay
     robot.controller_switcher_client.switch_controller(args.controller)
     params = ParametersClient(robot.node, target_node=args.controller)
     params.wait_until_ready()
@@ -365,12 +397,12 @@ def main(argv: list[str] | None = None) -> None:
         CommandLoopConfig(
             method=args.method, command_hz=command_hz, feedforward_cap=args.feedforward_cap, tool_correction=tool_correction
         ),
-        plant=plant,
+        plant=links.command_plant(plant),
         haptic_state=haptic_state,
         status=status,
         dim=dim,
     )
-    rim_loop = RimModelLoop(system, model_box) if system is not None else None
+    rim_loop = RimModelLoop(system, links.model_sink(model_box)) if system is not None else None
 
     np.set_printoptions(precision=4, suppress=True)
     felt_k = args.kv * args.scale * args.force_gain
@@ -380,6 +412,15 @@ def main(argv: list[str] | None = None) -> None:
         + (f", RIM {rim_update_hz:g} Hz" if rim_loop is not None else "")
         + f" | haptic -> robot: commands {command_hz:g} Hz"
     )
+    for name, d in (("feedback (robot -> haptic)", links_cfg.feedback), ("command (haptic -> robot)", links_cfg.command)):
+        if d.enabled:
+            print(f"{TAG} delay {name}: {d.base_ms:g} ms + {d.jitter_dist} jitter {d.jitter_ms:g} ms (seed {d.seed})")
+    gap_ms = links_cfg.worst_delivery_gap_s(model_update_hz) * 1e3
+    if links_cfg.feedback.enabled and gap_ms > 0.8 * args.plant_max_age_ms:
+        print(
+            f"{TAG} WARNING: feedback deliveries can be ~{gap_ms:.0f} ms apart (update period + delay spread); "
+            f"the watchdog trips at {args.plant_max_age_ms:g} ms. Raise --plant-max-age-ms or lower the jitter."
+        )
     print(f"{TAG} coupling kv = {args.kv:g} N/m, dv = {args.dv:g} N·s/m (world) → felt {felt_k:g} N/m")
     print(f"{TAG} controller {args.controller}: {gains}")
     print(f"{TAG} force {'ON, clamped at %.1f N' % args.max_i3_force if args.force else 'OFF (--force to enable)'}")
@@ -424,7 +465,8 @@ def main(argv: list[str] | None = None) -> None:
         gc.enable()
         haptic.stop()
         result = haptic.join()
-        loop.shutdown_robot()
+        loop.shutdown_robot()  # not delayed; drops targets still in flight
+        links.stop()
         if recorder is not None:
             recorder.close()
         plant.close()
@@ -439,6 +481,8 @@ def main(argv: list[str] | None = None) -> None:
             print(f"{TAG} {line}")
     print(f"{TAG} guard trips: {result.guard_trips}, watchdog trips: {result.watchdog_trips}")
     print(f"{TAG} plant samples: {sum(s.rx_s >= t0 for s in plant.history)} during the run")
+    if links_cfg.enabled:
+        print(f"{TAG} links: {links.summary()}")
     if recorder is not None:
         print(f"{TAG} robot log ({args.robot_log_hz:g} Hz): {recorder.summary()}")
 
@@ -446,6 +490,10 @@ def main(argv: list[str] | None = None) -> None:
         "args": {k: (list(v) if isinstance(v, tuple) else v) for k, v in vars(args).items()},
         "controller_gains": gains,
         "command_loop": {k: (v.tolist() if isinstance(v, np.ndarray) else v) for k, v in asdict(loop.cfg).items()},
+        "delays": {
+            "feedback": vars(links_cfg.feedback) if links_cfg.feedback.enabled else None,
+            "command": vars(links_cfg.command) if links_cfg.command.enabled else None,
+        },
         "rates": {
             "haptic_hz": args.haptic_hz,
             "model_update_hz": model_update_hz,
@@ -484,6 +532,13 @@ def main(argv: list[str] | None = None) -> None:
             # Robot state, commanded torques, task error/wrench, EE state; same clock as "plant"
             if recorder is not None:
                 recorder.to_logger(logger, t0)
+            # Every delivery on a delayed link: when it was sent, how long it took
+            for rx_s, delivered_s, delay_s, t_s in links.records.feedback:
+                if delivered_s >= t0:
+                    logger.log_sample("feedback_link", {"delay_ms": delay_s * 1e3, "sent_s": rx_s - t0, "t_s": t_s}, timestamp_s=delivered_s - t0)
+            for sent_s, delivered_s, delay_s in links.records.command:
+                if delivered_s >= t0:
+                    logger.log_sample("command_link", {"delay_ms": delay_s * 1e3, "sent_s": sent_s - t0}, timestamp_s=delivered_s - t0)
     finally:
         for box in boxes:
             box.close()

@@ -103,9 +103,13 @@ method (so the server-side `K`, `D` cannot drift from what ZOH assumes), with de
 - Robot → haptic: `--model-update-hz` (robot states passed to the haptic loop; the controller measures
   at 1 kHz), `--rim-update-hz` (RIM model, ≤ model update). Haptic → robot: `--command-hz` (targets).
   Replaces `--plant-hz` / `--sample-hz`, which mixed the two directions.
-- [ ] Delays: one delay stage per link, at its entry (samples before the `PlantMailbox`, targets before
-  `publish_target`). Before that, build the RIM model from the same controller tick as the sample
-  (add `q`, `dq` to `ee_state`), so both carry the same delay.
+- [x] Delays (2026-10-08): constant + jitter per link (`--feedback-*`, `--command-*`, `--jitter-dist`,
+  `--delay-seed`); latest-value delay lines (`haptic_teleop.delay`) at each link's entry
+  (`fr3_haptic.links`); watchdog on delivery gaps; deliveries logged. Offline: 30 ± 10 ms feedback,
+  20 ± 5 ms command at 100 Hz → sample age max 51 ms, delivery gap max 28 ms, no trip.
+- [ ] RIM model from the same controller tick as the sample (add `q`, `dq` to `ee_state`), so both carry
+  the same delay draw (today: same distribution, independent draws).
+- [ ] 5G trace replay (`src/teleop/network_sim/data/5G-data.csv`, round-trip latencies: halve per link).
 
 ### Phase 3 — bring-up and system ID (hardware)
 0. Without `--force`: `ros2 topic hz /fr3/osc/ee_state`; the arm follows the handle; check the printed

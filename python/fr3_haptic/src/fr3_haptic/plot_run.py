@@ -219,18 +219,22 @@ def fig_timing(plt, s: dict[str, pd.DataFrame], meta: dict):
     h = s.get("haptic")
     if h is None:
         return None
-    fig, axes = plt.subplots(4, 1, sharex=True, figsize=(11, 7.5), constrained_layout=True)
+    links = [(name, s[name]) for name in ("feedback_link", "command_link") if s.get(name) is not None and len(s[name])]
+    fig, axes = plt.subplots(4 + bool(links), 1, sharex=True, figsize=(11, 7.5 + 1.8 * bool(links)), constrained_layout=True)
     a = _args(meta)
     ax = axes[0]
-    ax.set_title("Plant sample age seen by the haptic loop (max over 100 ms; resets at every new sample)")
+    ax.set_title("Plant sample age at the haptic loop (max over 100 ms)")
     age = h["plant_age_s"].replace([np.inf], np.nan) * 1e3
-    ax.plot(h["ts"], age.rolling(100, min_periods=1).max(), color=ORANGE)
+    ax.plot(h["ts"], age.rolling(100, min_periods=1).max(), color=ORANGE, label="since measured (incl. delay)")
+    if "plant_delivery_age_s" in h and links:
+        gap = h["plant_delivery_age_s"].replace([np.inf], np.nan) * 1e3
+        ax.plot(h["ts"], gap.rolling(100, min_periods=1).max(), color=BLUE, label="since delivered (watchdog)")
     limit = a.get("plant_max_age_ms")
     if limit:
         ax.axhline(limit, color=INK_2, linewidth=0.8)
         ax.annotate(f"watchdog limit {limit:g} ms", (h["ts"].iloc[0], limit), xytext=(4, -10),
                     textcoords="offset points", color=INK_2, fontsize=8)  # fmt: skip
-    _finish(ax, "ms", legend=False)
+    _finish(ax, "ms")
 
     ax = axes[1]
     ax.set_title("Device sample age")
@@ -248,6 +252,14 @@ def fig_timing(plt, s: dict[str, pd.DataFrame], meta: dict):
     ax.plot(h["ts"], h["guard_tripped"], color=ORANGE, label="guard tripped")
     ax.set_ylim(-0.05, 1.1)
     _finish(ax, "")
+    if links:
+        ax = axes[4]
+        ax.set_title("Simulated delay, per delivered item")
+        colors = {"feedback_link": ORANGE, "command_link": BLUE}
+        names = {"feedback_link": "feedback (robot -> haptic)", "command_link": "command (haptic -> robot)"}
+        for name, df in links:
+            ax.plot(df["ts"], df["delay_ms"], color=colors[name], label=names[name], linewidth=0.9)
+        _finish(ax, "ms")
     axes[-1].set_xlabel("run time [s]")
     fig.suptitle(_title(meta, "Timing and safety"), x=0.01, ha="left", fontsize=11, fontweight="bold")
     return fig
