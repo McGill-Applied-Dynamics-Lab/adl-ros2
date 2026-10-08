@@ -34,11 +34,11 @@ import time
 from dataclasses import dataclass
 
 import numpy as np
+import rclpy
 from arm_client.robot import Pose, Robot, Twist
 from geometry_msgs.msg import WrenchStamped
 from nav_msgs.msg import Odometry
 from pyrim import DynModel, InterfaceFrame
-import rclpy
 from rclpy.executors import SingleThreadedExecutor
 from rclpy.qos import qos_profile_sensor_data
 from scipy.spatial.transform import Rotation
@@ -126,13 +126,12 @@ class FR3Plant:
         record: bool = False,
         node=None,
     ) -> None:
-        if interface_limits is not None and interface_limits[0] >= interface_limits[1]:
-            raise ValueError(f"interface_limits must be (low, high) with low < high, got {interface_limits}")
         self._robot = robot
         self._frame = frame
         self._hold_pose = None if hold_pose is None else hold_pose.copy()
         self._sample_period_ns = round(float(sample_period_s) * 1e9)
-        self._limits = interface_limits
+        self._limits: tuple[float, float] | None = None
+        self.set_interface_limits(interface_limits)
 
         self._frozen_x: np.ndarray | None = None
         self._record = record
@@ -178,6 +177,17 @@ class FR3Plant:
     def set_hold_pose(self, pose: Pose) -> None:
         """Set the pose held on the free axes and the orientation target."""
         self._hold_pose = pose.copy()
+
+    @property
+    def interface_limits(self) -> tuple[float, float] | None:
+        """``(low, high)`` bounds on the commanded interface coordinate [m], or ``None``."""
+        return self._limits
+
+    def set_interface_limits(self, limits: tuple[float, float] | None) -> None:
+        """Set ``(low, high)`` bounds on the commanded interface coordinate [m]; ``None`` removes them."""
+        if limits is not None and not limits[0] < limits[1]:
+            raise ValueError(f"interface_limits must be (low, high) with low < high, got {limits}")
+        self._limits = None if limits is None else (float(limits[0]), float(limits[1]))
 
     def wait_for_sample(self, timeout_s: float = 2.0, poll_s: float = 0.005) -> FR3PlantSample:
         """Block until a sample arrives and return it.

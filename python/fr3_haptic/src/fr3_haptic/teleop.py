@@ -101,6 +101,12 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--interface-axis", choices=tuple(AXES), default="z", help="robot base axis the interface moves along")
     g.add_argument("--interface-min", type=float, default=None, help="lowest commanded interface position [m]")
     g.add_argument("--interface-max", type=float, default=None, help="highest commanded interface position [m]")
+    g.add_argument(
+        "--interface-range",
+        type=float,
+        default=0.1,
+        help="commanded interface position stays within ± this of the start [m]; 0 disables",
+    )
     g.add_argument("--free-axis-stiffness", type=float, default=0.0, help="handle spring on the free axes [world N/m]")
     g.add_argument("--free-axis-damping", type=float, default=0.0, help="handle damper on the free axes [world N·s/m]")
 
@@ -140,6 +146,25 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--output-dir", default="data/fr3_haptic", help="where --save writes runs")
     g.add_argument("--notes", default="", help="free text stored with the run")
     return p
+
+
+def interface_limits(
+    absolute: tuple[float, float] | None, start: float, half_range: float
+) -> tuple[float, float] | None:
+    """Commanded interface bounds: ``absolute`` (``--interface-min/max``) intersected with
+    ``start ± half_range`` (``--interface-range``; 0 disables it).
+
+    Raises:
+        ValueError: if the start lies outside the absolute bounds.
+    """
+    low, high = absolute if absolute is not None else (-np.inf, np.inf)
+    if not low <= start <= high:
+        raise ValueError(f"the robot starts at {start:.3f} m, outside --interface-min/max ({low}, {high})")
+    if half_range > 0:
+        low, high = max(low, start - half_range), min(high, start + half_range)
+    if np.isinf(low) and np.isinf(high):
+        return None
+    return low, high
 
 
 def controller_gains(args: argparse.Namespace) -> list[tuple[str, object]]:
@@ -204,6 +229,7 @@ def main(argv: list[str] | None = None) -> None:
     first = plant.wait_for_sample()
     hold = first.ee_pose
     plant.set_hold_pose(hold)
+    plant.set_interface_limits(interface_limits(limits, float(first.x_i[0]), args.interface_range))
 
     # -- interface point (proxy-rim: the model's) ------------------------------------------
     system = None

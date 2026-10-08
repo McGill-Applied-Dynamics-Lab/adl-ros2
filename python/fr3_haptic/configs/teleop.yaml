@@ -19,6 +19,7 @@ interface:
   interface_axis: z
   interface_min: null        # commanded interface position bounds [m], robot base frame
   interface_max: null
+  interface_range: 0.1       # commanded position stays within ± this of the start [m]; 0 disables
   free_axis_stiffness: 0.0   # handle spring keeping the hand on the axis [world N/m]
   free_axis_damping: 0.0
 

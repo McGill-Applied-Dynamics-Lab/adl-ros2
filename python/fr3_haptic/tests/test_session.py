@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 from fr3_haptic.plant import StalenessWatchdog
 from fr3_haptic.session import SessionConfig, TeleopSession, haptic_columns
-from fr3_haptic.teleop import build_parser, controller_gains, parse_axes
+from fr3_haptic.teleop import build_parser, controller_gains, interface_limits, parse_axes
 from haptic_teleop import PassivityObserver, TickLog
 from haptic_teleop.config import RenderingConfigs, SafetyConfig
 from pyrim import InterfaceFrame
@@ -202,6 +202,15 @@ def test_default_yaml_keys_are_all_flags():
     assert args.axes == ((1, 0, 2), (1.0, -1.0, 1.0))
     assert args.method == "zoh" and args.plant_hz == 50.0
     assert not args.force  # forces stay a CLI decision
+
+
+def test_interface_limits_combine_absolute_and_range():
+    assert interface_limits(None, 0.3, 0.1) == pytest.approx((0.2, 0.4))
+    assert interface_limits((0.25, np.inf), 0.3, 0.1) == pytest.approx((0.25, 0.4))
+    assert interface_limits(None, 0.3, 0.0) is None
+    assert interface_limits((0.1, 0.5), 0.3, 0.0) == (0.1, 0.5)
+    with pytest.raises(ValueError):
+        interface_limits((0.4, 0.5), 0.3, 0.1)
 
 
 def test_controller_gains_follow_the_method():
