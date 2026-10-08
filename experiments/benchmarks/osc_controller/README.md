@@ -1,6 +1,7 @@
 # osc_controller benchmarks
 
 Reproducible measurements of `osc_controller` (franka-server) from the controller's own 1 kHz topics.
+What they have shown so far, and the open friction problem: [FINDINGS.md](FINDINGS.md).
 
 | Script | Motion | Measures |
 |---|---|---|
