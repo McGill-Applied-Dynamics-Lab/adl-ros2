@@ -106,6 +106,7 @@ class Robot:
     """
 
     _JOINT_CONTROLLER_KEYWORDS = ("joint_trajectory_controller", "joint_impedance_controller", "joint_space_controller")
+    TRAJECTORY_WAIT_HZ = 100.0  # rate at which wait_for_trajectory_completion paces the caller's loop
 
     def __init__(
         self,
@@ -187,6 +188,8 @@ class Robot:
 
         # Flag to disable target_pose publishing during trajectory execution
         self._trajectory_mode_active = False
+        # When the last Cartesian trajectory was sent (time.monotonic()), None if none is running
+        self._trajectory_start_time: float | None = None
 
         self._callback_monitor = CallbackMonitor(
             node=self.node,
@@ -1473,8 +1476,13 @@ class Robot:
         execute it using quintic (5th order) polynomial interpolation for smooth
         motion with continuous velocity and acceleration.
 
+        Pose republishing is paused while the trajectory runs (see `wait_for_trajectory_completion`)
+        and resumes on the final waypoint, so the controller is not pulled back to the pose from
+        before the trajectory.
+
         Args:
-            waypoints: List of Pose objects defining the trajectory waypoints
+            waypoints: List of (Pose, Twist) tuples defining the trajectory waypoints. Only the pose
+                is sent; the twist is not used yet.
             time_from_start: Cumulative time (in seconds) to reach each waypoint from trajectory start.
                            Must be same length as waypoints and monotonically increasing.
             max_linear_velocity: Optional override for max linear velocity (m/s).
@@ -1490,9 +1498,11 @@ class Robot:
             >>> for i, t in enumerate(np.linspace(0, 2.0, 50)):
             >>>     z = 0.5 + 0.05 * np.sin(2*np.pi*t)
             >>>     pose = Pose(np.array([0.4, 0.0, z]), start_pose.orientation)
-            >>>     waypoints.append(pose)
+            >>>     waypoints.append((pose, Twist(np.zeros(3), np.zeros(3))))
             >>>     times.append(t)
-            >>> robot.execute_trajectory(waypoints, times)
+            >>> robot.execute_cartesian_traj(waypoints, times)
+            >>> while robot.wait_for_trajectory_completion(times[-1]):
+            >>>     ...  # read the robot state
         """
         if len(waypoints) != len(time_from_start):
             raise ValueError("waypoints and time_from_start must have the same length")
@@ -1524,11 +1534,14 @@ class Robot:
 
         # Enable trajectory mode to stop continuous pose publishing
         self._trajectory_mode_active = True
+        # Republishing resumes after the trajectory: on its end, not on the pose from before it
+        self._target_pose = waypoints[-1][0].copy()
 
         time.sleep(0.5)  # Small delay to ensure mode switch before publishing
 
         # Publish trajectory
         self._target_trajectory_publisher.publish(msg)
+        self._trajectory_start_time = time.monotonic()
 
         self.node.get_logger().debug(
             f"Sent trajectory with {len(waypoints)} waypoints, total duration: {time_from_start[-1]:.3f}s"
@@ -1537,7 +1550,9 @@ class Robot:
     def wait_for_trajectory_completion(self, expected_duration: float, timeout_margin: float = 2.0):
         """Wait for trajectory execution to complete while allowing state reading.
 
-        This method can be used in a while loop to read robot state during trajectory execution:
+        This method can be used in a while loop to read robot state during trajectory execution.
+        Each call that returns True sleeps 1 / TRAJECTORY_WAIT_HZ (10 ms), which paces that loop.
+        Time is counted from when `execute_cartesian_traj` sent the trajectory.
 
         Example:
             >>> while robot.wait_for_trajectory_completion(duration):
@@ -1546,7 +1561,8 @@ class Robot:
 
         Args:
             expected_duration: Expected trajectory duration in seconds
-            timeout_margin: Additional time to wait beyond expected duration (seconds)
+            timeout_margin: Additional time to wait beyond expected duration (seconds). Pose
+                republishing stays paused until then, so the controller finishes the trajectory.
 
         Returns:
             bool: True if trajectory is still executing, False when complete
@@ -1555,20 +1571,19 @@ class Robot:
             This is a simple time-based wait. For more precise tracking, consider
             converting to a ROS2 action interface in the future.
         """
-        if not hasattr(self, "_trajectory_start_time"):
-            self._trajectory_start_time = self.node.get_clock().now().nanoseconds / 1e9
-            self._trajectory_timeout = expected_duration + timeout_margin
-
-        elapsed = self.node.get_clock().now().nanoseconds / 1e9 - self._trajectory_start_time
-
-        if elapsed >= self._trajectory_timeout:
-            # Re-enable pose publishing and clean up
+        if self._trajectory_start_time is None:
+            # No trajectory running: nothing to wait for
             self._trajectory_mode_active = False
-            delattr(self, "_trajectory_start_time")
-            delattr(self, "_trajectory_timeout")
+            return False
+
+        if time.monotonic() - self._trajectory_start_time >= expected_duration + timeout_margin:
+            # Re-enable pose publishing (on the final waypoint, see execute_cartesian_traj)
+            self._trajectory_mode_active = False
+            self._trajectory_start_time = None
             self.node.get_logger().debug("Trajectory execution completed")
             return False
 
-        # Sleep briefly to control loop rate
-        # self._rate.sleep()
+        # Pace the caller's loop: returning at once makes `while wait_for_trajectory_completion()`
+        # a hot loop that holds the GIL and starves the state callbacks
+        time.sleep(1.0 / self.TRAJECTORY_WAIT_HZ)
         return True

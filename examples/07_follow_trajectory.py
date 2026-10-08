@@ -24,14 +24,17 @@ print("=" * 60)
 print("Testing FR3 Pose Controller Trajectory Interface")
 print("=" * 60)
 # ----------------------------------------------------------------------------------------------------------------------
-# --- 1. Switch to fr3_pose_controller
+# --- 1. Switch to desired controller (uncomment desired one)
 # ----------------------------------------------------------------------------------------------------------------------
 print("\n1 --- Switching to fr3_pose_controller...")
 robot.controller_switcher_client.switch_controller("fr3_pose_controller")
-robot.fr3_pose_controller_parameters_client.load_param_config(
-    file_path=CONFIG_DIR / "controllers" / "fr3_pose" / "default.yaml"
-)
+robot.fr3_pose_controller_parameters_client.load_param_config(file_path=CONFIG_DIR / "controllers" / "fr3_pose" / "default.yaml")
 time.sleep(1.0)
+
+# print("\n1 --- Switching to osc_controller...")
+# robot.controller_switcher_client.switch_controller("osc_controller")
+# robot.osc_controller_parameters_client.load_param_config(file_path=CONFIG_DIR / "controllers" / "osc" / "default.yaml")
+# time.sleep(1.0)
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -62,17 +65,16 @@ else:
 # --- 3. Trajectory mode - Sinusoidal motion in Z
 # ----------------------------------------------------------------------------------------------------------------------
 print("\n3 --- Trajectory mode - Sinusoidal plunge")
-print("Generating sinusoidal trajectory (2 seconds, 50 waypoints)")
 
-#! Generate sinusoidal trajectory starting from negative amplitude (smooth start)
+#! Generate a sinusoidal plunge in z: down by 2 x amplitude and back up, starting and ending at rest
 waypoints = []
 time_from_start = []
-amplitude = 0.1  # 3cm amplitude
-frequency = 0.1  # 0.25 Hz (half cycle in 2s)
-duration = 10.0  # 2 seconds
+amplitude = 0.1  # [m] half the plunge depth
+frequency = 0.1  # [Hz] one full down-and-up cycle in 1 / frequency = 10 s
+duration = 10.0  # [s]
 n_points = 20  # SPARSE waypoints - let controller smooth between them
-phase_offset = np.pi / 2  # Start at 90 degrees to begin at zero crossing
-PLOT_TRAJ = False
+phase_offset = np.pi / 2  # Start at the top of the sine: the current position, zero velocity
+print(f"Generating sinusoidal trajectory ({duration:g} s, {n_points} waypoints)")
 
 start_position = robot.end_effector_pose.position.copy()
 start_orientation = robot.end_effector_pose.orientation
@@ -113,7 +115,7 @@ print(f"  Max theoretical velocity: {max_velocity * 1000:.1f} mm/s")
 
 #! Execute trajectory
 print("  Sending trajectory to controller...")
-robot.execute_trajectory(waypoints, time_from_start)
+robot.execute_cartesian_traj(waypoints, time_from_start)
 
 ee_poses = []
 ts = []
@@ -121,6 +123,8 @@ ee_forces = []
 
 print("  Trajectory sent! Waiting for execution to complete...")
 start_time = time.time()
+# Samples the state at 100 Hz (each call that returns True waits 10 ms); after the trajectory
+# the robot holds its final waypoint
 while robot.wait_for_trajectory_completion(duration, timeout_margin=0.5):
     ee_force = robot.end_effector_external_wrench["force"]
     ee_pose = robot.end_effector_pose
