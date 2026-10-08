@@ -1,7 +1,7 @@
-"""Trajectory tracking benchmark: horizontal figure eight centered on the start pose, orientation held.
+"""Trajectory tracking benchmark: horizontal figure eight (or vertical plunge) from the start pose, orientation held.
 
 The eight is a 2:1 Lissajous in the xy plane (as in examples/03_figure_eight.py): y = A_y sin(w t),
-x = A_x sin(2 w t). Time is warped with smooth ramps so the path starts and ends at rest. Targets
+x = A_x sin(2 w t); --shape plunge goes down by --depth and back up in z. Time is warped with smooth ramps so the path starts and ends at rest. Targets
 are streamed at --rate with Robot's streaming mode; the analytic velocity is sent on target_twist
 unless --no-twist-ff. The robot is homed first (JTC) unless --no-home.
 
@@ -53,17 +53,25 @@ def figure_eight(args, center: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.n
     w = 2.0 * np.pi / args.period
     pos = np.zeros((len(t), 3))
     vel = np.zeros((len(t), 3))
-    pos[:, 0] = args.amp_x * np.sin(2.0 * w * tau)
-    pos[:, 1] = args.amp_y * np.sin(w * tau)
-    vel[:, 0] = args.amp_x * 2.0 * w * np.cos(2.0 * w * tau) * rate
-    vel[:, 1] = args.amp_y * w * np.cos(w * tau) * rate
+    if args.shape == "plunge":
+        # Down by --depth and back up along z each period (examples/07b's trajectory)
+        half = 0.5 * args.depth
+        pos[:, 2] = -half * (1.0 - np.cos(w * tau))
+        vel[:, 2] = -half * w * np.sin(w * tau) * rate
+    else:
+        pos[:, 0] = args.amp_x * np.sin(2.0 * w * tau)
+        pos[:, 1] = args.amp_y * np.sin(w * tau)
+        vel[:, 0] = args.amp_x * 2.0 * w * np.cos(2.0 * w * tau) * rate
+        vel[:, 1] = args.amp_y * w * np.cos(w * tau) * rate
     return t, pos + center, vel
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--period", type=float, default=8.0, help="Period of one eight (s)")
-    parser.add_argument("--cycles", type=int, default=2, help="Number of eights")
+    parser.add_argument("--shape", choices=("eight", "plunge"), default="eight", help="Figure eight in xy, or a vertical plunge in z")
+    parser.add_argument("--depth", type=float, default=0.2, help="Plunge depth (m), for --shape plunge")
+    parser.add_argument("--period", type=float, default=8.0, help="Period of one eight / plunge (s)")
+    parser.add_argument("--cycles", type=int, default=2, help="Number of eights / plunges")
     parser.add_argument("--amp-x", type=float, default=0.08, help="Half-width of the lobes along x (m)")
     parser.add_argument("--amp-y", type=float, default=0.2, help="Half-length of the eight along y (m)")
     parser.add_argument("--ramp", type=float, default=2.0, help="Speed ramp at start and end (s)")
@@ -80,7 +88,7 @@ def main() -> None:
     start = robot.end_effector_pose.copy()
     t_ref, p_ref, v_ref = figure_eight(args, start.position)
     print(
-        f"figure eight: {args.cycles} x {args.period:.1f} s, peak speed {np.linalg.norm(v_ref, axis=1).max() * 1e3:.0f} mm/s, "
+        f"{args.shape}: {args.cycles} x {args.period:.1f} s, peak speed {np.linalg.norm(v_ref, axis=1).max() * 1e3:.0f} mm/s, "
         f"x [{p_ref[:, 0].min():.3f}, {p_ref[:, 0].max():.3f}] y [{p_ref[:, 1].min():.3f}, {p_ref[:, 1].max():.3f}]"
     )
 
@@ -143,7 +151,7 @@ def main() -> None:
         **chatter_metrics(data, t0, t1),
     }
 
-    print("\n=== tracking (figure eight) ===")
+    print(f"\n=== tracking ({args.shape}) ===")
     print(f"position error  RMS {metrics['err_rms_mm']:.2f} mm  max {metrics['err_max_mm']:.2f} mm  per axis RMS {fmt(metrics['err_rms_axis_mm'])} mm")
     print(f"lag {metrics['lag_ms']:.0f} ms (RMS after removing lag {metrics['err_rms_after_lag_mm']:.2f} mm)")
     print(f"orientation error RMS {metrics['rot_err_rms_mrad']:.1f} mrad  max {metrics['rot_err_max_mrad']:.1f} mrad")
