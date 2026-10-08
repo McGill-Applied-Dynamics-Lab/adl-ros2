@@ -54,3 +54,4 @@ run:
   seconds: 60.0
   output_dir: /home/athena/csirois/data/franka/fr3_haptic
   notes: ""
+  robot_log_hz: 50.0         # robot state, commanded torques, task error/wrench, EE state [Hz]; 0 disables

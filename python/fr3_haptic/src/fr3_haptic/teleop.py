@@ -55,6 +55,7 @@ from utilities import apply_yaml_config
 from .adapters import RobotModelAdapter
 from .config import ModelConfig
 from .plant import FR3Plant, FR3System, StalenessWatchdog
+from .recorder import RobotStateRecorder
 from .session import PROXY_METHODS, SessionConfig, TeleopSession, haptic_columns
 
 TAG = "[fr3_teleop]"
@@ -145,6 +146,12 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--save", action="store_true", help="write an MCAP run")
     g.add_argument("--output-dir", default="data/fr3_haptic", help="where --save writes runs")
     g.add_argument("--notes", default="", help="free text stored with the run")
+    g.add_argument(
+        "--robot-log-hz",
+        type=float,
+        default=50.0,
+        help="record robot state, commanded torques, task error/wrench and EE state at this rate [Hz]; 0 disables",
+    )
     return p
 
 
@@ -349,6 +356,9 @@ def main(argv: list[str] | None = None) -> None:
 
     sys.setswitchinterval(SWITCH_INTERVAL_S)
     thread = threading.Thread(target=haptic, name="haptic", daemon=True)
+    recorder = None
+    if args.robot_log_hz > 0:
+        recorder = RobotStateRecorder(plant.node, args.robot_log_hz, seconds=args.seconds + 10.0)
     t0 = time.monotonic()
     try:
         with device, gc_paused():
@@ -370,6 +380,8 @@ def main(argv: list[str] | None = None) -> None:
                 device.write(np.zeros(3))
     finally:
         session.shutdown_robot()
+        if recorder is not None:
+            recorder.close()
         plant.close()
 
     # -- report and log --------------------------------------------------------------------
@@ -380,6 +392,8 @@ def main(argv: list[str] | None = None) -> None:
         print(f"{TAG} {jitter_report(result['jitter'])}")
     print(f"{TAG} guard trips: {session.shared.guard_trips}, watchdog trips: {session.watchdog.trips}")
     print(f"{TAG} plant samples: {len(plant.history)}")
+    if recorder is not None:
+        print(f"{TAG} robot log ({args.robot_log_hz:g} Hz): {recorder.summary()}")
 
     metadata = {
         "args": {k: (list(v) if isinstance(v, tuple) else v) for k, v in vars(args).items()},
@@ -406,6 +420,9 @@ def main(argv: list[str] | None = None) -> None:
             )
         for t_s, x, v, f_ff in session.shared.commands:
             logger.log_sample("command", {"x": x, "v": v, "f_ff": f_ff}, timestamp_s=t_s)
+        # Robot state, commanded torques, task error/wrench, EE state; same clock as "plant"
+        if recorder is not None:
+            recorder.to_logger(logger, t0)
     robot.shutdown()
 
 

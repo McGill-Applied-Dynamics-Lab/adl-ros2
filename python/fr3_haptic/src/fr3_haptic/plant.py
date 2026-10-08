@@ -170,6 +170,11 @@ class FR3Plant:
         return self._frame.dim
 
     @property
+    def node(self):
+        """The node the plant subscribes on (its own, unless one was passed in)."""
+        return self._node
+
+    @property
     def hold_pose(self) -> Pose | None:
         """The pose held on the free axes, and the orientation target."""
         return None if self._hold_pose is None else self._hold_pose.copy()

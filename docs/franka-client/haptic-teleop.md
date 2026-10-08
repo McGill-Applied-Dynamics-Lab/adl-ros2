@@ -63,6 +63,24 @@ pixi run -e humble fr3_teleop --conf python/fr3_haptic/configs/teleop.yaml --met
 Needs franka-server running with `osc_controller`, the colcon overlay sourced, and Haply's Inlet
 service. Every flag can be set in the YAML; `--force`, `--home` and `--save` are CLI-only.
 
+## Logged data
+
+With `--save`, each run writes one MCAP file (`samples.mcap`) and `metadata.json` (all flags,
+controller gains, hold pose, git commit) under `--output-dir`. Streams:
+
+| Stream | Rate | Content |
+|---|---|---|
+| `haptic` | 1 kHz | handle position/velocity on the interface axis, rendered force, plant age, energy, guard and watchdog state |
+| `plant` | `--sample-hz` | robot interface position/velocity, coupling force, EE position, task force |
+| `command` | `--plant-hz` | targets sent to the robot (position, velocity, feedforward force) |
+| `robot_state` | `--robot-log-hz` (50) | every numeric field of `FrankaRobotState`: measured/desired joint state, motor state, external torque and wrench estimates, EE poses, inertias, errors, ... |
+| `joint_torques_cmd`, `task_error`, `task_wrench`, `ee_state` | `--robot-log-hz` | `osc_controller` outputs |
+
+Robot-side streams are recorded at a reduced rate on purpose: decoding one `FrankaRobotState`
+in Python takes ~0.4 ms of the interpreter lock the 1 kHz haptic loop needs, so only the kept
+messages are decoded. Timestamps of `plant` and the robot-side streams are local receive times
+since the start of the run; the controller's own stamp is the `t_s` column.
+
 !!! warning "Safety"
     - Forces are off unless `--force`, and fade in over the first second.
     - If the robot's state stops arriving for more than `plant_max_age_ms`, the handle force fades
