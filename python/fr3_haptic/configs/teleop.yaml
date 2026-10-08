@@ -4,7 +4,7 @@
 method:
   method: zoh                # zoh | linear | tdpa-zoh | tdpa-linear | proxy-rim | proxy-fixed-mass
   kv: 500.0                  # coupling stiffness, world [N/m]; = osc_controller interface-axis stiffness
-  dv: 30.0                   # coupling damping, world [N·s/m]
+  dv: 70.0                   # coupling damping, world [N·s/m]; ~0.7 damping ratio with kv 500 on z at home (Lambda_z 5.4 kg)
   linear_max_extrapolation: 1.0
   tdpa_max_damping: 10.0
   proxy_mass: 1.0

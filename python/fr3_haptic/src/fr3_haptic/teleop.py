@@ -84,7 +84,7 @@ def build_parser() -> argparse.ArgumentParser:
     g = p.add_argument_group("method")
     g.add_argument("--method", choices=METHODS, default="zoh")
     g.add_argument("--kv", type=float, default=500.0, help="coupling stiffness, world [N/m]")
-    g.add_argument("--dv", type=float, default=30.0, help="coupling damping, world [N·s/m]")
+    g.add_argument("--dv", type=float, default=70.0, help="coupling damping, world [N·s/m]")
     g.add_argument("--linear-max-extrapolation", type=float, default=1.0, help="linear: cap, in plant periods")
     g.add_argument("--tdpa-max-damping", type=float, default=10.0, help="TDPA damping cap [N·s/m]; 0 = unbounded")
     g.add_argument("--proxy-mass", type=float, default=1.0, help="proxy-fixed-mass: mass [kg]")
