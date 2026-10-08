@@ -392,14 +392,16 @@ def main(argv: list[str] | None = None) -> None:
     result = HapticResult(error="not started")
     t0 = time.monotonic()
     try:
-        haptic.start()  # the child opens and zeroes the device, then its loop starts
-        t0 = time.monotonic()
         # Collector off for the run (on again below). A generation-2 collection of this heap
-        # (rclpy, arm_client, JAX) took ~74 ms and stalled every thread here, so no plant sample
-        # reached the haptic process and its watchdog tripped; at 1 kHz streaming that happened
-        # within 2 s. Disable only: gc.freeze() (what gc_paused does) stalls rclpy's executors.
+        # (rclpy, arm_client, JAX) takes ~75 ms and stalls every thread here, so no plant sample
+        # reaches the haptic process and its watchdog (50 ms) trips: during the run at high
+        # rates, and at once if this collect() ran after haptic.start(). So: collect *before*
+        # the haptic loop (and its watchdog) starts. Disable only: gc.freeze() (what gc_paused
+        # does) stalls rclpy's executors.
         gc.collect()
         gc.disable()
+        haptic.start()  # the child opens and zeroes the device, then its loop starts
+        t0 = time.monotonic()
         running = lambda: not loop.stopped and haptic.running  # noqa: E731
         if rim_loop is not None:  # robot -> haptic: the RIM model, on its own thread and rate
             rim_thread = threading.Thread(
