@@ -99,9 +99,7 @@ class ParametersClient:
         assert self.list_params_client.service_is_ready(), (
             f"Service for listing params is not ready, have you started the node {self.target_node}?"
         )
-        response: ListParameters.Response = self.list_params_client.call(
-            request=ListParameters.Request()
-        )
+        response: ListParameters.Response = self.list_params_client.call(request=ListParameters.Request())
         return [str(name) for name in response.result.names]
 
     def get_parameters(self, param_names: list[str]) -> list[Any]:
@@ -113,10 +111,7 @@ class ParametersClient:
         Returns:
             list[Any]: A list of values converted to Python-native types.
         """
-        return [
-            parameter_value_to_python(param_value)
-            for param_value in self.get_parameter_values(param_names)
-        ]
+        return [parameter_value_to_python(param_value) for param_value in self.get_parameter_values(param_names)]
 
     def get_parameter_values(self, param_names: list[str]) -> list[ParameterValue]:
         """Get raw ParameterValue messages for the specified parameters from the target node.
