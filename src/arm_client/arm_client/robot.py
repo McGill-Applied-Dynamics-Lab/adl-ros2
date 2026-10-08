@@ -1,7 +1,9 @@
 """Provides a client to control the franka robot. It is the easiest way to control the robot using ROS2."""
 
+import gc
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, List, Sequence
 
@@ -98,7 +100,6 @@ class Robot:
     switching, trajectory generation, and state monitoring.
 
     Attributes:
-        THREADS_REQUIRED (int): Number of threads required for the ROS2 executor
         node (Node): ROS2 node instance
         config (RobotConfig): Robot configuration parameters
         controller_switcher_client: Client for switching between controllers
@@ -106,8 +107,8 @@ class Robot:
         cartesian_controller_parameters_client: Client for Cartesian controller parameters
     """
 
-    THREADS_REQUIRED = 4
     _JOINT_CONTROLLER_KEYWORDS = ("joint_trajectory_controller", "joint_impedance_controller", "joint_space_controller")
+    TRAJECTORY_WAIT_HZ = 100.0  # rate at which wait_for_trajectory_completion paces the caller's loop
 
     def __init__(
         self,
@@ -142,7 +143,7 @@ class Robot:
 
         self._prefix = f"{namespace}_" if namespace else ""
 
-        self.controller_switcher_client = ControllerSwitcherClient(self.node)
+        self.controller_switcher_client = ControllerSwitcherClient(self.node, on_switch=self._reseed_targets)
         self.joint_trajectory_controller_client = JointTrajectoryControllerClient(self.node)
 
         self.cartesian_controller_parameters_client = ParametersClient(
@@ -189,6 +190,8 @@ class Robot:
 
         # Flag to disable target_pose publishing during trajectory execution
         self._trajectory_mode_active = False
+        # When the last Cartesian trajectory was sent (time.monotonic()), None if none is running
+        self._trajectory_start_time: float | None = None
 
         self._callback_monitor = CallbackMonitor(
             node=self.node,
@@ -284,16 +287,24 @@ class Robot:
 
         self._rate = self.node.create_rate(100)  # 100 Hz check rate for smooth data collection
 
+        self._spin_thread = None
         if spin_node:
-            threading.Thread(target=self._spin_node, daemon=True).start()
+            self._spin_thread = threading.Thread(target=self._spin_node, daemon=True)
+            self._spin_thread.start()
 
     def _spin_node(self):
         if not rclpy.ok():
             rclpy.init()
-        executor = rclpy.executors.MultiThreadedExecutor(num_threads=self.THREADS_REQUIRED)
+        # Single-threaded on purpose: rclpy's MultiThreadedExecutor delivered ~11% of the 1 kHz
+        # robot_state/wrench topics (gaps up to ~240 ms) where this one gets all of them. All
+        # callbacks are short and every blocking wait (futures, Rate) runs on the caller's thread.
+        executor = rclpy.executors.SingleThreadedExecutor()
         executor.add_node(self.node)
-        while rclpy.ok():
-            executor.spin_once(timeout_sec=0.1)
+        try:
+            while rclpy.ok():
+                executor.spin_once(timeout_sec=0.1)
+        except rclpy.executors.ExternalShutdownException:
+            pass  # Robot.shutdown() / rclpy.shutdown() from another thread
 
     # =======================
     # MARK: Properties
@@ -529,6 +540,21 @@ class Robot:
         self._q_target = None
         self._target_wrench = None
 
+    def _reseed_targets(self) -> None:
+        """Re-seed the republished targets from the measured state.
+
+        The timers republish the targets to whichever controller is active, so a target left from
+        before (e.g. the pose before a joint-trajectory move) would make a newly activated
+        controller jump to it. Called around every controller switch and after blocking joint
+        trajectories. Feedforward targets (twist, wrench) are zeroed. Targets not measured yet
+        stay None and are seeded by the state callbacks.
+        """
+        self._target_pose = self._current_pose.copy() if self._current_pose is not None else None
+        self._q_target = self._q_current.copy() if self._q_current is not None else None
+        self._target_twist = Twist(np.zeros(3), np.zeros(3))
+        if self._target_wrench is not None:
+            self._target_wrench = {"force": np.zeros(3), "torque": np.zeros(3)}
+
     def wait_until_ready(self, timeout: float = 2.0, check_frequency: float = 10.0):
         """Wait until the robot is ready for operation.
 
@@ -673,6 +699,9 @@ class Robot:
         """Shutdown the node."""
         if rclpy.ok():
             rclpy.shutdown()
+        # Let the spin thread leave rclpy's wait before the interpreter tears down
+        if self._spin_thread is not None and self._spin_thread is not threading.current_thread():
+            self._spin_thread.join(timeout=1.0)
 
     # =======================
     # MARK: Callbacks
@@ -1065,7 +1094,10 @@ class Robot:
             blocking=blocking,
         )
 
-        if len(trajectory.joint_positions) > 0:
+        if blocking:
+            # The arm is where the trajectory ended: Cartesian targets from before the move are stale
+            self._reseed_targets()
+        elif len(trajectory.joint_positions) > 0:
             self._q_target = np.array(trajectory.joint_positions[-1], dtype=float)
 
     def send_joint_trajectory(
@@ -1446,8 +1478,13 @@ class Robot:
         execute it using quintic (5th order) polynomial interpolation for smooth
         motion with continuous velocity and acceleration.
 
+        Pose republishing is paused while the trajectory runs (see `wait_for_trajectory_completion`)
+        and resumes on the final waypoint, so the controller is not pulled back to the pose from
+        before the trajectory.
+
         Args:
-            waypoints: List of Pose objects defining the trajectory waypoints
+            waypoints: List of (Pose, Twist) tuples defining the trajectory waypoints. Only the pose
+                is sent; the twist is not used yet.
             time_from_start: Cumulative time (in seconds) to reach each waypoint from trajectory start.
                            Must be same length as waypoints and monotonically increasing.
             max_linear_velocity: Optional override for max linear velocity (m/s).
@@ -1463,9 +1500,11 @@ class Robot:
             >>> for i, t in enumerate(np.linspace(0, 2.0, 50)):
             >>>     z = 0.5 + 0.05 * np.sin(2*np.pi*t)
             >>>     pose = Pose(np.array([0.4, 0.0, z]), start_pose.orientation)
-            >>>     waypoints.append(pose)
+            >>>     waypoints.append((pose, Twist(np.zeros(3), np.zeros(3))))
             >>>     times.append(t)
-            >>> robot.execute_trajectory(waypoints, times)
+            >>> robot.execute_cartesian_traj(waypoints, times)
+            >>> while robot.wait_for_trajectory_completion(times[-1]):
+            >>>     ...  # read the robot state
         """
         if len(waypoints) != len(time_from_start):
             raise ValueError("waypoints and time_from_start must have the same length")
@@ -1497,20 +1536,134 @@ class Robot:
 
         # Enable trajectory mode to stop continuous pose publishing
         self._trajectory_mode_active = True
+        # Republishing resumes after the trajectory: on its end, not on the pose from before it
+        self._target_pose = waypoints[-1][0].copy()
 
         time.sleep(0.5)  # Small delay to ensure mode switch before publishing
 
         # Publish trajectory
         self._target_trajectory_publisher.publish(msg)
+        self._trajectory_start_time = time.monotonic()
 
         self.node.get_logger().debug(
             f"Sent trajectory with {len(waypoints)} waypoints, total duration: {time_from_start[-1]:.3f}s"
         )
 
+    def stream_cartesian_traj(
+        self,
+        waypoints: Sequence[tuple[Pose, Twist] | Pose],
+        time_from_start: Sequence[float],
+        rate_hz: float = 500.0,
+        on_tick: Callable[[float, Pose, Twist], None] | None = None,
+    ) -> dict[str, float]:
+        """Follow a Cartesian trajectory by streaming interpolated targets (blocking).
+
+        For controllers without a trajectory input, e.g. ``osc_controller``: the trajectory is
+        interpolated here and streamed on ``target_pose`` and ``target_twist`` at ``rate_hz``
+        (use `execute_cartesian_traj` with ``fr3_pose_controller``, which interpolates it itself).
+
+        Positions follow a cubic spline through the waypoints with zero velocity at both ends,
+        orientations a slerp between them; the spline velocity is sent as the twist feedforward.
+        Each tick evaluates the trajectory at the actual elapsed time, so a late tick does not
+        delay the rest. Garbage collection is paused while streaming (a full collection can stall
+        the loop for tens of ms). Afterwards Robot republishes the final waypoint.
+
+        Args:
+            waypoints: Poses, or (Pose, Twist) tuples as for `execute_cartesian_traj` (the twists
+                are not used: velocities come from the spline).
+            time_from_start: Time of each waypoint from the start [s], strictly increasing. If the
+                first one is after 0, the trajectory starts from the current pose.
+            rate_hz: Streaming rate [Hz].
+            on_tick: Called after each published target with (t, target pose, target twist), e.g.
+                to log the state. Keep it short: it runs in the streaming loop.
+
+        Returns:
+            dict: ``ticks`` sent and ``max_gap_s``, the largest interval between two of them.
+
+        Raises:
+            ValueError: on malformed waypoints or times.
+            RuntimeError: if a joint-space controller is active (it ignores Cartesian targets).
+        """
+        from scipy.interpolate import CubicSpline
+
+        poses = [w[0] if isinstance(w, tuple) else w for w in waypoints]
+        times = [float(t) for t in time_from_start]
+        if len(poses) != len(times) or not poses:
+            raise ValueError("waypoints and time_from_start must be non-empty and of the same length")
+        if times[0] < 0.0 or np.any(np.diff(times) <= 0.0):
+            raise ValueError("time_from_start must be non-negative and strictly increasing")
+        if times[0] > 0.0:
+            poses = [self.end_effector_pose, *poses]
+            times = [0.0, *times]
+        if len(poses) < 2:
+            raise ValueError("a trajectory needs at least two poses (or a first time after 0)")
+
+        active = self.controller_switcher_client.get_active_controller()
+        if active is None or self._is_joint_controller(active):
+            raise RuntimeError(f"stream_cartesian_traj needs a Cartesian controller, active controller is {active}")
+
+        start_offset = np.linalg.norm(poses[0].position - self.end_effector_pose.position)
+        if start_offset > 0.01:
+            self.node.get_logger().warn(f"stream_cartesian_traj: first waypoint is {start_offset * 1e3:.0f} mm from the current pose; the controller will jump to it")
+
+        t_knots = np.array(times)
+        position = CubicSpline(t_knots, np.array([p.position for p in poses]), bc_type="clamped")
+        velocity = position.derivative()
+        rotations = Rotation.from_quat([p.orientation.as_quat() for p in poses])
+        orientation = Slerp(t_knots, rotations)
+        # Constant angular velocity within each segment (base frame), zero after the end
+        segment_omega = (rotations[1:] * rotations[:-1].inv()).as_rotvec() / np.diff(t_knots)[:, None]
+        duration = t_knots[-1]
+
+        def sample(t: float) -> tuple[Pose, Twist]:
+            t = min(max(t, 0.0), duration)
+            segment = min(np.searchsorted(t_knots, t, side="right") - 1, len(segment_omega) - 1)
+            omega = segment_omega[segment] if t < duration else np.zeros(3)
+            return Pose(position(t), orientation([t])[0]), Twist(velocity(t), omega)
+
+        was_streaming = self._streaming
+        gc_was_enabled = gc.isenabled()
+        period = 1.0 / rate_hz
+        ticks, max_gap, last_send = 0, 0.0, None
+        self.set_target_streaming(True)
+        gc.collect()
+        gc.disable()
+        try:
+            t0 = time.monotonic()
+            next_tick = t0
+            while True:
+                now = time.monotonic()
+                elapsed = now - t0
+                pose, twist = sample(elapsed)
+                self.publish_target(pose=pose, twist=twist)
+                if last_send is not None:
+                    max_gap = max(max_gap, now - last_send)
+                last_send = now
+                ticks += 1
+                if on_tick is not None:
+                    on_tick(elapsed, pose, twist)
+                if elapsed >= duration:
+                    break
+                next_tick += period
+                delay = next_tick - time.monotonic()
+                if delay > 0.0:
+                    time.sleep(delay)
+                else:
+                    next_tick = time.monotonic()  # late: resynchronise rather than burst
+        finally:
+            # Hold the last streamed pose (the final waypoint unless interrupted), at rest
+            self.publish_target(twist=Twist(np.zeros(3), np.zeros(3)))
+            if gc_was_enabled:
+                gc.enable()
+            self.set_target_streaming(was_streaming)
+        return {"ticks": ticks, "max_gap_s": max_gap}
+
     def wait_for_trajectory_completion(self, expected_duration: float, timeout_margin: float = 2.0):
         """Wait for trajectory execution to complete while allowing state reading.
 
-        This method can be used in a while loop to read robot state during trajectory execution:
+        This method can be used in a while loop to read robot state during trajectory execution.
+        Each call that returns True sleeps 1 / TRAJECTORY_WAIT_HZ (10 ms), which paces that loop.
+        Time is counted from when `execute_cartesian_traj` sent the trajectory.
 
         Example:
             >>> while robot.wait_for_trajectory_completion(duration):
@@ -1519,7 +1672,8 @@ class Robot:
 
         Args:
             expected_duration: Expected trajectory duration in seconds
-            timeout_margin: Additional time to wait beyond expected duration (seconds)
+            timeout_margin: Additional time to wait beyond expected duration (seconds). Pose
+                republishing stays paused until then, so the controller finishes the trajectory.
 
         Returns:
             bool: True if trajectory is still executing, False when complete
@@ -1528,20 +1682,19 @@ class Robot:
             This is a simple time-based wait. For more precise tracking, consider
             converting to a ROS2 action interface in the future.
         """
-        if not hasattr(self, "_trajectory_start_time"):
-            self._trajectory_start_time = self.node.get_clock().now().nanoseconds / 1e9
-            self._trajectory_timeout = expected_duration + timeout_margin
-
-        elapsed = self.node.get_clock().now().nanoseconds / 1e9 - self._trajectory_start_time
-
-        if elapsed >= self._trajectory_timeout:
-            # Re-enable pose publishing and clean up
+        if self._trajectory_start_time is None:
+            # No trajectory running: nothing to wait for
             self._trajectory_mode_active = False
-            delattr(self, "_trajectory_start_time")
-            delattr(self, "_trajectory_timeout")
+            return False
+
+        if time.monotonic() - self._trajectory_start_time >= expected_duration + timeout_margin:
+            # Re-enable pose publishing (on the final waypoint, see execute_cartesian_traj)
+            self._trajectory_mode_active = False
+            self._trajectory_start_time = None
             self.node.get_logger().debug("Trajectory execution completed")
             return False
 
-        # Sleep briefly to control loop rate
-        # self._rate.sleep()
+        # Pace the caller's loop: returning at once makes `while wait_for_trajectory_completion()`
+        # a hot loop that holds the GIL and starves the state callbacks
+        time.sleep(1.0 / self.TRAJECTORY_WAIT_HZ)
         return True

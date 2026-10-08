@@ -45,7 +45,7 @@ test = { cmd = [
     "install_$ROS_DISTRO",
 ], depends-on = "build" }
 
-test-py = { cmd = "pytest python/pyrim/tests python/rim_teleop/tests", depends-on = "build" } # Python-only packages in python/
+test-py = { cmd = "pytest python/fr3_haptic/tests", depends-on = "build" } # Python-only packages in python/ (pyrim is tested in external/adl-python)
 
 gen-vscode-env = { cmd = """
 bash -c '

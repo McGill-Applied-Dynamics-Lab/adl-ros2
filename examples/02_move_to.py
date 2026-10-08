@@ -1,10 +1,8 @@
 """Home the robot"""
 
-import time
-
 from arm_client.robot import Robot
-from arm_client import CONFIG_DIR
 
+from arm_client import CONFIG_DIR
 
 # robot = Robot()
 robot = Robot(namespace="fr3")
@@ -26,13 +24,11 @@ robot.wait_until_ready(timeout=2.0)
 # )
 
 #
-robot.controller_switcher_client.switch_controller("osc_pd_controller")
-robot.osc_pd_controller_parameters_client.load_param_config(
-    file_path=CONFIG_DIR / "controllers" / "osc_pd" / "default.yaml"
-)
+robot.controller_switcher_client.switch_controller("osc_controller")
+robot.osc_controller_parameters_client.load_param_config(file_path=CONFIG_DIR / "controllers" / "osc" / "default.yaml")
 
 # -- Move
-position = [0.4, 0.0, 0.5]  # x, y, z in meters
+position = [0.4, 0.2, 0.5]  # x, y, z in meters
 robot.move_to(position=position, speed=0.05)
 
 print("Done")
