@@ -89,6 +89,16 @@ method (so the server-side `K`, `D` cannot drift from what ZOH assumes), with de
 - [ ] Deadman (Inverse3 has no button; keyboard or foot pedal?).
 - [ ] `CLAUDE.md` RIM section → `fr3_haptic` (deferred: `main` has uncommitted edits there).
 
+### Phase 2b — haptic loop in its own process (done 2026-10-08)
+- [x] Measured on the robot: haptic thread at 644 Hz with robot-state logging, 850 Hz without
+  (rclpy decoding 1 kHz topics in Python holds the GIL; `Robot` decodes every `FrankaRobotState`).
+- [x] adl-python `haptic_teleop` (`b3c2a28`): shared-memory mailboxes (`shared.py`), `HapticStep` +
+  `HapticProcess` (`haptic_process.py`), `StalenessWatchdog`, `ScriptedDevice`. Rationale in its DECISIONS.md.
+- [x] `fr3_haptic`: `session.PlantLoop` (plant side only), `FR3Plant` publishes to a `PlantMailbox`,
+  `fr3_teleop` runs the haptic process; `--haptic-cpu`, `--haptic-rt-priority`.
+- [x] Offline, parent under worst-case ROS load: 1000.0 Hz, p99 deadline error 0.061 ms, worst period 1.05 ms.
+- [ ] On the robot: haptic rate and plant age with `--robot-log-hz 50`.
+
 ### Phase 3 — bring-up and system ID (hardware)
 0. Without `--force`: `ros2 topic hz /fr3/osc/ee_state`; the arm follows the handle; check the printed
    plant age and haptic rate; GIL load of haptic loop + plant spin + `Robot` executor in one process.

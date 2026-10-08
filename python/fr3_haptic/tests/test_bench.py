@@ -2,7 +2,6 @@
 
 import numpy as np
 import pytest
-
 from fr3_haptic.bench import HapticBench, HapticBenchConfig
 from fr3_haptic.bench.haptic_bench import SAMPLE_COLUMNS
 
@@ -101,9 +100,9 @@ def test_contact_wall_offset_blocks_mass():
 
 def test_set_interface_force_caps_and_lifts():
     """The 3D force sent to the device is on the interface axis and capped."""
-    from pyrim import InterfaceFrame
     from fr3_haptic.adapters import TeleopInterfaceAdapter
     from fr3_haptic.config import InterfaceConfig
+    from pyrim import InterfaceFrame
 
     dev = FakeInverse3()
     adapter = TeleopInterfaceAdapter(

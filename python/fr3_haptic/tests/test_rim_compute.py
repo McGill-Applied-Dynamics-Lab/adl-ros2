@@ -1,5 +1,4 @@
 import numpy as np
-
 from pyrim import DynModel, RIMCalculator
 
 

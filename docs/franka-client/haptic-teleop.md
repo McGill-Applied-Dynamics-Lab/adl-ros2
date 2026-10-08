@@ -11,10 +11,14 @@
 flowchart LR
     I3(["Inverse3"])
 
-    subgraph CLIENT["Client PC: fr3_teleop (Python)"]
-        H["Haptic loop<br/>1 kHz"]
-        P["Plant loop<br/>50 to 1000 Hz"]
-        S["Robot state<br/>1 kHz"]
+    subgraph CLIENT["Client PC"]
+        subgraph HP["Haptic process (no ROS)"]
+            H["Haptic loop<br/>1 kHz"]
+        end
+        subgraph RP["fr3_teleop process (ROS)"]
+            P["Plant loop<br/>50 to 1000 Hz"]
+            S["Robot state<br/>1 kHz"]
+        end
     end
 
     subgraph SERVER["franka-pc (C++)"]
@@ -24,22 +28,25 @@ flowchart LR
     FR3(["FR3 arm"])
 
     I3 <-->|"position / force"| H
-    H -->|"leader position"| P
+    H -.->|"leader position<br/>(shared memory)"| P
     P -->|"targets"| OSC
     OSC <-->|"torques / state"| FR3
     OSC -->|"robot position<br/>+ coupling force"| S
-    S -->|"latest sample"| H
+    S -.->|"latest sample<br/>(shared memory)"| H
 ```
 
-| Loop | Rate | Runs on | Job |
+| Loop | Rate | Runs in | Job |
 |---|---|---|---|
-| Haptic loop | 1 kHz | client PC | Reads the handle, runs the rendering method, writes the force back. Never goes through ROS. |
-| Plant loop | 50 to 1000 Hz (`--plant-hz`) | client PC | Streams the targets to the robot. |
-| Robot state | 1 kHz | client PC | Receives the robot's state and hands the latest sample to the haptic loop. |
+| Haptic loop | 1 kHz | its own process, no ROS | Reads the handle, runs the rendering method, writes the force back. |
+| Plant loop | 50 to 1000 Hz (`--plant-hz`) | `fr3_teleop` | Streams the targets to the robot. |
+| Robot state | 1 kHz | `fr3_teleop` | Receives the robot's state and publishes the latest sample to the haptic process. |
 | `osc_controller` | 1 kHz | franka-pc | Moves the robot toward the target through a spring-damper. |
 
-The three client loops are threads of one Python process. The two client-server links are
-ROS 2 topics over the network.
+The haptic loop runs in a separate process (`haptic_teleop.HapticProcess`) so that nothing the
+ROS side does can slow it down: decoding 1 kHz robot topics in Python takes the interpreter lock,
+which dropped the haptic rate to 650–850 Hz when both shared one process. The two processes
+exchange only the latest values (leader state one way, plant sample the other) through shared
+memory. Both ROS links are topics over the network.
 
 ## What the robot is sent
 

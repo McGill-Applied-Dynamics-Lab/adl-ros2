@@ -45,7 +45,7 @@ from scipy.spatial.transform import Rotation
 
 from .adapters import RobotModelAdapter
 
-__all__ = ["FR3Plant", "FR3PlantSample", "FR3System", "StalenessWatchdog"]
+__all__ = ["FR3Plant", "FR3PlantSample", "FR3System"]
 
 
 @dataclass(frozen=True)
@@ -110,6 +110,8 @@ class FR3Plant:
         record: keep every sample (after decimation) in [history][FR3Plant.history], for logging.
         node: subscribe on this node, which the caller spins. ``None`` (the default) creates
             the plant's own node and a single-threaded executor thread for it.
+        mailbox: also publish every kept sample here (a ``haptic_teleop.PlantMailbox``), for a
+            haptic loop in another process.
     """
 
     _MAX_PENDING = 16
@@ -125,6 +127,7 @@ class FR3Plant:
         interface_limits: tuple[float, float] | None = None,
         record: bool = False,
         node=None,
+        mailbox=None,
     ) -> None:
         self._robot = robot
         self._frame = frame
@@ -135,6 +138,7 @@ class FR3Plant:
 
         self._frozen_x: np.ndarray | None = None
         self._record = record
+        self._mailbox = mailbox
         self.history: list[FR3PlantSample] = []
         """Every sample, in order, when ``record`` is set."""
         self.sample: tuple[int, FR3PlantSample] | None = None
@@ -248,6 +252,8 @@ class FR3Plant:
             self.sample = (self._updates, sample)
             if self._record:
                 self.history.append(sample)
+            if self._mailbox is not None:
+                self._mailbox.write(sample.x_i, sample.v_i, sample.lam, sample.t_s, sample.rx_s)
 
     def _store(self, pending: dict, key: int, msg) -> None:
         pending[key] = msg
@@ -358,46 +364,6 @@ class FR3Plant:
             self._node.destroy_node()
             self._executor = None
         self._robot.set_target_streaming(False)
-
-
-class StalenessWatchdog:
-    """Gain in ``[0, 1]`` that ramps the haptic force down when the plant goes quiet.
-
-    Feed it the sample age every haptic tick and multiply the rendered force by the result.
-    While the age exceeds ``max_age_s`` the gain ramps to 0 over ``ramp_s``; once fresh again
-    it ramps back up, unless ``latch`` is set, in which case the first trip holds it at 0 for
-    the rest of the run (a stale trial is invalid anyway).
-
-    Args:
-        max_age_s: largest acceptable sample age [s].
-        ramp_s: time to ramp the gain fully down or up [s].
-        latch: keep the gain at 0 after the first trip.
-    """
-
-    def __init__(self, max_age_s: float, ramp_s: float = 0.1, latch: bool = True) -> None:
-        if max_age_s <= 0 or ramp_s <= 0:
-            raise ValueError(f"max_age_s and ramp_s must be positive, got {max_age_s}, {ramp_s}")
-        self.max_age_s = float(max_age_s)
-        self.ramp_s = float(ramp_s)
-        self.latch = latch
-        self.gain = 0.0
-        self.stale = True
-        self.tripped = False
-        self.trips = 0
-
-    def update(self, age_s: float, dt: float) -> float:
-        """Advance by ``dt`` [s] with the current sample age [s]; return the gain."""
-        stale = age_s > self.max_age_s
-        if stale and not self.stale and not self.tripped:
-            self.trips += 1
-            self.tripped = self.latch
-        self.stale = stale
-        step = dt / self.ramp_s
-        if stale or self.tripped:
-            self.gain = max(0.0, self.gain - step)
-        else:
-            self.gain = min(1.0, self.gain + step)
-        return self.gain
 
 
 class FR3System:

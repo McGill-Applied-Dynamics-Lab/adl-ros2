@@ -9,6 +9,11 @@ is ``osc_controller`` on franka-pc at 1 kHz, its interface-axis gains set to the
 (``proxy-rim``, ``proxy-fixed-mass``): the proxy runs here at the haptic rate and is streamed
 as the target with a feedforward force; the controller gains come from ``--osc-params``.
 
+The haptic loop (device, rendering method, guard, watchdog) runs in its own process
+(``haptic_teleop.HapticProcess``) that imports no ROS: nothing this process does — `Robot`'s
+1 kHz subscriptions, the robot-state recorder — can take its interpreter lock. This process
+runs the ROS side and the plant loop; they exchange the latest values through shared memory.
+
 Setup order matters for safety. Target streaming is enabled *before* the controller switch,
 so ``Robot``'s periodic republishing never sends an old target to the new controller; the
 hold pose (free axes, orientation) and the device origin come from the controller's own first
@@ -29,8 +34,6 @@ Needs the colcon overlay sourced (``arm_client``), franka-server running with
 from __future__ import annotations
 
 import argparse
-import sys
-import threading
 import time
 from dataclasses import asdict
 
@@ -39,27 +42,28 @@ from arm_client.control.parameters_client import ParametersClient
 from arm_client.robot import Robot
 from experiment_logger import ExperimentLogger, LoggingConfig
 from haptic_teleop import (
-    LoopRateMonitor,
-    PassivityObserver,
-    RateTicker,
-    TickLog,
+    HapticProcess,
+    HapticProcessSpec,
+    HapticResult,
+    HapticStateMailbox,
+    HapticStepConfig,
+    ModelMailbox,
+    PlantMailbox,
+    StatusMailbox,
     gc_paused,
-    jitter_report,
     run_loop,
 )
 from haptic_teleop.config import FixedMassConfig, LinearConfig, RenderingConfigs, SafetyConfig, TDPAConfig
-from haptic_teleop.devices import Inverse3Device
 from pyrim import InterfaceFrame
 from utilities import apply_yaml_config
 
 from .adapters import RobotModelAdapter
 from .config import ModelConfig
-from .plant import FR3Plant, FR3System, StalenessWatchdog
+from .plant import FR3Plant, FR3System
 from .recorder import RobotStateRecorder
-from .session import PROXY_METHODS, SessionConfig, TeleopSession, haptic_columns
+from .session import PROXY_METHODS, PlantLoop, PlantLoopConfig
 
 TAG = "[fr3_teleop]"
-SWITCH_INTERVAL_S = 1e-4  # GIL switch interval while the loops run [s]; Python's default is 5e-3
 METHODS = ("zoh", "linear", "tdpa-zoh", "tdpa-linear", "proxy-rim", "proxy-fixed-mass")
 AXES = "xyz"
 
@@ -130,6 +134,10 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--guard-cooldown-s", type=float, default=3.0, help="force off after a guard trip [s]; 0 ends the run")
     g.add_argument("--plant-max-age-ms", type=float, default=50.0, help="watchdog: largest plant sample age [ms]")
     g.add_argument("--watchdog-ramp-ms", type=float, default=100.0, help="watchdog: force ramp [ms]")
+    g.add_argument("--haptic-cpu", type=int, default=None, help="pin the haptic process to this CPU")
+    g.add_argument(
+        "--haptic-rt-priority", type=int, default=None, help="SCHED_FIFO priority of the haptic process (needs the privilege)"
+    )
     g.add_argument("--feedforward-cap", type=float, default=15.0, help="proxy methods: feedforward clamp [N]")
 
     g = p.add_argument_group("robot")
@@ -216,6 +224,8 @@ def main(argv: list[str] | None = None) -> None:
     if args.home:
         robot.home()
     robot.set_target_streaming(True)  # before the switch: no stale target reaches the controller
+    plant_box = PlantMailbox(dim)  # plant samples for the haptic process, written by the callbacks
+    boxes = [plant_box]
     plant = FR3Plant(
         robot,
         frame,
@@ -224,6 +234,7 @@ def main(argv: list[str] | None = None) -> None:
         sample_period_s=0.0 if sample_hz <= 0 else 1.0 / sample_hz,
         interface_limits=limits,
         record=True,
+        mailbox=plant_box,
     )
     robot.controller_switcher_client.switch_controller(args.controller)
     params = ParametersClient(robot.node, target_node=args.controller)
@@ -250,34 +261,11 @@ def main(argv: list[str] | None = None) -> None:
         tool_correction = first.x_i - system.model.x_i
     leader_origin = hold.position - frame.lift(tool_correction)
 
-    # -- method, device, safety ------------------------------------------------------------
+    # -- haptic process: method, device and safety live there ------------------------------
     rendering = RenderingConfigs(
         linear=LinearConfig(max_extrapolation=args.linear_max_extrapolation),
         fixed_mass=FixedMassConfig(mass=args.proxy_mass),
         tdpa=TDPAConfig(max_damping=args.tdpa_max_damping),
-    )
-    method = rendering.build(
-        args.method,
-        dim,
-        dt=1.0 / args.haptic_hz,
-        stiffness=args.kv,
-        damping=args.dv,
-        contact_surface=-np.inf if args.contact_surface is None else args.contact_surface,
-        contact_axis=0,
-        basis=frame.basis,
-    )
-    device = Inverse3Device(
-        origin=tuple(leader_origin),
-        scale=args.scale,
-        axes=axes,
-        signs=tuple(signs),
-        dim=3,
-        force_gain=args.force_gain,
-        force_enabled=args.force,
-        max_force=args.max_i3_force if args.force else 0.0,
-        write_through=not args.no_write_through,
-        velocity_filter_hz=args.vel_filter_hz,
-        uri=args.uri,
     )
     safety = SafetyConfig(
         energy_budget_mj=args.energy_budget_mj,
@@ -286,111 +274,110 @@ def main(argv: list[str] | None = None) -> None:
         chatter_deadband_n=args.chatter_deadband_n,
         guard_cooldown_s=args.guard_cooldown_s,
     )
-    cfg = SessionConfig(
-        method=args.method,
-        haptic_hz=args.haptic_hz,
-        plant_hz=args.plant_hz,
-        max_force_world=args.max_i3_force / args.force_gain,
-        force_ramp_s=args.force_ramp_s,
-        guard_cooldown_s=args.guard_cooldown_s,
-        free_axis_stiffness=args.free_axis_stiffness,
-        free_axis_damping=args.free_axis_damping,
-        feedforward_cap=args.feedforward_cap,
-        tool_correction=tool_correction,
-    )
-    n_ticks = round(args.seconds * args.haptic_hz)
-    log = TickLog(n_ticks, haptic_columns(dim))
-    session = TeleopSession(
-        cfg,
-        device=device,
-        plant=plant,
-        method=method,
-        frame=frame,
+    haptic_state, status = HapticStateMailbox(dim), StatusMailbox()
+    boxes += [haptic_state, status]
+    model_box = None
+    if system is not None:
+        model_box = ModelMailbox(system.model.n, dim)
+        boxes.append(model_box)
+        model_box.write(system.model)
+    spec = HapticProcessSpec(
+        basis=frame.basis,
         leader_origin=leader_origin,
-        observer=PassivityObserver(),
-        guard=safety.build(max_i3_force=args.max_i3_force),
-        watchdog=StalenessWatchdog(args.plant_max_age_ms * 1e-3, args.watchdog_ramp_ms * 1e-3, latch=True),
-        device_axes=axes,
-        device_signs=signs,
-        device_scale=args.scale,
-        log=log,
+        method=args.method,
+        rendering=rendering,
+        stiffness=args.kv,
+        damping=args.dv,
+        contact_surface=-np.inf if args.contact_surface is None else args.contact_surface,
+        step=HapticStepConfig(
+            haptic_hz=args.haptic_hz,
+            max_force_world=args.max_i3_force / args.force_gain,
+            force_ramp_s=args.force_ramp_s,
+            guard_cooldown_s=args.guard_cooldown_s,
+            free_axis_stiffness=args.free_axis_stiffness,
+            free_axis_damping=args.free_axis_damping,
+        ),
+        safety=safety,
+        max_i3_force=args.max_i3_force,
+        watchdog_max_age_s=args.plant_max_age_ms * 1e-3,
+        watchdog_ramp_s=args.watchdog_ramp_ms * 1e-3,
+        device_kwargs={
+            "scale": args.scale,
+            "axes": axes,
+            "signs": tuple(signs),
+            "dim": 3,
+            "force_gain": args.force_gain,
+            "force_enabled": args.force,
+            "max_force": args.max_i3_force if args.force else 0.0,
+            "write_through": not args.no_write_through,
+            "velocity_filter_hz": args.vel_filter_hz,
+            "uri": args.uri,
+        },
+        seconds=args.seconds,
+        plant=plant_box,
+        model=model_box,
+        state_out=haptic_state,
+        status_out=status,
+        cpu=args.haptic_cpu,
+        rt_priority=args.haptic_rt_priority,
+    )
+    loop = PlantLoop(
+        PlantLoopConfig(
+            method=args.method, plant_hz=args.plant_hz, feedforward_cap=args.feedforward_cap, tool_correction=tool_correction
+        ),
+        plant=plant,
+        haptic_state=haptic_state,
+        status=status,
+        dim=dim,
         system=system,
+        model_out=model_box,
     )
 
     np.set_printoptions(precision=4, suppress=True)
     felt_k = args.kv * args.scale * args.force_gain
     print(f"{TAG} {args.method} along {args.interface_axis}; hold pose {hold.position} m, leader origin {leader_origin} m")
-    print(f"{TAG} rates: haptic {args.haptic_hz:g} Hz, plant {args.plant_hz:g} Hz, samples {sample_hz:g} Hz (0 = every tick)")
+    print(f"{TAG} rates: haptic {args.haptic_hz:g} Hz (own process), plant {args.plant_hz:g} Hz, samples {sample_hz:g} Hz (0 = every tick)")
     print(f"{TAG} coupling kv = {args.kv:g} N/m, dv = {args.dv:g} N·s/m (world) → felt {felt_k:g} N/m")
     print(f"{TAG} controller {args.controller}: {gains}")
     print(f"{TAG} force {'ON, clamped at %.1f N' % args.max_i3_force if args.force else 'OFF (--force to enable)'}")
 
     # -- run -------------------------------------------------------------------------------
-    haptic_monitor = LoopRateMonitor(args.haptic_hz)
-    result: dict[str, np.ndarray] = {"jitter": np.zeros(0)}
-
-    def haptic_step(tick: int, t_s: float) -> None:
-        haptic_monitor.tick()
-        session.haptic_step(tick, t_s)
-        if tick % round(args.haptic_hz) == 0:
-            x_l, _ = session.leader
-            latest = plant.sample
-            x_i = latest[1].x_i if latest is not None else np.full(dim, np.nan)
-            print(
-                f"{TAG} t = {t_s:5.1f} s  leader - plant = {np.round((x_l - x_i) * 1e3, 1)} mm  "
-                f"plant age {plant.sample_age_s() * 1e3:5.1f} ms  haptic {haptic_monitor.snapshot().measured_hz:.0f} Hz"
-            )
-
-    def haptic() -> None:
-        try:
-            result["jitter"] = run_loop(
-                args.haptic_hz,
-                haptic_step,
-                stop_fn=lambda: session.stopped,
-                n_ticks=n_ticks,
-                ticker=RateTicker(args.haptic_hz),
-            )
-        finally:
-            device.write(np.zeros(3))
-            session.request_stop("haptic loop ended")
-
-    sys.setswitchinterval(SWITCH_INTERVAL_S)
-    thread = threading.Thread(target=haptic, name="haptic", daemon=True)
     recorder = None
     if args.robot_log_hz > 0:
         recorder = RobotStateRecorder(plant.node, args.robot_log_hz, seconds=args.seconds + 10.0)
+    haptic = HapticProcess(spec)
+    result = HapticResult(error="not started")
     t0 = time.monotonic()
     try:
-        with device, gc_paused():
-            device.settle_and_zero()  # the handle starts exactly on the leader origin
-            t0 = time.monotonic()
-            thread.start()
-            try:
+        haptic.start()  # the child opens and zeroes the device, then its loop starts
+        t0 = time.monotonic()
+        try:
+            with gc_paused():
                 run_loop(
                     args.plant_hz,
-                    session.plant_step,
-                    stop_fn=lambda: session.stopped,
-                    n_ticks=round(args.seconds * args.plant_hz) + 1,
+                    loop.step,
+                    stop_fn=lambda: loop.stopped or not haptic.running,
+                    n_ticks=round((args.seconds + 5.0) * args.plant_hz),
                 )
-            except KeyboardInterrupt:
-                print(f"\n{TAG} interrupted")
-            finally:
-                session.request_stop(session.shared.stop_reason or "plant loop ended")
-                thread.join(timeout=5.0)
-                device.write(np.zeros(3))
+        except KeyboardInterrupt:
+            print(f"\n{TAG} interrupted")
     finally:
-        session.shutdown_robot()
+        haptic.stop()
+        result = haptic.join()
+        loop.shutdown_robot()
         if recorder is not None:
             recorder.close()
         plant.close()
 
     # -- report and log --------------------------------------------------------------------
-    log.finish(session.shared.ticks)
-    print(f"{TAG} stopped: {session.shared.stop_reason}")
-    print(f"{TAG} {haptic_monitor.totals().summary('haptic ')}")
-    if len(result["jitter"]):
-        print(f"{TAG} {jitter_report(result['jitter'])}")
-    print(f"{TAG} guard trips: {session.shared.guard_trips}, watchdog trips: {session.watchdog.trips}")
+    stop_reason = loop.shared.stop_reason or result.stop_reason
+    print(f"{TAG} stopped: {stop_reason}")
+    if result.error:
+        print(f"{TAG} haptic process error:\n{result.error}")
+    for line in (result.rate_summary, result.jitter_summary, f"gc: {result.gc_summary}", f"scheduling: {result.realtime}"):
+        if line:
+            print(f"{TAG} {line}")
+    print(f"{TAG} guard trips: {result.guard_trips}, watchdog trips: {result.watchdog_trips}")
     print(f"{TAG} plant samples: {len(plant.history)}")
     if recorder is not None:
         print(f"{TAG} robot log ({args.robot_log_hz:g} Hz): {recorder.summary()}")
@@ -398,32 +385,40 @@ def main(argv: list[str] | None = None) -> None:
     metadata = {
         "args": {k: (list(v) if isinstance(v, tuple) else v) for k, v in vars(args).items()},
         "controller_gains": gains,
-        "session": {k: (v.tolist() if isinstance(v, np.ndarray) else v) for k, v in asdict(cfg).items()},
+        "plant_loop": {k: (v.tolist() if isinstance(v, np.ndarray) else v) for k, v in asdict(loop.cfg).items()},
+        "haptic_step": asdict(spec.step),
         "hold_position": hold.position.tolist(),
         "hold_orientation_xyzw": hold.orientation.as_quat().tolist(),
         "leader_origin": leader_origin.tolist(),
-        "stop_reason": session.shared.stop_reason,
+        "stop_reason": stop_reason,
+        "haptic_scheduling": result.realtime,
     }
     logger_config = (
         LoggingConfig.to_file(args.output_dir, notes=args.notes or f"fr3 {args.method} kv={args.kv} dv={args.dv}")
         if args.save
         else LoggingConfig.in_memory()
     )
-    with ExperimentLogger(logger_config, metadata=metadata) as logger:
-        log.to_logger(logger, "haptic", 1.0 / args.haptic_hz)
-        # Plant samples on the local clock relative to the run start (approximately the haptic t = 0)
-        for s in plant.history:
-            logger.log_sample(
-                "plant",
-                {"x_i": s.x_i, "v_i": s.v_i, "lam": s.lam, "t_s": s.t_s, "ee_position": s.ee_position, "task_force": s.task_force},
-                timestamp_s=s.rx_s - t0,
-            )
-        for t_s, x, v, f_ff in session.shared.commands:
-            logger.log_sample("command", {"x": x, "v": v, "f_ff": f_ff}, timestamp_s=t_s)
-        # Robot state, commanded torques, task error/wrench, EE state; same clock as "plant"
-        if recorder is not None:
-            recorder.to_logger(logger, t0)
-    robot.shutdown()
+    try:
+        with ExperimentLogger(logger_config, metadata=metadata) as logger:
+            if result.log is not None:
+                result.log.to_logger(logger, "haptic", 1.0 / args.haptic_hz)
+            # Plant samples on the local clock relative to the run start (approximately the haptic t = 0)
+            for s in plant.history:
+                logger.log_sample(
+                    "plant",
+                    {"x_i": s.x_i, "v_i": s.v_i, "lam": s.lam, "t_s": s.t_s, "ee_position": s.ee_position, "task_force": s.task_force},
+                    timestamp_s=s.rx_s - t0,
+                )
+            for t_s, x, v, f_ff in loop.shared.commands:
+                logger.log_sample("command", {"x": x, "v": v, "f_ff": f_ff}, timestamp_s=t_s)
+            # Robot state, commanded torques, task error/wrench, EE state; same clock as "plant"
+            if recorder is not None:
+                recorder.to_logger(logger, t0)
+    finally:
+        for box in boxes:
+            box.close()
+            box.unlink()
+        robot.shutdown()
 
 
 if __name__ == "__main__":

@@ -1,11 +1,11 @@
-"""FR3Plant, StalenessWatchdog, FR3System and Robot streaming mode, without hardware."""
+"""FR3Plant, FR3System and Robot streaming mode, without hardware."""
 
 from __future__ import annotations
 
 import numpy as np
 import pytest
 from arm_client.robot import Pose, Robot, Twist
-from fr3_haptic.plant import FR3Plant, FR3System, StalenessWatchdog
+from fr3_haptic.plant import FR3Plant, FR3System
 from geometry_msgs.msg import WrenchStamped
 from haptic_teleop import PlantState
 from nav_msgs.msg import Odometry
@@ -104,6 +104,22 @@ def test_pairs_halves_by_stamp_in_either_order():
     feed(robot, wrench=wrench_msg(stamp + 1_000_000), ee=ee_msg(stamp + 1_000_000))
     assert plant.sample[0] == 2
     assert plant.history == []  # record is off by default
+
+
+def test_samples_are_published_to_a_mailbox():
+    from haptic_teleop import PlantMailbox
+
+    box = PlantMailbox(1)
+    try:
+        plant, robot = make_plant(mailbox=box)
+        feed(robot, ee=ee_msg(7, position=(0.4, 0.1, 0.25)), wrench=wrench_msg(7, force=(0.0, 0.0, 3.0)))
+        updates, s = box.sample
+        assert updates == 1 and s.t_s == pytest.approx(7e-9)
+        np.testing.assert_allclose((s.x_i, s.lam), ([0.25], [-3.0]))
+        assert s.rx_s == plant.sample[1].rx_s  # same receive time as in-process
+    finally:
+        box.close()
+        box.unlink()
 
 
 def test_record_keeps_every_sample():
@@ -217,36 +233,6 @@ def test_close_unsubscribes_and_leaves_streaming():
     plant.close()
     assert not robot.streaming
     assert set(robot.node.destroyed) == {EE_TOPIC, WRENCH_TOPIC}
-
-
-# ------------------------------------------------------------------ watchdog
-
-
-def test_watchdog_ramps_up_when_fresh_and_latches_on_trip():
-    wd = StalenessWatchdog(max_age_s=0.01, ramp_s=0.1, latch=True)
-    assert wd.update(float("inf"), 0.001) == 0.0  # no sample yet: no force, no trip
-    assert wd.trips == 0
-    for _ in range(200):
-        wd.update(0.001, 0.001)
-    assert wd.gain == pytest.approx(1.0)
-    wd.update(0.05, 0.001)
-    assert wd.trips == 1 and wd.tripped
-    for _ in range(200):
-        wd.update(0.001, 0.001)  # fresh again, but latched
-    assert wd.gain == 0.0
-
-
-def test_watchdog_recovers_without_latch():
-    wd = StalenessWatchdog(max_age_s=0.01, ramp_s=0.1, latch=False)
-    for _ in range(200):
-        wd.update(0.001, 0.001)
-    for _ in range(50):
-        wd.update(0.05, 0.001)
-    assert wd.gain == pytest.approx(0.5)
-    for _ in range(200):
-        wd.update(0.001, 0.001)
-    assert wd.gain == pytest.approx(1.0)
-    assert wd.trips == 1 and not wd.tripped
 
 
 # ------------------------------------------------------------------ FR3System
