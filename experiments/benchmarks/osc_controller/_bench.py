@@ -132,6 +132,7 @@ def print_gains(params: dict[str, Any]) -> None:
         f"[{CONTROLLER}] inertia_decoupling={params.get('control.inertia_decoupling')} "
         f"partial={params.get('control.partial_inertia_decoupling')} | k_pos {g('k_pos')} | d_pos {g('d_pos')} | "
         f"k_rot {g('k_rot')} | d_rot {g('d_rot')} | null k={params.get('nullspace.stiffness')}"
+        + (f" | damping ratio pos {params['gains.damping_ratio_pos']:g} rot {params['gains.damping_ratio_rot']:g}" if "gains.damping_ratio_pos" in params else "")
     )
 
 

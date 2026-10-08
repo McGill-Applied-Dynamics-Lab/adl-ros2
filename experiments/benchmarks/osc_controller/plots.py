@@ -50,10 +50,16 @@ def gains_label(params: dict) -> str:
         vals = [params.get(f"gains.{prefix}_{a}") for a in "xyz"]
         return f"{vals[0]:g}" if len(set(vals)) == 1 else "/".join(f"{v:g}" for v in vals)
 
+    def damping(block):
+        # Negative d_* = from the damping ratio (servers without the ratio parameter: critical, 1)
+        if any(params.get(f"gains.d_{block}_{a}", -1.0) < 0 for a in "xyz"):
+            return f"ζ{params.get(f'gains.damping_ratio_{block}', 1.0):g}"
+        return axes3(f"d_{block}")
+
     dec = "dec" if params.get("control.inertia_decoupling") else "nodec"
     if params.get("control.partial_inertia_decoupling"):
         dec += "-partial"
-    return f"kp {axes3('k_pos')} | kr {axes3('k_rot')} | {dec}"
+    return f"kp {axes3('k_pos')} d {damping('pos')} | kr {axes3('k_rot')} d {damping('rot')} | {dec}"
 
 
 def run_label(meta: dict) -> str:
