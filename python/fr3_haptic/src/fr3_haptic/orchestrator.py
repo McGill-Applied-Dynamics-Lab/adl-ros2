@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import gc
 import threading
 import time
 from collections.abc import Callable
@@ -127,6 +128,15 @@ class RIMTeleopOrchestrator:
 
         self.haply.start()
         self.logger.start()
+
+        # Move everything allocated so far (ROS, Pinocchio, SciPy, the config...) into the permanent
+        # generation: a full collection during the run then only walks what the loops allocate.
+        # Collection stays on, unlike haptic_teleop's gc_paused, because this runs for an open-ended
+        # time. Without it a gen-2 collection walks the whole heap and stalls the 1 kHz loop (30 ms
+        # measured in fr3_teleop, 95 ms in the osc_controller benchmarks).
+        gc.collect()
+        gc.freeze()
+
         self._running = True
         self._threads = [
             threading.Thread(target=self._haptic_loop, daemon=True),
