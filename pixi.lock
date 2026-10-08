@@ -3039,7 +3039,7 @@ packages:
 - pypi: ./python/fr3_haptic
   name: fr3-haptic
   version: 0.1.0
-  sha256: ea98aae9a09b2a71aaaf70ce79cb7531048a17a3d3a2aa88f3ffda6d31ed0d30
+  sha256: a3af4c499f7f5b0e2bf2f1edb6d0cd9930533c17a6c4b0d76da21b5c12069d76
   requires_dist:
   - numpy
   - pyrim

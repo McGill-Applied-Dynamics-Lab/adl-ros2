@@ -88,6 +88,16 @@ in Python takes ~0.4 ms of the interpreter lock the 1 kHz haptic loop needs, so 
 messages are decoded. Timestamps of `plant` and the robot-side streams are local receive times
 since the start of the run; the controller's own stamp is the `t_s` column.
 
+To plot a run (tracking, timing and safety, joint torques, end-effector), with a printed summary:
+
+```bash
+pixi run -e humble fr3_plot                     # latest run
+pixi run -e humble fr3_plot <run_dir> --figs tracking,torques --t0 2 --t1 8
+pixi run -e humble fr3_plot <run_dir> --save    # PNGs in <run_dir>/plots
+```
+
+The MCAP file also opens directly in Foxglove.
+
 !!! warning "Safety"
     - Forces are off unless `--force`, and fade in over the first second.
     - If the robot's state stops arriving for more than `plant_max_age_ms`, the handle force fades
