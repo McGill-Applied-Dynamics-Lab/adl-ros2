@@ -12,6 +12,7 @@ client and streamed at 500 Hz by `Robot.stream_cartesian_traj` (blocking). This 
 import matplotlib.pyplot as plt
 import numpy as np
 from arm_client.robot import Pose, Robot, Twist
+from scipy.spatial.transform import Rotation
 
 from arm_client import CONFIG_DIR
 
@@ -72,14 +73,18 @@ for i in range(n_points):
 print(f"  {n_points} waypoints over {duration:g} s, amplitude {amplitude * 1000:.0f} mm, streamed at {STREAM_HZ:g} Hz")
 print(f"  Max theoretical velocity: {2 * np.pi * frequency * amplitude * 1000:.1f} mm/s")
 
-#! Stream it, logging the target and the measured state on every tick
-ts, z_target, z_actual, forces = [], [], [], []
+
+#! Stream it, logging the target and the measured pose on every tick
+ts, target_pos, target_quat, actual_pos, actual_quat, forces = [], [], [], [], [], []
 
 
 def log_tick(t: float, target: Pose, twist: Twist) -> None:
+    actual = robot.end_effector_pose
     ts.append(t)
-    z_target.append(target.position[2])
-    z_actual.append(robot.end_effector_pose.position[2])
+    target_pos.append(target.position.copy())
+    target_quat.append(target.orientation.as_quat())
+    actual_pos.append(actual.position.copy())
+    actual_quat.append(actual.orientation.as_quat())
     forces.append(robot.end_effector_external_wrench["force"].copy())
 
 
@@ -94,37 +99,69 @@ print(f"  Final position error: {error * 1000:.1f} mm")
 # --- 4. Plot tracking and forces
 # ----------------------------------------------------------------------------------------------------------------------
 print("\n4 --- Plotting trajectory tracking performance...")
-ts, z_target, z_actual, forces = map(np.array, (ts, z_target, z_actual, forces))
-tracking_error = z_actual - z_target
-print(f"  Mean tracking error: {np.mean(np.abs(tracking_error)) * 1000:.2f} mm")
-print(f"  Max tracking error: {np.max(np.abs(tracking_error)) * 1000:.2f} mm")
-print(f"  RMS tracking error: {np.sqrt(np.mean(tracking_error**2)) * 1000:.2f} mm")
+ts, target_pos, actual_pos, forces = map(np.array, (ts, target_pos, actual_pos, forces))
+target_rot, actual_rot = Rotation.from_quat(target_quat), Rotation.from_quat(actual_quat)
 
-fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8), sharex=True)
-ax1.plot(ts, z_actual, "b-", linewidth=2, label="Actual")
-ax1.plot(ts, z_target, "--", color="red", linewidth=2, label="Streamed target")
-ax1.plot(time_from_start, [w.position[2] for w in waypoints], "o", color="red", label="Waypoints")
-ax1.set_ylabel("Z Position (m)", fontsize=12)
-ax1.set_title("Trajectory Tracking: Z Position (osc_controller)", fontsize=14, fontweight="bold")
-ax1.grid(True, alpha=0.3)
-ax1.legend()
+# Roll-pitch-yaw: rotations about the base x, y, z axes (extrinsic xyz). The tool points down, so
+# roll sits near +-180 deg: unwrap the target in time, and express the measurement as target +
+# wrapped difference so both stay on the same branch.
+target_rpy = np.unwrap(target_rot.as_euler("xyz"), axis=0)
+actual_rpy = target_rpy + (actual_rot.as_euler("xyz") - target_rot.as_euler("xyz") + np.pi) % (2 * np.pi) - np.pi
+pos_error = (actual_pos - target_pos) * 1e3  # mm
+rpy_error = np.degrees(actual_rpy - target_rpy)  # deg
+# Orientation error as one angle (independent of the Euler convention)
+angle_error = np.degrees((actual_rot * target_rot.inv()).magnitude())
 
-ax2.plot(ts, tracking_error * 1000, "r-", linewidth=2)
-ax2.axhline(y=0, color="k", linestyle="--", alpha=0.3)
-ax2.set_xlabel("Time (s)", fontsize=12)
-ax2.set_ylabel("Tracking Error (mm)", fontsize=12)
-ax2.set_title("Z Position Tracking Error", fontsize=14, fontweight="bold")
-ax2.grid(True, alpha=0.3)
+print("  Position error [mm]      " + "  ".join(f"{a}: RMS {np.sqrt(np.mean(e**2)):5.2f} max {np.max(np.abs(e)):5.2f}" for a, e in zip("xyz", pos_error.T)))
+print("  Orientation error [deg]  " + "  ".join(f"{a}: RMS {np.sqrt(np.mean(e**2)):5.2f} max {np.max(np.abs(e)):5.2f}" for a, e in zip(("roll", "pitch", "yaw"), rpy_error.T)))
+print(f"  Orientation error angle: RMS {np.sqrt(np.mean(angle_error**2)):.2f} deg, max {np.max(angle_error):.2f} deg")
 
-fig2, ax3 = plt.subplots(3, 1, figsize=(10, 8), sharex=True)
+
+def plot_tracking(title, labels, unit, actual, target, error, error_unit, waypoint_values=None):
+    fig, axs = plt.subplots(3, 2, figsize=(14, 9), sharex=True)
+    for k, label in enumerate(labels):
+        axs[k, 0].plot(ts, actual[:, k], "b-", linewidth=2, label="Actual")
+        axs[k, 0].plot(ts, target[:, k], "--", color="red", linewidth=2, label="Target")
+        if waypoint_values is not None:
+            axs[k, 0].plot(time_from_start, waypoint_values[:, k], "o", color="red", markersize=4, label="Waypoints")
+        axs[k, 0].set_ylabel(f"{label} ({unit})", fontsize=12)
+        axs[k, 1].plot(ts, error[:, k], "r-", linewidth=1.5)
+        axs[k, 1].axhline(y=0, color="k", linestyle="--", alpha=0.3)
+        axs[k, 1].set_ylabel(f"{label} error ({error_unit})", fontsize=12)
+        for ax in axs[k]:
+            ax.grid(True, alpha=0.3)
+    axs[0, 0].legend()
+    axs[0, 0].set_title(f"{title}: actual vs target", fontsize=13, fontweight="bold")
+    axs[0, 1].set_title(f"{title}: error (actual - target)", fontsize=13, fontweight="bold")
+    for ax in axs[-1]:
+        ax.set_xlabel("Time (s)", fontsize=12)
+    fig.tight_layout()
+    return fig
+
+
+waypoint_pos = np.array([w.position for w in waypoints])
+waypoint_rpy = np.degrees(np.unwrap(Rotation.from_quat([w.orientation.as_quat() for w in waypoints]).as_euler("xyz"), axis=0))
+plot_tracking("Position (osc_controller)", ("x", "y", "z"), "m", actual_pos, target_pos, pos_error, "mm", waypoint_pos)
+plot_tracking(
+    "Orientation, roll-pitch-yaw (osc_controller)",
+    ("roll", "pitch", "yaw"),
+    "deg",
+    np.degrees(actual_rpy),
+    np.degrees(target_rpy),
+    rpy_error,
+    "deg",
+    waypoint_rpy,
+)
+
+fig3, ax3 = plt.subplots(3, 1, figsize=(10, 8), sharex=True)
 for k, name in enumerate("XYZ"):
     ax3[k].plot(ts, forces[:, k], "b-", linewidth=2)
     ax3[k].set_ylabel(f"Force {name} (N)", fontsize=12)
     ax3[k].grid(True, alpha=0.3)
 ax3[2].set_xlabel("Time (s)", fontsize=12)
 ax3[0].set_title("End-Effector Forces During Trajectory", fontsize=14, fontweight="bold")
+fig3.tight_layout()
 
-plt.tight_layout()
 plt.show(block=False)
 plt.pause(0.1)
 input("Press Enter to exit...")
