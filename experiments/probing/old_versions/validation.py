@@ -68,7 +68,7 @@ def plunge(
         time_from_start.append(t)
 
     # Execute trajectory
-    robot.execute_trajectory(waypoints, time_from_start)
+    robot.execute_cartesian_traj(waypoints, time_from_start)
 
     ee_poses = []
     ts = []

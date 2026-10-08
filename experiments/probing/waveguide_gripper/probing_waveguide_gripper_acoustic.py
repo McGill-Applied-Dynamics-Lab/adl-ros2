@@ -198,7 +198,7 @@ def probe(
         time_from_start.append(t)
 
     # Execute
-    robot.execute_trajectory(waypoints, time_from_start)
+    robot.execute_cartesian_traj(waypoints, time_from_start)
 
     # Log robot samples for the duration (time-based, robust)
     t_end = t0_perf + probe_time

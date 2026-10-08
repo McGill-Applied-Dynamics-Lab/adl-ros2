@@ -74,7 +74,7 @@ def probe(
         time_from_start.append(t[k])
 
     # --- Execute trajectory ---
-    robot.execute_trajectory(waypoints, time_from_start)
+    robot.execute_cartesian_traj(waypoints, time_from_start)
     robot.wait_for_trajectory_completion(probe_time, timeout_margin=0.5)
 
     return None
