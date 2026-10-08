@@ -1,7 +1,9 @@
 """Provides a client to control the franka robot. It is the easiest way to control the robot using ROS2."""
 
+import gc
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, List, Sequence
 
@@ -1546,6 +1548,115 @@ class Robot:
         self.node.get_logger().debug(
             f"Sent trajectory with {len(waypoints)} waypoints, total duration: {time_from_start[-1]:.3f}s"
         )
+
+    def stream_cartesian_traj(
+        self,
+        waypoints: Sequence[tuple[Pose, Twist] | Pose],
+        time_from_start: Sequence[float],
+        rate_hz: float = 500.0,
+        on_tick: Callable[[float, Pose, Twist], None] | None = None,
+    ) -> dict[str, float]:
+        """Follow a Cartesian trajectory by streaming interpolated targets (blocking).
+
+        For controllers without a trajectory input, e.g. ``osc_controller``: the trajectory is
+        interpolated here and streamed on ``target_pose`` and ``target_twist`` at ``rate_hz``
+        (use `execute_cartesian_traj` with ``fr3_pose_controller``, which interpolates it itself).
+
+        Positions follow a cubic spline through the waypoints with zero velocity at both ends,
+        orientations a slerp between them; the spline velocity is sent as the twist feedforward.
+        Each tick evaluates the trajectory at the actual elapsed time, so a late tick does not
+        delay the rest. Garbage collection is paused while streaming (a full collection can stall
+        the loop for tens of ms). Afterwards Robot republishes the final waypoint.
+
+        Args:
+            waypoints: Poses, or (Pose, Twist) tuples as for `execute_cartesian_traj` (the twists
+                are not used: velocities come from the spline).
+            time_from_start: Time of each waypoint from the start [s], strictly increasing. If the
+                first one is after 0, the trajectory starts from the current pose.
+            rate_hz: Streaming rate [Hz].
+            on_tick: Called after each published target with (t, target pose, target twist), e.g.
+                to log the state. Keep it short: it runs in the streaming loop.
+
+        Returns:
+            dict: ``ticks`` sent and ``max_gap_s``, the largest interval between two of them.
+
+        Raises:
+            ValueError: on malformed waypoints or times.
+            RuntimeError: if a joint-space controller is active (it ignores Cartesian targets).
+        """
+        from scipy.interpolate import CubicSpline
+
+        poses = [w[0] if isinstance(w, tuple) else w for w in waypoints]
+        times = [float(t) for t in time_from_start]
+        if len(poses) != len(times) or not poses:
+            raise ValueError("waypoints and time_from_start must be non-empty and of the same length")
+        if times[0] < 0.0 or np.any(np.diff(times) <= 0.0):
+            raise ValueError("time_from_start must be non-negative and strictly increasing")
+        if times[0] > 0.0:
+            poses = [self.end_effector_pose, *poses]
+            times = [0.0, *times]
+        if len(poses) < 2:
+            raise ValueError("a trajectory needs at least two poses (or a first time after 0)")
+
+        active = self.controller_switcher_client.get_active_controller()
+        if active is None or self._is_joint_controller(active):
+            raise RuntimeError(f"stream_cartesian_traj needs a Cartesian controller, active controller is {active}")
+
+        start_offset = np.linalg.norm(poses[0].position - self.end_effector_pose.position)
+        if start_offset > 0.01:
+            self.node.get_logger().warn(f"stream_cartesian_traj: first waypoint is {start_offset * 1e3:.0f} mm from the current pose; the controller will jump to it")
+
+        t_knots = np.array(times)
+        position = CubicSpline(t_knots, np.array([p.position for p in poses]), bc_type="clamped")
+        velocity = position.derivative()
+        rotations = Rotation.from_quat([p.orientation.as_quat() for p in poses])
+        orientation = Slerp(t_knots, rotations)
+        # Constant angular velocity within each segment (base frame), zero after the end
+        segment_omega = (rotations[1:] * rotations[:-1].inv()).as_rotvec() / np.diff(t_knots)[:, None]
+        duration = t_knots[-1]
+
+        def sample(t: float) -> tuple[Pose, Twist]:
+            t = min(max(t, 0.0), duration)
+            segment = min(np.searchsorted(t_knots, t, side="right") - 1, len(segment_omega) - 1)
+            omega = segment_omega[segment] if t < duration else np.zeros(3)
+            return Pose(position(t), orientation([t])[0]), Twist(velocity(t), omega)
+
+        was_streaming = self._streaming
+        gc_was_enabled = gc.isenabled()
+        period = 1.0 / rate_hz
+        ticks, max_gap, last_send = 0, 0.0, None
+        self.set_target_streaming(True)
+        gc.collect()
+        gc.disable()
+        try:
+            t0 = time.monotonic()
+            next_tick = t0
+            while True:
+                now = time.monotonic()
+                elapsed = now - t0
+                pose, twist = sample(elapsed)
+                self.publish_target(pose=pose, twist=twist)
+                if last_send is not None:
+                    max_gap = max(max_gap, now - last_send)
+                last_send = now
+                ticks += 1
+                if on_tick is not None:
+                    on_tick(elapsed, pose, twist)
+                if elapsed >= duration:
+                    break
+                next_tick += period
+                delay = next_tick - time.monotonic()
+                if delay > 0.0:
+                    time.sleep(delay)
+                else:
+                    next_tick = time.monotonic()  # late: resynchronise rather than burst
+        finally:
+            # Hold the last streamed pose (the final waypoint unless interrupted), at rest
+            self.publish_target(twist=Twist(np.zeros(3), np.zeros(3)))
+            if gc_was_enabled:
+                gc.enable()
+            self.set_target_streaming(was_streaming)
+        return {"ticks": ticks, "max_gap_s": max_gap}
 
     def wait_for_trajectory_completion(self, expected_duration: float, timeout_margin: float = 2.0):
         """Wait for trajectory execution to complete while allowing state reading.
