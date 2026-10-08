@@ -28,14 +28,12 @@ print("=" * 60)
 # ----------------------------------------------------------------------------------------------------------------------
 print("\n1 --- Switching to fr3_pose_controller...")
 robot.controller_switcher_client.switch_controller("fr3_pose_controller")
-robot.fr3_pose_controller_parameters_client.load_param_config(file_path=CONFIG_DIR / "controllers" / "fr3_pose" / "default.yaml")
+robot.fr3_pose_controller_parameters_client.load_param_config(
+    file_path=CONFIG_DIR / "controllers" / "fr3_pose" / "default.yaml"
+)
 time.sleep(1.0)
 
-# print("\n1 --- Switching to osc_controller...")
-# robot.controller_switcher_client.switch_controller("osc_controller")
-# robot.osc_controller_parameters_client.load_param_config(file_path=CONFIG_DIR / "controllers" / "osc" / "default.yaml")
-# time.sleep(1.0)
-
+# TODO: When sending execute_cartesian_traj, the robot should check that the controller is able to accept a trajectory. If not, it should raise an error
 
 # ----------------------------------------------------------------------------------------------------------------------
 # --- 2. Single pose mode - Go to start position
