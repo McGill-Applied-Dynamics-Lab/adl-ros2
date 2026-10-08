@@ -106,6 +106,9 @@ def test_recorder_decimates_before_decoding(monkeypatch):
     assert recorder.logs["task_wrench"].rows == 0
 
     logger = FakeLogger()
+    recorder.to_logger(logger, t0=100.03)  # rows received before t0 (the setup) are left out
+    assert [ts for s, _, ts in logger.samples if s == "robot_state"] == pytest.approx([0.01, 0.03, 0.05])
+    logger = FakeLogger()
     recorder.to_logger(logger, t0=100.0)
     stream, values, ts = logger.samples[1]
     assert stream == "robot_state" and ts == pytest.approx(0.02)

@@ -115,9 +115,12 @@ class StreamLog:
         return self.data[:, self._index[name]]
 
     def to_logger(self, logger, stream: str, t0: float) -> None:
-        """Log every row as one sample of ``stream``, timestamped ``rx_s - t0`` (local clock)."""
+        """Log every row received at or after ``t0`` as a sample of ``stream``, timestamped
+        ``rx_s - t0`` (local clock). Earlier rows (the setup) are not part of the run."""
         names = self.columns[2:]
         for row in self.data:
+            if row[1] < t0:
+                continue
             values = {"t_s": row[0], **dict(zip(names, row[2:]))}
             logger.log_sample(stream, values, timestamp_s=float(row[1] - t0))
 

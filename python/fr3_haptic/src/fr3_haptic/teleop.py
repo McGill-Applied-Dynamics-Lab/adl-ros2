@@ -50,7 +50,6 @@ from haptic_teleop import (
     ModelMailbox,
     PlantMailbox,
     StatusMailbox,
-    gc_paused,
     run_loop,
 )
 from haptic_teleop.config import FixedMassConfig, LinearConfig, RenderingConfigs, SafetyConfig, TDPAConfig
@@ -352,13 +351,15 @@ def main(argv: list[str] | None = None) -> None:
         haptic.start()  # the child opens and zeroes the device, then its loop starts
         t0 = time.monotonic()
         try:
-            with gc_paused():
-                run_loop(
-                    args.plant_hz,
-                    loop.step,
-                    stop_fn=lambda: loop.stopped or not haptic.running,
-                    n_ticks=round((args.seconds + 5.0) * args.plant_hz),
-                )
+            # No gc_paused() here: gc.freeze() in a process running rclpy executors stalled them
+            # within ~0.1 s (measured: plant samples stopped, the haptic watchdog tripped). The
+            # haptic process pauses its own collector; this side's timing is not critical.
+            run_loop(
+                args.plant_hz,
+                loop.step,
+                stop_fn=lambda: loop.stopped or not haptic.running,
+                n_ticks=round((args.seconds + 5.0) * args.plant_hz),
+            )
         except KeyboardInterrupt:
             print(f"\n{TAG} interrupted")
     finally:
@@ -378,7 +379,7 @@ def main(argv: list[str] | None = None) -> None:
         if line:
             print(f"{TAG} {line}")
     print(f"{TAG} guard trips: {result.guard_trips}, watchdog trips: {result.watchdog_trips}")
-    print(f"{TAG} plant samples: {len(plant.history)}")
+    print(f"{TAG} plant samples: {sum(s.rx_s >= t0 for s in plant.history)} during the run")
     if recorder is not None:
         print(f"{TAG} robot log ({args.robot_log_hz:g} Hz): {recorder.summary()}")
 
@@ -402,8 +403,11 @@ def main(argv: list[str] | None = None) -> None:
         with ExperimentLogger(logger_config, metadata=metadata) as logger:
             if result.log is not None:
                 result.log.to_logger(logger, "haptic", 1.0 / args.haptic_hz)
-            # Plant samples on the local clock relative to the run start (approximately the haptic t = 0)
+            # Plant samples on the local clock relative to the run start (approximately the haptic
+            # t = 0). Samples from the setup, before it, are not part of the run.
             for s in plant.history:
+                if s.rx_s < t0:
+                    continue
                 logger.log_sample(
                     "plant",
                     {"x_i": s.x_i, "v_i": s.v_i, "lam": s.lam, "t_s": s.t_s, "ee_position": s.ee_position, "task_force": s.task_force},
