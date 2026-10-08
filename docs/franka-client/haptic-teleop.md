@@ -16,8 +16,8 @@ flowchart LR
             H["Haptic loop<br/>1 kHz"]
         end
         subgraph RP["fr3_teleop process (ROS)"]
-            P["Plant loop<br/>50 to 1000 Hz"]
-            S["Robot state<br/>1 kHz"]
+            P["Command loop<br/>--command-hz"]
+            S["Robot state<br/>1 kHz in, --model-update-hz out"]
         end
     end
 
@@ -38,8 +38,9 @@ flowchart LR
 | Loop | Rate | Runs in | Job |
 |---|---|---|---|
 | Haptic loop | 1 kHz | its own process, no ROS | Reads the handle, runs the rendering method, writes the force back. |
-| Plant loop | 50 to 1000 Hz (`--plant-hz`) | `fr3_teleop` | Streams the targets to the robot. |
-| Robot state | 1 kHz | `fr3_teleop` | Receives the robot's state and publishes the latest sample to the haptic process. |
+| Robot state | receives 1 kHz, passes on `--model-update-hz` | `fr3_teleop` | Robot → haptic: receives every controller tick, passes one per model update to the haptic process. |
+| RIM model loop | `--rim-update-hz` (≤ model update) | `fr3_teleop` | Robot → haptic, `proxy-rim` only: recomputes the dynamics model. |
+| Command loop | `--command-hz` | `fr3_teleop` | Haptic → robot: streams the targets to the robot. |
 | `osc_controller` | 1 kHz | franka-pc | Moves the robot toward the target through a spring-damper. |
 
 The haptic loop runs in a separate process (`haptic_teleop.HapticProcess`) so that nothing the
@@ -78,8 +79,8 @@ controller gains, hold pose, git commit) under `--output-dir`. Streams:
 | Stream | Rate | Content |
 |---|---|---|
 | `haptic` | 1 kHz | handle position/velocity on the interface axis, rendered force, plant age, energy, guard and watchdog state |
-| `plant` | `--sample-hz` | robot interface position/velocity, coupling force, EE position, task force |
-| `command` | `--plant-hz` | targets sent to the robot (position, velocity, feedforward force) |
+| `plant` | `--model-update-hz` | robot interface position/velocity, coupling force, EE position, task force |
+| `command` | `--command-hz` | targets sent to the robot (position, velocity, feedforward force) |
 | `robot_state` | `--robot-log-hz` (50) | every numeric field of `FrankaRobotState`: measured/desired joint state, motor state, external torque and wrench estimates, EE poses, inertias, errors, ... |
 | `joint_torques_cmd`, `task_error`, `task_wrench`, `ee_state` | `--robot-log-hz` | `osc_controller` outputs |
 

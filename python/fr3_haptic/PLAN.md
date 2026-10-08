@@ -99,6 +99,14 @@ method (so the server-side `K`, `D` cannot drift from what ZOH assumes), with de
 - [x] Offline, parent under worst-case ROS load: 1000.0 Hz, p99 deadline error 0.061 ms, worst period 1.05 ms.
 - [ ] On the robot: haptic rate and plant age with `--robot-log-hz 50`.
 
+### Rates, by direction (2026-10-08)
+- Robot → haptic: `--model-update-hz` (robot states passed to the haptic loop; the controller measures
+  at 1 kHz), `--rim-update-hz` (RIM model, ≤ model update). Haptic → robot: `--command-hz` (targets).
+  Replaces `--plant-hz` / `--sample-hz`, which mixed the two directions.
+- [ ] Delays: one delay stage per link, at its entry (samples before the `PlantMailbox`, targets before
+  `publish_target`). Before that, build the RIM model from the same controller tick as the sample
+  (add `q`, `dq` to `ee_state`), so both carry the same delay.
+
 ### Phase 3 — bring-up and system ID (hardware)
 0. Without `--force`: `ros2 topic hz /fr3/osc/ee_state`; the arm follows the handle; check the printed
    plant age and haptic rate; GIL load of haptic loop + plant spin + `Robot` executor in one process.

@@ -111,12 +111,23 @@ def _hold(meta: dict) -> np.ndarray | None:
     return None if hold is None else np.asarray(hold, dtype=float)
 
 
+def _rates(meta: dict) -> str:
+    """Rates as recorded: ``rates`` metadata (current runs), else the older ``plant_hz`` flag."""
+    rates = meta.get("metadata", meta).get("rates") if meta else None
+    if rates:
+        text = f"model update {rates.get('model_update_hz', '?'):g} Hz, commands {rates.get('command_hz', '?'):g} Hz"
+        if rates.get("rim_update_hz"):
+            text += f", RIM {rates['rim_update_hz']:g} Hz"
+        return text
+    return f"plant {_args(meta).get('plant_hz', '?')} Hz"
+
+
 def summary(streams: dict[str, pd.DataFrame], meta: dict) -> list[str]:
     """Key numbers of the run, one line each."""
     a = _args(meta)
     lines = [
         f"method {a.get('method', '?')}, kv {a.get('kv', '?')} N/m, dv {a.get('dv', '?')} N.s/m, "
-        f"plant {a.get('plant_hz', '?')} Hz, force {'on' if a.get('force') else 'off'}"
+        f"{_rates(meta)}, force {'on' if a.get('force') else 'off'}"
     ]
     h, p = streams.get("haptic"), streams.get("plant")
     if h is not None and len(h):
@@ -296,7 +307,7 @@ def fig_ee(plt, s: dict[str, pd.DataFrame], meta: dict):
 
 def _title(meta: dict, what: str) -> str:
     a = _args(meta)
-    return f"{what} - {a.get('method', '?')}, kv {a.get('kv', '?')} N/m, dv {a.get('dv', '?')} N.s/m, plant {a.get('plant_hz', '?')} Hz"
+    return f"{what} - {a.get('method', '?')}, kv {a.get('kv', '?')} N/m, dv {a.get('dv', '?')} N.s/m, {_rates(meta)}"
 
 
 BUILDERS = {"tracking": fig_tracking, "timing": fig_timing, "torques": fig_torques, "ee": fig_ee}

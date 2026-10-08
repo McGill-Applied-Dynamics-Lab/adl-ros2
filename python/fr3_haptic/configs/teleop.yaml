@@ -12,8 +12,12 @@ method:
 
 rates:
   haptic_hz: 1000.0
-  plant_hz: 50.0             # target streaming + model updates
-  sample_hz: null            # plant samples kept; null = plant_hz, 0 = every controller tick (1 kHz)
+  # robot -> haptic: the robot's state. The controller measures at 1 kHz; this many per second
+  # reach the haptic loop (0 = every controller tick).
+  model_update_hz: 50.0
+  rim_update_hz: null        # RIM dynamics model (proxy-rim); null = model_update_hz (and at most that)
+  # haptic -> robot: targets sent to osc_controller; null = model_update_hz
+  command_hz: null
 
 interface:
   interface_axis: z

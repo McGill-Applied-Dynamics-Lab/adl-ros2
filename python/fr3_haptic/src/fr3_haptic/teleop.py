@@ -12,7 +12,8 @@ as the target with a feedforward force; the controller gains come from ``--osc-p
 The haptic loop (device, rendering method, guard, watchdog) runs in its own process
 (``haptic_teleop.HapticProcess``) that imports no ROS: nothing this process does — `Robot`'s
 1 kHz subscriptions, the robot-state recorder — can take its interpreter lock. This process
-runs the ROS side and the plant loop; they exchange the latest values through shared memory.
+runs the ROS side: the command loop (haptic -> robot) and the RIM model loop (robot -> haptic);
+they exchange the latest values through shared memory.
 
 Setup order matters for safety. Target streaming is enabled *before* the controller switch,
 so ``Robot``'s periodic republishing never sends an old target to the new controller; the
@@ -25,7 +26,7 @@ handle is ``kv · scale · force_gain`` (printed at start).
 
     pixi run -e humble fr3_teleop --conf python/fr3_haptic/configs/teleop.yaml
     pixi run -e humble fr3_teleop --conf python/fr3_haptic/configs/teleop.yaml --method linear --force
-    pixi run -e humble fr3_teleop --conf python/fr3_haptic/configs/teleop.yaml --plant-hz 1000 --save
+    pixi run -e humble fr3_teleop --conf python/fr3_haptic/configs/teleop.yaml --model-update-hz 1000 --save
 
 Needs the colcon overlay sourced (``arm_client``), franka-server running with
 ``osc_controller``, and Haply's Inlet service.
@@ -35,6 +36,7 @@ from __future__ import annotations
 
 import argparse
 import gc
+import threading
 import time
 from dataclasses import asdict
 
@@ -61,9 +63,10 @@ from .adapters import RobotModelAdapter
 from .config import ModelConfig
 from .plant import FR3Plant, FR3System
 from .recorder import RobotStateRecorder
-from .session import PROXY_METHODS, PlantLoop, PlantLoopConfig
+from .session import PROXY_METHODS, CommandLoop, CommandLoopConfig, RimModelLoop
 
 TAG = "[fr3_teleop]"
+CONTROLLER_HZ = 1000.0  # osc_controller publishes ee_state / task_wrench every tick
 METHODS = ("zoh", "linear", "tdpa-zoh", "tdpa-linear", "proxy-rim", "proxy-fixed-mass")
 AXES = "xyz"
 
@@ -97,9 +100,24 @@ def build_parser() -> argparse.ArgumentParser:
 
     g = p.add_argument_group("rates")
     g.add_argument("--haptic-hz", type=float, default=1000.0, help="haptic loop rate [Hz]")
-    g.add_argument("--plant-hz", type=float, default=50.0, help="target streaming / model update rate [Hz]")
     g.add_argument(
-        "--sample-hz", type=float, default=None, help="plant sample rate [Hz]; default = plant-hz, 0 = every controller tick"
+        "--model-update-hz",
+        type=float,
+        default=50.0,
+        help="robot -> haptic: robot states passed to the haptic loop [Hz] (the controller measures at 1 kHz); "
+        "0 = every controller tick",
+    )
+    g.add_argument(
+        "--rim-update-hz",
+        type=float,
+        default=None,
+        help="robot -> haptic: RIM dynamics model updates [Hz] (proxy-rim); default and maximum = --model-update-hz",
+    )
+    g.add_argument(
+        "--command-hz",
+        type=float,
+        default=None,
+        help="haptic -> robot: targets sent to osc_controller [Hz]; default = --model-update-hz",
     )
 
     g = p.add_argument_group("interface")
@@ -163,6 +181,28 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
+def resolve_rates(args: argparse.Namespace) -> tuple[float, float, float]:
+    """``(model_update_hz, rim_update_hz, command_hz)`` with the defaults applied.
+
+    ``--model-update-hz 0`` means every controller tick (``CONTROLLER_HZ``). ``--rim-update-hz``
+    and ``--command-hz`` default to the model update rate; the RIM model cannot update faster
+    than the state it is computed from.
+
+    Raises:
+        ValueError: for a negative rate, or a RIM rate above the model update rate.
+    """
+    if args.model_update_hz < 0:
+        raise ValueError(f"--model-update-hz must be >= 0, got {args.model_update_hz}")
+    model_update_hz = CONTROLLER_HZ if args.model_update_hz == 0 else float(args.model_update_hz)
+    rim_update_hz = model_update_hz if args.rim_update_hz is None else float(args.rim_update_hz)
+    command_hz = model_update_hz if args.command_hz is None else float(args.command_hz)
+    if rim_update_hz <= 0 or command_hz <= 0:
+        raise ValueError(f"--rim-update-hz and --command-hz must be > 0, got {rim_update_hz}, {command_hz}")
+    if rim_update_hz > model_update_hz:
+        raise ValueError(f"--rim-update-hz ({rim_update_hz:g}) cannot exceed --model-update-hz ({model_update_hz:g})")
+    return model_update_hz, rim_update_hz, command_hz
+
+
 def interface_limits(
     absolute: tuple[float, float] | None, start: float, half_range: float
 ) -> tuple[float, float] | None:
@@ -210,7 +250,7 @@ def main(argv: list[str] | None = None) -> None:
     direction[AXES.index(args.interface_axis)] = 1.0
     frame = InterfaceFrame.from_direction(direction)
     dim = frame.dim
-    sample_hz = args.plant_hz if args.sample_hz is None else args.sample_hz
+    model_update_hz, rim_update_hz, command_hz = resolve_rates(args)
     limits = None
     if args.interface_min is not None or args.interface_max is not None:
         limits = (
@@ -231,7 +271,7 @@ def main(argv: list[str] | None = None) -> None:
         frame,
         ee_state_topic=args.ee_state_topic,
         task_wrench_topic=args.task_wrench_topic,
-        sample_period_s=0.0 if sample_hz <= 0 else 1.0 / sample_hz,
+        sample_period_s=0.0 if args.model_update_hz <= 0 else 1.0 / args.model_update_hz,
         interface_limits=limits,
         record=True,
         mailbox=plant_box,
@@ -321,22 +361,25 @@ def main(argv: list[str] | None = None) -> None:
         cpu=args.haptic_cpu,
         rt_priority=args.haptic_rt_priority,
     )
-    loop = PlantLoop(
-        PlantLoopConfig(
-            method=args.method, plant_hz=args.plant_hz, feedforward_cap=args.feedforward_cap, tool_correction=tool_correction
+    loop = CommandLoop(
+        CommandLoopConfig(
+            method=args.method, command_hz=command_hz, feedforward_cap=args.feedforward_cap, tool_correction=tool_correction
         ),
         plant=plant,
         haptic_state=haptic_state,
         status=status,
         dim=dim,
-        system=system,
-        model_out=model_box,
     )
+    rim_loop = RimModelLoop(system, model_box) if system is not None else None
 
     np.set_printoptions(precision=4, suppress=True)
     felt_k = args.kv * args.scale * args.force_gain
     print(f"{TAG} {args.method} along {args.interface_axis}; hold pose {hold.position} m, leader origin {leader_origin} m")
-    print(f"{TAG} rates: haptic {args.haptic_hz:g} Hz (own process), plant {args.plant_hz:g} Hz, samples {sample_hz:g} Hz (0 = every tick)")
+    print(
+        f"{TAG} rates: haptic {args.haptic_hz:g} Hz (own process) | robot -> haptic: model update {model_update_hz:g} Hz"
+        + (f", RIM {rim_update_hz:g} Hz" if rim_loop is not None else "")
+        + f" | haptic -> robot: commands {command_hz:g} Hz"
+    )
     print(f"{TAG} coupling kv = {args.kv:g} N/m, dv = {args.dv:g} N·s/m (world) → felt {felt_k:g} N/m")
     print(f"{TAG} controller {args.controller}: {gains}")
     print(f"{TAG} force {'ON, clamped at %.1f N' % args.max_i3_force if args.force else 'OFF (--force to enable)'}")
@@ -353,20 +396,29 @@ def main(argv: list[str] | None = None) -> None:
         t0 = time.monotonic()
         # Collector off for the run (on again below). A generation-2 collection of this heap
         # (rclpy, arm_client, JAX) took ~74 ms and stalled every thread here, so no plant sample
-        # reached the haptic process and its watchdog tripped; at --plant-hz 1000 that happened
+        # reached the haptic process and its watchdog tripped; at 1 kHz streaming that happened
         # within 2 s. Disable only: gc.freeze() (what gc_paused does) stalls rclpy's executors.
         gc.collect()
         gc.disable()
+        running = lambda: not loop.stopped and haptic.running  # noqa: E731
+        if rim_loop is not None:  # robot -> haptic: the RIM model, on its own thread and rate
+            rim_thread = threading.Thread(
+                target=run_loop,
+                args=(rim_update_hz, rim_loop.step),
+                kwargs={"stop_fn": lambda: not running(), "n_ticks": round((args.seconds + 5.0) * rim_update_hz)},
+                name="rim_model",
+                daemon=True,
+            )
+            rim_thread.start()
         try:
+            # haptic -> robot: the targets, on the main thread
             run_loop(
-                args.plant_hz,
-                loop.step,
-                stop_fn=lambda: loop.stopped or not haptic.running,
-                n_ticks=round((args.seconds + 5.0) * args.plant_hz),
+                command_hz, loop.step, stop_fn=lambda: not running(), n_ticks=round((args.seconds + 5.0) * command_hz)
             )
         except KeyboardInterrupt:
             print(f"\n{TAG} interrupted")
     finally:
+        loop.request_stop(loop.shared.stop_reason or "run ended")  # also ends the RIM thread
         gc.enable()
         haptic.stop()
         result = haptic.join()
@@ -391,7 +443,14 @@ def main(argv: list[str] | None = None) -> None:
     metadata = {
         "args": {k: (list(v) if isinstance(v, tuple) else v) for k, v in vars(args).items()},
         "controller_gains": gains,
-        "plant_loop": {k: (v.tolist() if isinstance(v, np.ndarray) else v) for k, v in asdict(loop.cfg).items()},
+        "command_loop": {k: (v.tolist() if isinstance(v, np.ndarray) else v) for k, v in asdict(loop.cfg).items()},
+        "rates": {
+            "haptic_hz": args.haptic_hz,
+            "model_update_hz": model_update_hz,
+            "rim_update_hz": rim_update_hz if rim_loop is not None else None,
+            "command_hz": command_hz,
+            "controller_hz": CONTROLLER_HZ,
+        },
         "haptic_step": asdict(spec.step),
         "hold_position": hold.position.tolist(),
         "hold_orientation_xyzw": hold.orientation.as_quat().tolist(),
