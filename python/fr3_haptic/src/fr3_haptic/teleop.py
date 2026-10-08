@@ -34,6 +34,7 @@ Needs the colcon overlay sourced (``arm_client``), franka-server running with
 from __future__ import annotations
 
 import argparse
+import gc
 import time
 from dataclasses import asdict
 
@@ -350,10 +351,13 @@ def main(argv: list[str] | None = None) -> None:
     try:
         haptic.start()  # the child opens and zeroes the device, then its loop starts
         t0 = time.monotonic()
+        # Collector off for the run (on again below). A generation-2 collection of this heap
+        # (rclpy, arm_client, JAX) took ~74 ms and stalled every thread here, so no plant sample
+        # reached the haptic process and its watchdog tripped; at --plant-hz 1000 that happened
+        # within 2 s. Disable only: gc.freeze() (what gc_paused does) stalls rclpy's executors.
+        gc.collect()
+        gc.disable()
         try:
-            # No gc_paused() here: gc.freeze() in a process running rclpy executors stalled them
-            # within ~0.1 s (measured: plant samples stopped, the haptic watchdog tripped). The
-            # haptic process pauses its own collector; this side's timing is not critical.
             run_loop(
                 args.plant_hz,
                 loop.step,
@@ -363,6 +367,7 @@ def main(argv: list[str] | None = None) -> None:
         except KeyboardInterrupt:
             print(f"\n{TAG} interrupted")
     finally:
+        gc.enable()
         haptic.stop()
         result = haptic.join()
         loop.shutdown_robot()

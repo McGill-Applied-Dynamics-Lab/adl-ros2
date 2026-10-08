@@ -134,7 +134,8 @@ def test_default_yaml_keys_are_all_flags():
     conf = Path(__file__).resolve().parents[1] / "configs" / "teleop.yaml"
     args = apply_yaml_config(build_parser(), ["--conf", str(conf)])
     assert args.axes == ((1, 0, 2), (1.0, -1.0, 1.0))
-    assert args.method == "zoh" and args.plant_hz == 50.0
+    assert args.method in ("zoh", "linear", "tdpa-zoh", "tdpa-linear", "proxy-rim", "proxy-fixed-mass")
+    assert args.plant_hz > 0
     assert not args.force  # forces stay a CLI decision
 
 

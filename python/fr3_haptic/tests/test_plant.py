@@ -148,6 +148,22 @@ def test_pending_buffer_is_bounded():
     assert len(plant._pending_ee) <= FR3Plant._MAX_PENDING
 
 
+def test_decimation_keeps_every_tick_at_the_controller_rate_despite_jitter():
+    plant, robot = make_plant(sample_period_s=0.001)
+    rng = np.random.default_rng(0)
+    stamps = np.cumsum(1_000_000 + rng.integers(-50_000, 50_000, 500))  # 1 kHz +- 50 us
+    for k in stamps:
+        feed(robot, ee=ee_msg(int(k)), wrench=wrench_msg(int(k)))
+    assert plant.sample[0] == 500  # the old since-last-kept test kept ~60 % of these
+
+
+def test_decimation_restarts_after_a_gap():
+    plant, robot = make_plant(sample_period_s=0.02)
+    for k in list(range(0, 100)) + list(range(300, 400)):  # 1 kHz ticks with a 200 ms hole
+        feed(robot, ee=ee_msg(k * 1_000_000), wrench=wrench_msg(k * 1_000_000))
+    assert plant.sample[0] == 10
+
+
 def test_sample_period_decimates_controller_ticks():
     plant, robot = make_plant(sample_period_s=0.02)  # 50 Hz plant from 1 kHz ticks
     for k in range(100):  # 0.1 s of ticks

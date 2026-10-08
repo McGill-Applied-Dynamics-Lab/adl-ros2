@@ -145,7 +145,7 @@ class FR3Plant:
         """Latest ``(updates, sample)``, replaced whole; ``None`` before the first one."""
 
         self._updates = 0
-        self._last_kept_ns: int | None = None
+        self._next_keep_ns: int | None = None
         self._lock = threading.Lock()
         self._pending_ee: dict[int, Odometry] = {}
         self._pending_wrench: dict[int, WrenchStamped] = {}
@@ -244,9 +244,8 @@ class FR3Plant:
                 for k in [k for k in pending if k < key]:
                     del pending[k]
 
-            if self._last_kept_ns is not None and key - self._last_kept_ns < self._sample_period_ns:
+            if not self._keep(key):
                 return
-            self._last_kept_ns = key
             sample = self._make_sample(ee, wrench, key * 1e-9)
             self._updates += 1
             self.sample = (self._updates, sample)
@@ -254,6 +253,28 @@ class FR3Plant:
                 self.history.append(sample)
             if self._mailbox is not None:
                 self._mailbox.write(sample.x_i, sample.v_i, sample.lam, sample.t_s, sample.rx_s)
+
+    _KEEP_TOLERANCE_NS = 500_000  # half a 1 kHz controller tick
+
+    def _keep(self, key: int) -> bool:
+        """Decimation on a fixed schedule of controller time.
+
+        A tick up to half a controller tick early still counts as on schedule (stamp jitter), so
+        a period equal to the controller's keeps every tick; a "time since the last kept sample
+        >= period" test kept ~60 % of 1 kHz stamps at a 1 ms period. The tolerance is a fraction
+        of a controller tick, not of the period, so it never shifts a slower schedule. Restarts
+        after a gap longer than a period.
+        """
+        period = self._sample_period_ns
+        if period <= 0:
+            return True
+        if self._next_keep_ns is None or key - self._next_keep_ns >= period:
+            self._next_keep_ns = key + period
+            return True
+        if key >= self._next_keep_ns - min(self._KEEP_TOLERANCE_NS, period // 2):
+            self._next_keep_ns += period
+            return True
+        return False
 
     def _store(self, pending: dict, key: int, msg) -> None:
         pending[key] = msg
