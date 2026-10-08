@@ -39,6 +39,16 @@ class LinksConfig:
     def enabled(self) -> bool:
         return self.feedback.enabled or self.command.enabled
 
+    def drain_s(self, margin_s: float = 0.1) -> float:
+        """How long to wait after setup before the haptic loop starts [s]: the longest feedback
+        delay plus ``margin_s``, so a sample gap left by a setup stall has been delivered (and
+        is not replayed into the run). 0 without a feedback delay."""
+        f = self.feedback
+        if not f.enabled:
+            return 0.0
+        spread = f.jitter_ms if f.jitter_dist == "uniform" else 3 * f.jitter_ms
+        return (f.base_ms + spread) * 1e-3 + margin_s
+
     def worst_delivery_gap_s(self, model_update_hz: float) -> float:
         """Rough upper bound on the gap between two feedback deliveries [s]: one update period
         plus the spread of the delay (3 sigma for a normal jitter). With a variable delay, an

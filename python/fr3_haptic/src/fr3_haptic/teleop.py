@@ -294,6 +294,15 @@ def main(argv: list[str] | None = None) -> None:
     if args.home:
         robot.home()
     robot.set_target_streaming(True)  # before the switch: no stale target reaches the controller
+    # Collector off from here to the end of the run (on again in the run's finally). A
+    # generation-2 collection of this heap (rclpy, arm_client, JAX) takes ~75 ms and stalls every
+    # thread here, so no plant sample is sent meanwhile and the haptic watchdog (50 ms) trips.
+    # It must happen before samples flow: with a feedback delay D, a stall in the D seconds before
+    # the haptic loop starts is replayed into the run (a 500 ms delay tripped the watchdog 70 ms
+    # in, from a collect just before haptic.start()). Disable only: gc.freeze() (what gc_paused
+    # does) stalls rclpy's executors.
+    gc.collect()
+    gc.disable()
     plant_box = PlantMailbox(dim)  # plant samples for the haptic process, written by the callbacks
     boxes = [plant_box]
     links = Links(links_cfg)  # simulated delays; a zero-delay link is bypassed
@@ -433,14 +442,12 @@ def main(argv: list[str] | None = None) -> None:
     result = HapticResult(error="not started")
     t0 = time.monotonic()
     try:
-        # Collector off for the run (on again below). A generation-2 collection of this heap
-        # (rclpy, arm_client, JAX) takes ~75 ms and stalls every thread here, so no plant sample
-        # reaches the haptic process and its watchdog (50 ms) trips: during the run at high
-        # rates, and at once if this collect() ran after haptic.start(). So: collect *before*
-        # the haptic loop (and its watchdog) starts. Disable only: gc.freeze() (what gc_paused
-        # does) stalls rclpy's executors.
-        gc.collect()
-        gc.disable()
+        drain = links_cfg.drain_s()
+        if drain > 0:
+            # Setup is done: let one full feedback delay pass, so a gap a setup step left in the
+            # sample stream is delivered now rather than replayed into the run.
+            print(f"{TAG} draining the feedback link for {drain:.2f} s before starting")
+            time.sleep(drain)
         haptic.start()  # the child opens and zeroes the device, then its loop starts
         t0 = time.monotonic()
         running = lambda: not loop.stopped and haptic.running  # noqa: E731

@@ -107,6 +107,14 @@ def test_links_config_from_flags_and_seed():
     assert not links_config(build_parser().parse_args([])).enabled
 
 
+def test_drain_covers_the_longest_feedback_delay():
+    assert LinksConfig().drain_s() == 0.0
+    assert LinksConfig(command=DelayConfig(base_ms=500)).drain_s() == 0.0  # only the feedback link replays
+    assert LinksConfig(feedback=DelayConfig(base_ms=500)).drain_s() == pytest.approx(0.6)
+    normal = LinksConfig(feedback=DelayConfig(base_ms=30, jitter_ms=10, jitter_dist="normal"))
+    assert normal.drain_s(margin_s=0.0) == pytest.approx(0.060)
+
+
 def test_worst_delivery_gap_includes_the_delay_spread():
     cfg = LinksConfig(feedback=DelayConfig(base_ms=30, jitter_ms=10, jitter_dist="uniform"))
     assert cfg.worst_delivery_gap_s(50.0) == pytest.approx(0.020 + 0.020)
