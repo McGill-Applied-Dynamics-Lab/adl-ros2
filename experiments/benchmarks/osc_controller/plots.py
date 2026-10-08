@@ -382,12 +382,14 @@ def compare_tracking(runs: list[tuple[dict, dict]], out: Path) -> list[Path]:
     for i, (meta, data) in enumerate(runs):
         tr = tracking_traces(data)
         if i == 0:
-            ax_xy.plot(tr["ref"][:, 1], tr["ref"][:, 0], "k--", lw=0.9, label="target")
-        ax_xy.plot(tr["meas"][:, 1], tr["meas"][:, 0], color=f"C{i}", lw=1.0, label=run_label(meta))
+            # Path in the plane of the two axes it moves along most (xy for the eight, xz for a plunge)
+            a, b = sorted(np.argsort(np.ptp(tr["ref"], axis=0))[-2:])
+            ax_xy.plot(tr["ref"][:, b], tr["ref"][:, a], "k--", lw=0.9, label="target")
+        ax_xy.plot(tr["meas"][:, b], tr["meas"][:, a], color=f"C{i}", lw=1.0, label=run_label(meta))
         ax_e.plot(tr["t"], np.linalg.norm(tr["err_mm"], axis=1), color=f"C{i}", lw=0.9, label=run_label(meta))
     ax_xy.set_aspect("equal")
-    ax_xy.set_xlabel("y [m]")
-    ax_xy.set_ylabel("x [m]")
+    ax_xy.set_xlabel(f"{'xyz'[b]} [m]")
+    ax_xy.set_ylabel(f"{'xyz'[a]} [m]")
     ax_xy.legend(fontsize=7)
     ax_e.set_ylabel("|position error| [mm]")
     ax_e.set_xlabel("time [s]")
