@@ -13,7 +13,7 @@ Each command `<axis> <distance> <speed>` moves the end-effector by `distance` [m
 `sensor.py`). Commands created while the robot is moving are ignored.
 
     pixi run -e wg python experiments/waveguide/waveguide_teleop.py                    # terminal
-    pixi run -e wg python experiments/waveguide/waveguide_teleop.py --input waveguide --port /dev/ttyACM0
+    pixi run -e wg python experiments/waveguide/waveguide_teleop.py --input waveguide   # Teensy on /dev/ttyACM0 (--port)
 """
 
 import argparse
@@ -22,7 +22,7 @@ import time
 import numpy as np
 from arm_client.robot import Pose, Robot
 from commands import CommandSource, Control, MoveCommand, TerminalSource, WaveguideSource
-from sensor import DEFAULT_BAUDRATE
+from sensor import DEFAULT_BAUDRATE, DEFAULT_PORT
 
 from arm_client import CONFIG_DIR
 
@@ -129,14 +129,15 @@ def run(teleop: AxisTeleop, source: CommandSource):
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--input", choices=["terminal", "waveguide"], default="terminal")
-    parser.add_argument("--port", help="Serial port of the waveguide Teensy, e.g. /dev/ttyACM0")
+    parser.add_argument("--port", default=DEFAULT_PORT, help=f"Serial port of the Teensy (default: {DEFAULT_PORT})")
     parser.add_argument("--baudrate", type=int, default=DEFAULT_BAUDRATE)
     args = parser.parse_args()
 
     if args.input == "waveguide":
-        if args.port is None:
-            parser.error("--port is required with --input waveguide")
-        source = WaveguideSource(args.port, args.baudrate)
+        try:
+            source = WaveguideSource(args.port, args.baudrate)
+        except FileNotFoundError as e:
+            parser.exit(1, f"Error: {e}\n")
     else:
         source = TerminalSource()
 
