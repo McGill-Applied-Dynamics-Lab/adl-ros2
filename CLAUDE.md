@@ -7,7 +7,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Uses [Pixi](https://pixi.sh) for environment and task management. All commands must run inside the `humble` environment.
 
 ```bash
-# First-time setup
+# First-time setup (also needed in every new git worktree: external/adl-python is a submodule)
+git submodule update --init --recursive
 pixi install
 pixi run setup-colcon
 

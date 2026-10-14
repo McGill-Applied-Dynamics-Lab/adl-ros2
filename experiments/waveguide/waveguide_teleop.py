@@ -18,14 +18,15 @@ Terminal commands:
 """
 
 import numpy as np
-from arm_client.robot import Pose, Robot
+from arm_client.robot import Pose, Robot, Twist
 
 from arm_client import CONFIG_DIR
 
 # --- Parameters ---
 AXES = {"x": 0, "y": 1, "z": 2}
-MAX_SPEED = 0.1  # m/s, matches motion.max_linear_velocity in fr3_pose/default.yaml
+MAX_SPEED = 0.1  # m/s, average speed of a move (the peak is 1.5x, cubic profile)
 MAX_DISTANCE = 0.2  # m, per command
+CONTROLLER_RAMP_TIME = 0.5  # s, minimum ramp fr3_pose_controller adds before each trajectory
 
 # Workspace box, relative to the home position [m]
 WORKSPACE_LOWER = np.array([-0.15, -0.30, -0.25])
@@ -79,8 +80,19 @@ def move_along_axis(axis: str, distance: float, speed: float):
         print("Already at the workspace limit, not moving.")
         return
 
+    # Send the move as a 2-waypoint trajectory: fr3_pose_controller follows it as one smooth spline
+    # (rest to rest). Streaming target poses (`move_to`) makes it stop at every intermediate target.
+    start_pose = Pose(target_position, homing_pose.orientation)
+    goal_pose = Pose(clipped, homing_pose.orientation)
+    duration = float(np.linalg.norm(clipped - target_position) / speed)
+
+    zero_twist = Twist(np.zeros(3), np.zeros(3))
+    robot.execute_cartesian_traj([(start_pose, zero_twist), (goal_pose, zero_twist)], [0.0, duration])
     target_position = clipped
-    robot.move_to(pose=Pose(target_position, homing_pose.orientation), speed=speed)
+
+    # The controller prepends a >= 0.5 s ramp from its commanded pose (here, a hold) before the trajectory
+    while robot.wait_for_trajectory_completion(duration + CONTROLLER_RAMP_TIME, timeout_margin=0.2):
+        pass
 
 
 def go_home():

@@ -143,10 +143,19 @@ around the ROS2 server.
 
 Follow the steps to install the project:
 
-1. On your host, clone the project
+1. On your host, clone the project with its submodules
     ```bash
-    git clone https://github.com/McGill-Applied-Dynamics-Lab/adl-ros2.git
+    git clone --recurse-submodules https://github.com/McGill-Applied-Dynamics-Lab/adl-ros2.git
     ```
+
+    !!! warning "Submodules"
+
+        The Python packages in `external/adl-python` (`pyrim`, `haptic_teleop`, ...) are a git submodule.
+        If you cloned without `--recurse-submodules`, or are working in a `git worktree`, that folder is
+        empty and `pixi install` fails with `No such file or directory`. Fetch it with:
+        ```bash
+        git submodule update --init --recursive
+        ```
 
 2. Install the environment
     ```bash

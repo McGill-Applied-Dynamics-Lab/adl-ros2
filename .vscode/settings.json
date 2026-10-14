@@ -1,7 +1,7 @@
 {
     "python.defaultInterpreterPath": "${workspaceFolder}/.pixi/envs/humble/bin/python",
     "python.envFile": "${workspaceFolder}/.vscode/.env.humble",
-    "python.terminal.activateEnvironment": false,
+    "python.terminal.activateEnvironment": true,
     "python.autoComplete.extraPaths": [
         "${workspaceFolder}/src",
         "${workspaceFolder}/build_humble",
@@ -159,11 +159,11 @@
             "source.organizeImports": "explicit"
         }
     },
-    "python-envs.pythonProjects": [
-        {
-            "path": ".",
-            "envManager": "ms-python.python:system",
-            "packageManager": "ms-python.python:pip"
-        }
-    ]
+    // "python-envs.pythonProjects": [
+    //     {
+    //         "path": ".",
+    //         "envManager": "ms-python.python:system",
+    //         "packageManager": "ms-python.python:pip"
+    //     }
+    // ]
 }
