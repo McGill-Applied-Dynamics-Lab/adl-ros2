@@ -24,9 +24,12 @@ from arm_client import CONFIG_DIR
 
 # --- Parameters ---
 AXES = {"x": 0, "y": 1, "z": 2}
-MAX_SPEED = 0.1  # m/s, average speed of a move (the peak is 1.5x, cubic profile)
+MAX_SPEED = 0.05  # m/s, average speed of a move (the peak is 1.5x, cubic profile)
 MAX_DISTANCE = 0.2  # m, per command
-CONTROLLER_RAMP_TIME = 0.5  # s, minimum ramp fr3_pose_controller adds before each trajectory
+
+# Ramp fr3_pose_controller prepends to each trajectory: max(MIN_RAMP_TIME, distance / RAMP_SPEED)
+CONTROLLER_MIN_RAMP_TIME = 0.5  # s
+CONTROLLER_RAMP_SPEED = 0.05  # m/s
 
 # Workspace box, relative to the home position [m]
 WORKSPACE_LOWER = np.array([-0.15, -0.30, -0.25])
@@ -80,18 +83,22 @@ def move_along_axis(axis: str, distance: float, speed: float):
         print("Already at the workspace limit, not moving.")
         return
 
-    # Send the move as a 2-waypoint trajectory: fr3_pose_controller follows it as one smooth spline
-    # (rest to rest). Streaming target poses (`move_to`) makes it stop at every intermediate target.
-    start_pose = Pose(target_position, homing_pose.orientation)
+    # Send the move as a trajectory: fr3_pose_controller follows it as one smooth spline (rest to rest).
+    # Streaming target poses (`move_to`) makes it stop at every intermediate target.
+    # Only the goal is sent: the controller prepends its commanded pose at t=0 and shifts our times by a
+    # ramp of max(0.5 s, d / 5 cm/s). Sending the start too makes it an interior waypoint with a
+    # non-zero spline velocity, and the hold segment before it then dips backwards.
     goal_pose = Pose(clipped, homing_pose.orientation)
-    duration = float(np.linalg.norm(clipped - target_position) / speed)
+    distance_to_goal = float(np.linalg.norm(clipped - target_position))
+    duration = distance_to_goal / speed
+    ramp_time = max(CONTROLLER_MIN_RAMP_TIME, distance_to_goal / CONTROLLER_RAMP_SPEED)
+    if duration < ramp_time:
+        print(f"Move limited by the controller ramp: {duration:.2f} s -> {ramp_time:.2f} s")
 
-    zero_twist = Twist(np.zeros(3), np.zeros(3))
-    robot.execute_cartesian_traj([(start_pose, zero_twist), (goal_pose, zero_twist)], [0.0, duration])
+    robot.execute_cartesian_traj([(goal_pose, Twist(np.zeros(3), np.zeros(3)))], [max(duration - ramp_time, 0.0)])
     target_position = clipped
 
-    # The controller prepends a >= 0.5 s ramp from its commanded pose (here, a hold) before the trajectory
-    while robot.wait_for_trajectory_completion(duration + CONTROLLER_RAMP_TIME, timeout_margin=0.2):
+    while robot.wait_for_trajectory_completion(max(duration, ramp_time), timeout_margin=0.2):
         pass
 
 
