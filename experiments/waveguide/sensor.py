@@ -31,6 +31,7 @@ import wg_helpers
 from commands import MoveCommand
 
 
+# --- Update configs as desired
 @dataclass(frozen=True)
 class CalibrationConfig:
     """Calibration (`--calibrate`) settings."""
@@ -51,9 +52,6 @@ class CalibrationConfig:
         return self.db_path.with_suffix(".npz")
 
 
-CALIBRATION = CalibrationConfig()
-
-
 @dataclass(frozen=True)
 class DetectionConfig:
     """Hole detection (layer 1) settings."""
@@ -65,7 +63,10 @@ class DetectionConfig:
     method: str = "leading_edge"  # One of wg_helpers.METHODS
 
 
-DETECTION = DetectionConfig()
+# Configs
+DETECTION_CFG = DetectionConfig()
+CAL_CFG = CalibrationConfig()
+
 
 DEFAULT_PORT = "/dev/ttyACM0"
 DEFAULT_BAUDRATE = 3_000_000
@@ -91,7 +92,7 @@ def open_serial(port: str, baudrate: int) -> serial.Serial:
     return serial.Serial(port, baudrate, timeout=SERIAL_TIMEOUT)
 
 
-def load_calibration(path: Path = CALIBRATION.npz_path) -> dict:
+def load_calibration(path: Path = CAL_CFG.npz_path) -> dict:
     """The fitted calibration (`wg_helpers.load_calibration`); FileNotFoundError if there is none yet."""
     if not path.exists():
         raise FileNotFoundError(f"No calibration at {path}: run sensor.py --calibrate first")
@@ -151,34 +152,46 @@ class HoleDetector:
     Without a calibration (None), nothing is detected.
     """
 
-    def __init__(self, calibration: dict | None, config: DetectionConfig = DETECTION):
-        if config.method not in wg_helpers.METHODS:
-            raise ValueError(f"Detection method must be one of {wg_helpers.METHODS}, got {config.method}")
-        self.calibration = calibration
-        self.config = config
+    def __init__(self, calibration_file_path: Path, detection_cfg: DetectionConfig = DETECTION_CFG):
+        if detection_cfg.method not in wg_helpers.METHODS:
+            raise ValueError(f"Detection method must be one of {wg_helpers.METHODS}, got {detection_cfg.method}")
+
+        # Load calibration
+        calibration_params = load_calibration(calibration_file_path)
+        self.calibration_params = calibration_params
+
+        self.detection_cfg = detection_cfg
         self.background = None
         self.last_result = None  # Latest estimate() output (detected, hole, distance_cm, amplitude, ...)
         self._background_frames = []
-        self._frames = deque(maxlen=config.n_average_frames)
+        self._frames = deque(maxlen=detection_cfg.n_average_frames)
 
     def update(self, frame: np.ndarray) -> frozenset[int]:
-        if self.calibration is None:
+        if self.calibration_params is None:
             return frozenset()
 
         if self.background is None:
             if not self._background_frames:
-                print(f"Recording the background ({self.config.n_background_frames} frames): don't touch the sensor")
+                print(f"Recording the background ({self.detection_cfg.n_background_frames} frames): don't touch the sensor")
             self._background_frames.append(frame)
-            if len(self._background_frames) == self.config.n_background_frames:
+            if len(self._background_frames) == self.detection_cfg.n_background_frames:
                 self.background = wg_helpers.make_background(self._background_frames)
                 self._background_frames = []
-                print("Background recorded, detecting")
+                print("Background calibration recorded")
             return frozenset()
 
         self._frames.append(frame)
         averaged = self._frames[0] if len(self._frames) == 1 else wg_helpers.make_background(self._frames)
-        self.last_result = wg_helpers.estimate(averaged, self.calibration, self.background, method=self.config.method)
-        return frozenset({self.last_result["hole"]}) if self.last_result["detected"] else frozenset()
+
+        self.last_result = wg_helpers.estimate(averaged, self.calibration_params, self.background, method=self.detection_cfg.method)
+
+        if self.last_result["detected"]:
+            print(f"Detected hole {self.last_result['hole']} at {self.last_result['distance_cm']:.1f} cm (amplitude {self.last_result['amplitude']:.1f})")
+
+            return frozenset({self.last_result["hole"]})
+
+        else:
+            return frozenset()
 
 
 # --- Layer 2: gesture processing ---
@@ -200,14 +213,7 @@ def run_sensor_loop(port: str, baudrate: int, on_holes, on_command, stop_event=N
     each command, and `on_frame(t, frame)` (if given) for every frame. Without a calibration, raises
     FileNotFoundError if `require_calibration`, else runs with the detection off.
     """
-    try:
-        calibration = load_calibration()
-    except FileNotFoundError as e:
-        if require_calibration:
-            raise
-        print(f"{e}; hole detection off")
-        calibration = None
-    detector = HoleDetector(calibration)
+    detector = HoleDetector(calibration_file_path=CAL_CFG.npz_path)
     processor = GestureProcessor()
     pressed = frozenset()
 
@@ -321,7 +327,7 @@ def record_calibration(port: str, baudrate: int, config: CalibrationConfig) -> N
                 run_number += 1
 
 
-def calibrate(port: str, baudrate: int, config: CalibrationConfig = CALIBRATION) -> None:
+def calibrate(port: str, baudrate: int, config: CalibrationConfig = CAL_CFG) -> None:
     """Record a calibration (or reuse the existing recording) and fit it."""
     db_path = config.db_path
     if db_path.exists():
@@ -345,35 +351,36 @@ def calibrate(port: str, baudrate: int, config: CalibrationConfig = CALIBRATION)
 
 
 # --- Standalone modes ---
-def print_frames_and_holes(port: str, baudrate: int) -> None:
+def print_frames_and_holes(port: str, baudrate: int, plot: bool = False) -> None:
+    """Run the sensor loop and print what it detects; with `plot`, also plot the raw frames (`run_with_live_plot`)."""
     n_frames, t_last = 0, time.monotonic()
 
     def on_frame(t, frame):
         nonlocal n_frames, t_last
         n_frames += 1
         if t - t_last >= 1.0:
-            print(f"{n_frames / (t - t_last):.0f} frames/s")
+            # print(f"{n_frames / (t - t_last):.0f} frames/s")
             n_frames, t_last = 0, t
 
     def on_holes(state):
-        distance = "" if state.distance_cm is None else f"  distance: {state.distance_cm:.1f} cm"
-        print(f"{state.t:.3f}  holes: {sorted(state.pressed)}{distance}")
+        # distance = "" if state.distance_cm is None else f"  distance: {state.distance_cm:.1f} cm"
+        # print(f"{state.t:.3f}  holes: {sorted(state.pressed)}{distance}")
+        ...
 
-    run_sensor_loop(
-        port,
-        baudrate,
-        on_holes=on_holes,
-        on_command=lambda command: print(f"{command.t_created:.3f}  command: {command}"),
-        on_frame=on_frame,
-        require_calibration=False,
-    )
+    def on_command(command):
+        print(f"{command.t_created:.3f}  command: {command}")
+
+    if plot:
+        run_with_live_plot(port, baudrate, on_holes=on_holes, on_command=on_command, on_frame=on_frame)
+    else:
+        run_sensor_loop(port, baudrate, on_holes=on_holes, on_command=on_command, on_frame=on_frame, require_calibration=False)
 
 
-def live_plot(port: str, baudrate: int) -> None:
-    """Plot the latest raw frame at ~60 Hz, with the frame rate and the pressed holes in the title.
+def run_with_live_plot(port: str, baudrate: int, on_holes, on_command, on_frame=None) -> None:
+    """`run_sensor_loop`, plotting its latest raw frame at ~60 Hz (frame rate and pressed holes in the titles).
 
-    The frames come from `run_sensor_loop` in a background thread (Qt needs the main thread), so the
-    plot shows what the processing sees. Commands are printed.
+    The loop runs in a background thread (Qt needs the main thread), so the plot shows what the processing
+    sees. The callbacks are passed on to the loop, and called from its thread.
     """
     check_port(port)
     import pyqtgraph as pg  # Only needed here
@@ -384,22 +391,25 @@ def live_plot(port: str, baudrate: int) -> None:
     errors = []
     stop_event = threading.Event()
 
-    def on_frame(t, frame):
+    def plot_on_frame(t, frame):
         latest["frame"] = frame
         latest["n_frames"] += 1
+        if on_frame is not None:
+            on_frame(t, frame)
 
-    def on_holes(state):
+    def plot_on_holes(state):
         latest["holes"] = state
+        on_holes(state)
 
     def sensor_loop():
         try:
             run_sensor_loop(
                 port,
                 baudrate,
-                on_holes=on_holes,
-                on_command=lambda command: print(f"{command.t_created:.3f}  command: {command}"),
+                on_holes=plot_on_holes,
+                on_command=on_command,
                 stop_event=stop_event,
-                on_frame=on_frame,
+                on_frame=plot_on_frame,
                 require_calibration=False,
             )
         except Exception as e:
@@ -456,7 +466,7 @@ def main():
     parser.add_argument("--baudrate", type=int, default=DEFAULT_BAUDRATE)
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--calibrate", action="store_true", help="Record a calibration and fit it (CalibrationConfig)")
-    mode.add_argument("--live-plot", action="store_true", help="Plot the raw frames")
+    mode.add_argument("--live-plot", action="store_true", help="Default mode, also plotting the raw frames")
     args = parser.parse_args()
 
     try:
@@ -465,7 +475,7 @@ def main():
             calibrate(args.port, args.baudrate)
         elif args.live_plot:
             print("---- Live plot mode ----")
-            live_plot(args.port, args.baudrate)
+            print_frames_and_holes(args.port, args.baudrate, plot=True)
         else:
             print("---- Default mode ----")
             print_frames_and_holes(args.port, args.baudrate)
