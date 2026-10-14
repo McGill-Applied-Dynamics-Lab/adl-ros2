@@ -163,6 +163,7 @@ class HoleDetector:
         self.detection_cfg = detection_cfg
         self.background = None
         self.last_result = None  # Latest estimate() output (detected, hole, distance_cm, amplitude, ...)
+        self.last_averaged = None  # Averaged frame the latest estimate used
         self._background_frames = []
         self._frames = deque(maxlen=detection_cfg.n_average_frames)
 
@@ -182,6 +183,7 @@ class HoleDetector:
 
         self._frames.append(frame)
         averaged = self._frames[0] if len(self._frames) == 1 else wg_helpers.make_background(self._frames)
+        self.last_averaged = averaged
 
         self.last_result = wg_helpers.estimate(averaged, self.calibration_params, self.background, method=self.detection_cfg.method)
 
@@ -210,7 +212,8 @@ def run_sensor_loop(port: str, baudrate: int, on_holes, on_command, stop_event=N
     """Read the serial port and run both layers until `stop_event` is set (or forever).
 
     `on_holes(HoleState)` is called when the pressed holes change, `on_command(MoveCommand)` for
-    each command, and `on_frame(t, frame)` (if given) for every frame. Without a calibration, raises
+    each command, and `on_frame(t, frame, detector)` (if given) for every frame, after the detection
+    (`detector.last_result`, `detector.background`, ...). Without a calibration, raises
     FileNotFoundError if `require_calibration`, else runs with the detection off.
     """
     detector = HoleDetector(calibration_file_path=CAL_CFG.npz_path)
@@ -226,10 +229,10 @@ def run_sensor_loop(port: str, baudrate: int, on_holes, on_command, stop_event=N
             if frame is None:
                 continue
 
-            if on_frame is not None:
-                on_frame(t, frame)
-
             new_pressed = detector.update(frame)
+            if on_frame is not None:
+                on_frame(t, frame, detector)
+
             if new_pressed == pressed:
                 continue
             pressed = new_pressed
@@ -355,7 +358,7 @@ def print_frames_and_holes(port: str, baudrate: int, plot: bool = False) -> None
     """Run the sensor loop and print what it detects; with `plot`, also plot the raw frames (`run_with_live_plot`)."""
     n_frames, t_last = 0, time.monotonic()
 
-    def on_frame(t, frame):
+    def on_frame(t, frame, detector):
         nonlocal n_frames, t_last
         n_frames += 1
         if t - t_last >= 1.0:
@@ -377,36 +380,39 @@ def print_frames_and_holes(port: str, baudrate: int, plot: bool = False) -> None
 
 
 def run_with_live_plot(port: str, baudrate: int, on_holes, on_command, on_frame=None) -> None:
-    """`run_sensor_loop`, plotting its latest raw frame at ~60 Hz (frame rate and pressed holes in the titles).
+    """`run_sensor_loop` with a live view of the processing, refreshed at ~60 Hz:
+
+    1. Raw frame: the latest frame (cyan), the background (orange), the echo search window (shaded) and the
+       detected echo (red line)
+    2. Detection signal: envelope of the averaged frame minus the background, as `wg_helpers.estimate` computes
+       it, against the detection threshold (dashed)
+    3. Waveguide: the holes at their calibrated distance, the covered one (red) and the estimated distance (yellow)
 
     The loop runs in a background thread (Qt needs the main thread), so the plot shows what the processing
     sees. The callbacks are passed on to the loop, and called from its thread.
     """
     check_port(port)
+    calibration = load_calibration(CAL_CFG.npz_path)
     import pyqtgraph as pg  # Only needed here
     from pyqtgraph.Qt import QtCore
 
     # Written by the sensor loop thread, read by the plot
-    latest = {"frame": None, "holes": None, "n_frames": 0}
+    latest = {"frame": None, "detector": None, "n_frames": 0}
     errors = []
     stop_event = threading.Event()
 
-    def plot_on_frame(t, frame):
-        latest["frame"] = frame
+    def plot_on_frame(t, frame, detector):
+        latest["frame"], latest["detector"] = frame, detector
         latest["n_frames"] += 1
         if on_frame is not None:
-            on_frame(t, frame)
-
-    def plot_on_holes(state):
-        latest["holes"] = state
-        on_holes(state)
+            on_frame(t, frame, detector)
 
     def sensor_loop():
         try:
             run_sensor_loop(
                 port,
                 baudrate,
-                on_holes=plot_on_holes,
+                on_holes=on_holes,
                 on_command=on_command,
                 stop_event=stop_event,
                 on_frame=plot_on_frame,
@@ -415,35 +421,120 @@ def run_with_live_plot(port: str, baudrate: int, on_holes, on_command, on_frame=
         except Exception as e:
             errors.append(e)
 
-    app = pg.mkQApp("Waveguide raw frames")
-    win = pg.GraphicsLayoutWidget(show=True, title="Waveguide raw frames")
-    win.resize(1200, 450)
-    plot = win.addPlot(title="Echo (time-locked to the PW pin)")
-    plot.setYRange(0, 4096)
-    plot.setXRange(0, FRAME_SIZE)
-    plot.setLabel("bottom", "Sample index (distance = index * c / (2 * fs))")
-    plot.setLabel("left", "ADC raw amplitude (12-bit)")
-    plot.showGrid(x=True, y=True, alpha=0.3)
-    curve = plot.plot(pen=pg.mkPen("c", width=1.5))
+    start, stop = int(calibration["search_start"]), int(calibration["search_stop"])
+    hole_ids, hole_cm = np.asarray(calibration["hole_ids"]), np.asarray(calibration["hole_cm"])
+    threshold = float(calibration["threshold"])
+    samples_per_ms = calibration["sampling_rate_hz"] / 1000
+
+    app = pg.mkQApp("Waveguide sensor")
+    win = pg.GraphicsLayoutWidget(show=True, title="Waveguide sensor")
+    win.resize(1200, 850)
+
+    def echo_line(color):
+        line = pg.InfiniteLine(angle=90, pen=pg.mkPen(color, width=2))
+        line.hide()
+        return line
+
+    def search_window():
+        return pg.LinearRegionItem(values=(start, stop), movable=False, brush=(255, 255, 255, 20), pen=pg.mkPen((255, 255, 255, 60)))
+
+    def set_status(text, color):
+        guide.setTitle(text, size="16pt", color=color)
+
+    # 1. Raw frame
+    raw = win.addPlot(title="Raw frame")
+    raw.setYRange(0, 4096)
+    raw.setXRange(0, FRAME_SIZE)
+    raw.setLabel("left", "ADC raw amplitude (12-bit)")
+    raw.showGrid(x=True, y=True, alpha=0.3)
+    raw.addLegend(offset=(-10, 10))
+    raw.addItem(search_window())
+    frame_curve = raw.plot(pen=pg.mkPen("c", width=1.5), name="latest frame")
+    background_curve = raw.plot(pen=pg.mkPen((255, 150, 0, 200), width=1.5), name="background")  # On top: the echo hides it otherwise
+    raw_echo = echo_line("r")
+    raw.addItem(raw_echo)
+
+    # 2. Detection signal
+    win.nextRow()
+    signal = win.addPlot(title="Detection signal")
+    signal.setXLink(raw)
+    signal.setLabel("bottom", "Sample index (distance = index * c / (2 * fs))")
+    signal.setLabel("left", "Envelope (ADC)")
+    signal.showGrid(x=True, y=True, alpha=0.3)
+    signal.addItem(search_window())
+    signal.addLine(y=threshold, pen=pg.mkPen((255, 80, 80), width=1, style=QtCore.Qt.PenStyle.DashLine))
+    envelope_curve = signal.plot(pen=pg.mkPen("m", width=1.5))
+    signal_echo = echo_line("r")
+    signal.addItem(signal_echo)
+
+    # 3. Waveguide
+    win.nextRow()
+    guide = win.addPlot()
+    guide.setLabel("bottom", "Distance along the waveguide (cm)")
+    guide.hideAxis("left")
+    guide.setMouseEnabled(x=False, y=False)
+    set_status("Recording the background: don't touch the sensor", "orange")
+    guide.setYRange(-1.0, 1.0)
+    margin = 2 * float(np.min(np.diff(hole_cm))) if len(hole_cm) > 1 else 1.0
+    guide.setXRange(hole_cm.min() - margin, hole_cm.max() + margin)
+    guide.addItem(pg.ScatterPlotItem(x=hole_cm, y=np.zeros(len(hole_cm)), size=14, brush=(70, 70, 70), pen=pg.mkPen((160, 160, 160))))
+    for hole, x in zip(hole_ids, hole_cm):
+        label = pg.TextItem(str(hole), anchor=(0.5, 0.0), color=(170, 170, 170))
+        label.setPos(x, -0.3)
+        guide.addItem(label)
+    covered = pg.ScatterPlotItem(size=24, brush=(255, 60, 60), pen=pg.mkPen("w", width=1.5))
+    guide.addItem(covered)
+    distance_line = echo_line("y")
+    guide.addItem(distance_line)
+
+    win.ci.layout.setRowStretchFactor(0, 3)
+    win.ci.layout.setRowStretchFactor(1, 2)
+    win.ci.layout.setRowStretchFactor(2, 1)
 
     n_frames_last, t_last = 0, time.monotonic()
-    shown_holes = None
+    shown_background = None
 
     def update():
-        nonlocal n_frames_last, t_last, shown_holes
+        nonlocal n_frames_last, t_last, shown_background
         if errors:
             app.quit()
             return
-        if (state := latest["holes"]) is not shown_holes and state is not None:
-            distance = "" if state.distance_cm is None else f", distance {state.distance_cm:.1f} cm"
-            plot.setTitle(f"Holes {sorted(state.pressed)}{distance}")
-            shown_holes = state
+
         if latest["frame"] is not None:
-            curve.setData(latest["frame"])  # Only the latest; the plot cannot keep up with every frame
+            frame_curve.setData(latest["frame"])  # Only the latest; the plot cannot keep up with every frame
+
+        detector = latest["detector"]
+        result = detector.last_result if detector is not None else None
+        if detector is not None and detector.background is not None and detector.background is not shown_background:
+            background_curve.setData(detector.background)
+            shown_background = detector.background
+
+        if result is not None:
+            averaged = detector.last_averaged
+            envelope = wg_helpers.ema(np.abs(np.asarray(averaged[:stop], dtype=float) - detector.background[:stop]))
+            envelope_curve.setData(envelope)
+            signal.setTitle(f"Detection signal: amplitude {result['amplitude']:.1f}, threshold {threshold:.1f}")
+
+            if result["detected"]:
+                set_status(f"Hole {result['hole']}  —  {result['distance_cm']:.1f} cm", "r")
+                covered.setData(x=hole_cm[hole_ids == result["hole"]], y=[0.0])
+                distance_line.setPos(result["distance_cm"])
+                distance_line.show()
+                if result["echo_time_ms"] is not None:  # None for template matching
+                    sample = result["echo_time_ms"] * samples_per_ms
+                    for line in (raw_echo, signal_echo):
+                        line.setPos(sample)
+                        line.show()
+            else:
+                set_status("No touch", (200, 200, 200))
+                covered.clear()
+                for line in (raw_echo, signal_echo, distance_line):
+                    line.hide()
+
         t = time.monotonic()
         if t - t_last >= 1.0:
             rate = (latest["n_frames"] - n_frames_last) / (t - t_last)
-            win.setWindowTitle(f"Waveguide raw frames ({rate:.0f} frames/s)")
+            win.setWindowTitle(f"Waveguide sensor ({rate:.0f} frames/s)")
             n_frames_last, t_last = latest["n_frames"], t
 
     thread = threading.Thread(target=sensor_loop, name="waveguide_sensor_loop", daemon=True)
