@@ -20,6 +20,7 @@ import queue
 import sqlite3
 import threading
 import time
+from collections import deque
 from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
@@ -52,6 +53,20 @@ class CalibrationConfig:
 
 CALIBRATION = CalibrationConfig()
 
+
+@dataclass(frozen=True)
+class DetectionConfig:
+    """Hole detection (layer 1) settings."""
+
+    n_background_frames: int = 50  # Frames averaged at startup, with nothing covered
+    # Latest frames averaged for each estimate: the threshold comes from 5-frame averages (CYCLES_PER_PRESS),
+    # single frames give false detections. More: less noise, more lag
+    n_average_frames: int = 5
+    method: str = "leading_edge"  # One of wg_helpers.METHODS
+
+
+DETECTION = DetectionConfig()
+
 DEFAULT_PORT = "/dev/ttyACM0"
 DEFAULT_BAUDRATE = 3_000_000
 SERIAL_TIMEOUT = 0.1  # s, so the loop checks the stop event even without data
@@ -76,12 +91,20 @@ def open_serial(port: str, baudrate: int) -> serial.Serial:
     return serial.Serial(port, baudrate, timeout=SERIAL_TIMEOUT)
 
 
+def load_calibration(path: Path = CALIBRATION.npz_path) -> dict:
+    """The fitted calibration (`wg_helpers.load_calibration`); FileNotFoundError if there is none yet."""
+    if not path.exists():
+        raise FileNotFoundError(f"No calibration at {path}: run sensor.py --calibrate first")
+    return wg_helpers.load_calibration(path)
+
+
 @dataclass(frozen=True)
 class HoleState:
-    """Holes pressed at time `t` (CLOCK_MONOTONIC) [s]."""
+    """Holes pressed at time `t` (CLOCK_MONOTONIC) [s], and the estimated touch distance [cm] if any."""
 
     t: float
     pressed: frozenset[int]
+    distance_cm: float | None = None
 
 
 class FrameReader:
@@ -121,13 +144,41 @@ class FrameReader:
 
 # --- Layer 1: hole detection ---
 class HoleDetector:
-    """Detect the pressed holes from one frame.
+    """Detect the pressed hole from each frame (`wg_helpers.estimate`), against a background recorded at startup.
 
-    TODO: stub, detects nothing; use the calibration (wg_helpers.estimate).
+    The first `n_background_frames` frames (nothing must be covered) are averaged into the background;
+    detection starts after. Each estimate uses the mean of the latest `n_average_frames` frames.
+    Without a calibration (None), nothing is detected.
     """
 
+    def __init__(self, calibration: dict | None, config: DetectionConfig = DETECTION):
+        if config.method not in wg_helpers.METHODS:
+            raise ValueError(f"Detection method must be one of {wg_helpers.METHODS}, got {config.method}")
+        self.calibration = calibration
+        self.config = config
+        self.background = None
+        self.last_result = None  # Latest estimate() output (detected, hole, distance_cm, amplitude, ...)
+        self._background_frames = []
+        self._frames = deque(maxlen=config.n_average_frames)
+
     def update(self, frame: np.ndarray) -> frozenset[int]:
-        return frozenset()
+        if self.calibration is None:
+            return frozenset()
+
+        if self.background is None:
+            if not self._background_frames:
+                print(f"Recording the background ({self.config.n_background_frames} frames): don't touch the sensor")
+            self._background_frames.append(frame)
+            if len(self._background_frames) == self.config.n_background_frames:
+                self.background = wg_helpers.make_background(self._background_frames)
+                self._background_frames = []
+                print("Background recorded, detecting")
+            return frozenset()
+
+        self._frames.append(frame)
+        averaged = self._frames[0] if len(self._frames) == 1 else wg_helpers.make_background(self._frames)
+        self.last_result = wg_helpers.estimate(averaged, self.calibration, self.background, method=self.config.method)
+        return frozenset({self.last_result["hole"]}) if self.last_result["detected"] else frozenset()
 
 
 # --- Layer 2: gesture processing ---
@@ -142,13 +193,21 @@ class GestureProcessor:
 
 
 # --- Process ---
-def run_sensor_loop(port: str, baudrate: int, on_holes, on_command, stop_event=None, on_frame=None) -> None:
+def run_sensor_loop(port: str, baudrate: int, on_holes, on_command, stop_event=None, on_frame=None, require_calibration: bool = True) -> None:
     """Read the serial port and run both layers until `stop_event` is set (or forever).
 
     `on_holes(HoleState)` is called when the pressed holes change, `on_command(MoveCommand)` for
-    each command, and `on_frame(t, frame)` (if given) for every frame.
+    each command, and `on_frame(t, frame)` (if given) for every frame. Without a calibration, raises
+    FileNotFoundError if `require_calibration`, else runs with the detection off.
     """
-    detector = HoleDetector()
+    try:
+        calibration = load_calibration()
+    except FileNotFoundError as e:
+        if require_calibration:
+            raise
+        print(f"{e}; hole detection off")
+        calibration = None
+    detector = HoleDetector(calibration)
     processor = GestureProcessor()
     pressed = frozenset()
 
@@ -160,6 +219,7 @@ def run_sensor_loop(port: str, baudrate: int, on_holes, on_command, stop_event=N
             t = time.monotonic()
             if frame is None:
                 continue
+
             if on_frame is not None:
                 on_frame(t, frame)
 
@@ -168,7 +228,7 @@ def run_sensor_loop(port: str, baudrate: int, on_holes, on_command, stop_event=N
                 continue
             pressed = new_pressed
 
-            state = HoleState(t, pressed)
+            state = HoleState(t, pressed, detector.last_result["distance_cm"] if pressed else None)
             on_holes(state)
             command = processor.update(state)
             if command is not None:
@@ -186,7 +246,9 @@ class SensorProcess:
     """Runs `run_sensor_loop` in a separate process and hands its commands over a queue."""
 
     def __init__(self, port: str = DEFAULT_PORT, baudrate: int = DEFAULT_BAUDRATE):
-        check_port(port)  # Here, not only in the child: there it would just end the process
+        # Checked here, not only in the child: there it would just end the process
+        check_port(port)
+        load_calibration()
         # Spawn, not fork: the child must not inherit the parent's rclpy state and threads
         ctx = mp.get_context("spawn")
         self._commands = ctx.Queue()
@@ -293,12 +355,17 @@ def print_frames_and_holes(port: str, baudrate: int) -> None:
             print(f"{n_frames / (t - t_last):.0f} frames/s")
             n_frames, t_last = 0, t
 
+    def on_holes(state):
+        distance = "" if state.distance_cm is None else f"  distance: {state.distance_cm:.1f} cm"
+        print(f"{state.t:.3f}  holes: {sorted(state.pressed)}{distance}")
+
     run_sensor_loop(
         port,
         baudrate,
-        on_holes=lambda state: print(f"{state.t:.3f}  holes: {sorted(state.pressed)}"),
+        on_holes=on_holes,
         on_command=lambda command: print(f"{command.t_created:.3f}  command: {command}"),
         on_frame=on_frame,
+        require_calibration=False,
     )
 
 
@@ -313,7 +380,7 @@ def live_plot(port: str, baudrate: int) -> None:
     from pyqtgraph.Qt import QtCore
 
     # Written by the sensor loop thread, read by the plot
-    latest = {"frame": None, "holes": frozenset(), "n_frames": 0}
+    latest = {"frame": None, "holes": None, "n_frames": 0}
     errors = []
     stop_event = threading.Event()
 
@@ -322,7 +389,7 @@ def live_plot(port: str, baudrate: int) -> None:
         latest["n_frames"] += 1
 
     def on_holes(state):
-        latest["holes"] = state.pressed
+        latest["holes"] = state
 
     def sensor_loop():
         try:
@@ -333,6 +400,7 @@ def live_plot(port: str, baudrate: int) -> None:
                 on_command=lambda command: print(f"{command.t_created:.3f}  command: {command}"),
                 stop_event=stop_event,
                 on_frame=on_frame,
+                require_calibration=False,
             )
         except Exception as e:
             errors.append(e)
@@ -349,18 +417,23 @@ def live_plot(port: str, baudrate: int) -> None:
     curve = plot.plot(pen=pg.mkPen("c", width=1.5))
 
     n_frames_last, t_last = 0, time.monotonic()
+    shown_holes = None
 
     def update():
-        nonlocal n_frames_last, t_last
+        nonlocal n_frames_last, t_last, shown_holes
         if errors:
             app.quit()
             return
+        if (state := latest["holes"]) is not shown_holes and state is not None:
+            distance = "" if state.distance_cm is None else f", distance {state.distance_cm:.1f} cm"
+            plot.setTitle(f"Holes {sorted(state.pressed)}{distance}")
+            shown_holes = state
         if latest["frame"] is not None:
             curve.setData(latest["frame"])  # Only the latest; the plot cannot keep up with every frame
         t = time.monotonic()
         if t - t_last >= 1.0:
             rate = (latest["n_frames"] - n_frames_last) / (t - t_last)
-            win.setWindowTitle(f"Waveguide raw frames ({rate:.0f} frames/s, holes {sorted(latest['holes'])})")
+            win.setWindowTitle(f"Waveguide raw frames ({rate:.0f} frames/s)")
             n_frames_last, t_last = latest["n_frames"], t
 
     thread = threading.Thread(target=sensor_loop, name="waveguide_sensor_loop", daemon=True)
