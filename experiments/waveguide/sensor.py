@@ -8,7 +8,7 @@ Runs in its own process (`SensorProcess`), so the robot (rclpy, the GIL) never s
 loop. Imports no ROS: it can be developed and tested without the robot.
 
 Standalone, prints the pressed holes and the commands:
-    pixi run -e waveguide-demo python experiments/waveguide/sensor.py --port /dev/ttyACM0
+    pixi run -e wg python experiments/waveguide/sensor.py --port /dev/ttyACM0
 """
 
 import argparse
