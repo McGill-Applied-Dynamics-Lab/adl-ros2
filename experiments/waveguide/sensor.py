@@ -477,13 +477,28 @@ def run_with_live_plot(port: str, baudrate: int, on_holes, on_command, on_frame=
     guide.setYRange(-1.0, 1.0)
     margin = 2 * float(np.min(np.diff(hole_cm))) if len(hole_cm) > 1 else 1.0
     guide.setXRange(hole_cm.min() - margin, hole_cm.max() + margin)
-    guide.addItem(pg.ScatterPlotItem(x=hole_cm, y=np.zeros(len(hole_cm)), size=14, brush=(70, 70, 70), pen=pg.mkPen((160, 160, 160))))
+    # The covered hole is shown by recolouring its spot: the spots never move or resize, as removing a spot
+    # (ScatterPlotItem.clear/setData) does not repaint where it was and leaves it on screen
+    idle_brush, idle_pen = pg.mkBrush(70, 70, 70), pg.mkPen((160, 160, 160))
+    covered_brush, covered_pen = pg.mkBrush(255, 60, 60), pg.mkPen("w", width=2)
+    holes = pg.ScatterPlotItem(x=hole_cm, y=np.zeros(len(hole_cm)), size=18, brush=idle_brush, pen=idle_pen)
+    guide.addItem(holes)
     for hole, x in zip(hole_ids, hole_cm):
         label = pg.TextItem(str(hole), anchor=(0.5, 0.0), color=(170, 170, 170))
         label.setPos(x, -0.3)
         guide.addItem(label)
-    covered = pg.ScatterPlotItem(size=24, brush=(255, 60, 60), pen=pg.mkPen("w", width=1.5))
-    guide.addItem(covered)
+    shown_hole = None
+
+    def show_covered(hole: int | None) -> None:
+        """Highlight `hole` (None: no hole)."""
+        nonlocal shown_hole
+        if hole == shown_hole:
+            return
+        is_covered = hole_ids == hole
+        holes.setBrush([covered_brush if c else idle_brush for c in is_covered])
+        holes.setPen([covered_pen if c else idle_pen for c in is_covered])
+        shown_hole = hole
+
     distance_line = echo_line("y")
     guide.addItem(distance_line)
 
@@ -517,7 +532,7 @@ def run_with_live_plot(port: str, baudrate: int, on_holes, on_command, on_frame=
 
             if result["detected"]:
                 set_status(f"Hole {result['hole']}  —  {result['distance_cm']:.1f} cm", "r")
-                covered.setData(x=hole_cm[hole_ids == result["hole"]], y=[0.0])
+                show_covered(result["hole"])
                 distance_line.setPos(result["distance_cm"])
                 distance_line.show()
                 if result["echo_time_ms"] is not None:  # None for template matching
@@ -527,7 +542,7 @@ def run_with_live_plot(port: str, baudrate: int, on_holes, on_command, on_frame=
                         line.show()
             else:
                 set_status("No touch", (200, 200, 200))
-                covered.clear()
+                show_covered(None)
                 for line in (raw_echo, signal_echo, distance_line):
                     line.hide()
 
