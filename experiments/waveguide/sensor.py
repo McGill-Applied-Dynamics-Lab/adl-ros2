@@ -63,8 +63,23 @@ class DetectionConfig:
     method: str = "leading_edge"  # One of wg_helpers.METHODS
 
 
+@dataclass(frozen=True)
+class GestureConfig:
+    """Gesture processing (layer 2) settings: swipe -> MoveCommand(axis, distance, speed)."""
+
+    hole_idx: int = 15  # Hole where the waveguide bends: swipes starting at holes <= hole_idx are along x, else y
+    x_sign: int = 1  # +1: increasing hole index moves +x; -1 to flip
+    y_sign: int = 1  # +1: increasing hole index moves +y; -1 to flip
+    distance_scale: float = 0.01  # Robot motion [m] per cm of swipe (0.01: 1:1)
+    max_speed: float = 0.15  # [m/s] Faster swipes are capped (waveguide_teleop.MAX_SPEED)
+    max_distance: float = 0.2  # [m] Longer swipes are capped (waveguide_teleop.MAX_DISTANCE)
+    min_holes: int = 2  # Holes a swipe must span (start and end included); shorter touches send nothing
+    debounce_s: float = 0.3  # The swipe ends after no hole is detected for this long
+
+
 # Configs
 DETECTION_CFG = DetectionConfig()
+GESTURE_CFG = GestureConfig()
 CAL_CFG = CalibrationConfig()
 
 
@@ -96,7 +111,12 @@ def load_calibration(path: Path = CAL_CFG.npz_path) -> dict:
     """The fitted calibration (`wg_helpers.load_calibration`); FileNotFoundError if there is none yet."""
     if not path.exists():
         raise FileNotFoundError(f"No calibration at {path}: run sensor.py --calibrate first")
-    return wg_helpers.load_calibration(path)
+
+    calibration_params = wg_helpers.load_calibration(path)
+
+    calibration_params["threshold"] = float(calibration_params["threshold"]) * 1.5  # temp, to avoid false detections
+
+    return calibration_params
 
 
 @dataclass(frozen=True)
@@ -173,7 +193,9 @@ class HoleDetector:
 
         if self.background is None:
             if not self._background_frames:
-                print(f"Recording the background ({self.detection_cfg.n_background_frames} frames): don't touch the sensor")
+                print(
+                    f"Recording the background ({self.detection_cfg.n_background_frames} frames): don't touch the sensor"
+                )
             self._background_frames.append(frame)
             if len(self._background_frames) == self.detection_cfg.n_background_frames:
                 self.background = wg_helpers.make_background(self._background_frames)
@@ -185,10 +207,14 @@ class HoleDetector:
         averaged = self._frames[0] if len(self._frames) == 1 else wg_helpers.make_background(self._frames)
         self.last_averaged = averaged
 
-        self.last_result = wg_helpers.estimate(averaged, self.calibration_params, self.background, method=self.detection_cfg.method)
+        self.last_result = wg_helpers.estimate(
+            averaged, self.calibration_params, self.background, method=self.detection_cfg.method
+        )
 
         if self.last_result["detected"]:
-            print(f"Detected hole {self.last_result['hole']} at {self.last_result['distance_cm']:.1f} cm (amplitude {self.last_result['amplitude']:.1f})")
+            print(
+                f"Detected hole {self.last_result['hole']} at {self.last_result['distance_cm']:.1f} cm (amplitude {self.last_result['amplitude']:.1f})"
+            )
 
             return frozenset({self.last_result["hole"]})
 
@@ -198,17 +224,73 @@ class HoleDetector:
 
 # --- Layer 2: gesture processing ---
 class GestureProcessor:
-    """Turn the pressed-hole changes into teleop commands.
+    """Turn swipes along the waveguide into teleop commands.
 
-    TODO: stub, emits nothing; replace with the swipe -> (axis, distance, speed) mapping.
+    A swipe starts at the first detected hole and ends once no hole is detected for `debounce_s`. Only its
+    first and last hole count (noisy or skipped holes in between do not matter):
+    - axis: x if it starts at or before the bend (`hole_idx`), else y. A swipe crossing the bend stops there.
+    - distance: swipe length [cm, from the calibration] * `distance_scale`, signed by the direction
+    - speed: swipe speed (start to reaching the last hole, without the debounce) * `distance_scale`
+    Distance and speed are capped at `max_distance` and `max_speed`; swipes shorter than `min_holes` send nothing.
     """
 
-    def update(self, state: HoleState) -> MoveCommand | None:
-        return None
+    def __init__(self, calibration: dict, gesture_cfg: GestureConfig = GESTURE_CFG):
+        self.cfg = gesture_cfg
+        self.hole_ids = np.asarray(calibration["hole_ids"]).astype(int)
+        self.hole_cm = dict(zip(self.hole_ids.tolist(), np.asarray(calibration["hole_cm"]).tolist()))
+        self._reset()
+
+    def _reset(self) -> None:
+        self._t_start = None  # Time the swipe started (first hole detected), None: no swipe
+        self._t_last_touch = None  # Last time a hole was detected
+        self._reached = {}  # Hole -> time it was first reached in this swipe
+        self._start_hole = self._last_hole = None
+
+    def update(self, t: float, pressed: frozenset[int]) -> MoveCommand | None:
+        """Call on every frame (the swipe end needs the time to advance); returns a command when a swipe ends."""
+        if pressed:
+            hole = min(pressed)  # One hole at a time from the detection
+            if self._t_start is None:
+                self._t_start, self._start_hole = t, hole
+            self._reached.setdefault(hole, t)
+            self._last_hole, self._t_last_touch = hole, t
+            return None
+
+        if self._t_start is None or t - self._t_last_touch < self.cfg.debounce_s:
+            return None
+        command = self._swipe_command()
+        self._reset()
+        return command
+
+    def _swipe_command(self) -> MoveCommand | None:
+        cfg = self.cfg
+        start, end = self._start_hole, self._last_hole
+
+        # Axis from the start hole; a swipe crossing the bend stops at the end of the start segment
+        on_x = start <= cfg.hole_idx
+        segment = self.hole_ids[self.hole_ids <= cfg.hole_idx] if on_x else self.hole_ids[self.hole_ids > cfg.hole_idx]
+        end = int(np.clip(end, segment.min(), segment.max()))
+
+        if abs(end - start) + 1 < cfg.min_holes:
+            print(f"Swipe {start} -> {end}: shorter than {cfg.min_holes} holes, ignored")
+            return None
+
+        axis, sign = ("x", cfg.x_sign) if on_x else ("y", cfg.y_sign)
+        distance = sign * (self.hole_cm[end] - self.hole_cm[start]) * cfg.distance_scale
+        distance = float(np.clip(distance, -cfg.max_distance, cfg.max_distance))
+
+        # Time to reach the end hole (the last touched one if the end was clipped at the bend and never detected)
+        duration = self._reached.get(end, self._reached[self._last_hole]) - self._t_start
+        speed = min(abs(distance) / duration, cfg.max_speed) if duration > 0 else cfg.max_speed
+
+        print(f"Swipe {start} -> {end} in {duration:.2f} s: {axis} {distance * 100:+.1f} cm at {speed * 100:.1f} cm/s")
+        return MoveCommand(axis, distance, speed)
 
 
 # --- Process ---
-def run_sensor_loop(port: str, baudrate: int, on_holes, on_command, stop_event=None, on_frame=None, require_calibration: bool = True) -> None:
+def run_sensor_loop(
+    port: str, baudrate: int, on_holes, on_command, stop_event=None, on_frame=None, require_calibration: bool = True
+) -> None:
     """Read the serial port and run both layers until `stop_event` is set (or forever).
 
     `on_holes(HoleState)` is called when the pressed holes change, `on_command(MoveCommand)` for
@@ -217,7 +299,7 @@ def run_sensor_loop(port: str, baudrate: int, on_holes, on_command, stop_event=N
     FileNotFoundError if `require_calibration`, else runs with the detection off.
     """
     detector = HoleDetector(calibration_file_path=CAL_CFG.npz_path)
-    processor = GestureProcessor()
+    processor = GestureProcessor(detector.calibration_params)
     pressed = frozenset()
 
     with open_serial(port, baudrate) as ser:
@@ -226,20 +308,18 @@ def run_sensor_loop(port: str, baudrate: int, on_holes, on_command, stop_event=N
         while stop_event is None or not stop_event.is_set():
             frame = reader.read_frame()
             t = time.monotonic()
-            if frame is None:
-                continue
 
-            new_pressed = detector.update(frame)
-            if on_frame is not None:
-                on_frame(t, frame, detector)
+            if frame is not None:
+                new_pressed = detector.update(frame)
+                if on_frame is not None:
+                    on_frame(t, frame, detector)
 
-            if new_pressed == pressed:
-                continue
-            pressed = new_pressed
+                if new_pressed != pressed:
+                    pressed = new_pressed
+                    on_holes(HoleState(t, pressed, detector.last_result["distance_cm"] if pressed else None))
 
-            state = HoleState(t, pressed, detector.last_result["distance_cm"] if pressed else None)
-            on_holes(state)
-            command = processor.update(state)
+            # Every iteration, even without a frame: the swipe ends after a time without holes
+            command = processor.update(t, pressed)
             if command is not None:
                 on_command(command)
 
@@ -376,14 +456,16 @@ def print_frames_and_holes(port: str, baudrate: int, plot: bool = False) -> None
     if plot:
         run_with_live_plot(port, baudrate, on_holes=on_holes, on_command=on_command, on_frame=on_frame)
     else:
-        run_sensor_loop(port, baudrate, on_holes=on_holes, on_command=on_command, on_frame=on_frame, require_calibration=False)
+        run_sensor_loop(
+            port, baudrate, on_holes=on_holes, on_command=on_command, on_frame=on_frame, require_calibration=False
+        )
 
 
 def run_with_live_plot(port: str, baudrate: int, on_holes, on_command, on_frame=None, trail_s: float = 2.0) -> None:
     """`run_sensor_loop` with a live view of the processing, refreshed at ~60 Hz:
 
     1. Raw frame: the latest frame (cyan), the background (orange), the echo search window (shaded) and the
-       detected echo (red line)
+       detected echo (red line); the last command in the title
     2. Detection signal: envelope of the averaged frame minus the background, as `wg_helpers.estimate` computes
        it, against the detection threshold (dashed)
     3. Waveguide: the holes at their calibrated distance and the estimated distance (yellow). The covered hole
@@ -398,7 +480,11 @@ def run_with_live_plot(port: str, baudrate: int, on_holes, on_command, on_frame=
     from pyqtgraph.Qt import QtCore
 
     # Written by the sensor loop thread, read by the plot
-    latest = {"frame": None, "detector": None, "n_frames": 0}
+    latest = {"frame": None, "detector": None, "n_frames": 0, "command": None}
+
+    def plot_on_command(command):
+        latest["command"] = command
+        on_command(command)
     errors = []
     stop_event = threading.Event()
 
@@ -422,7 +508,7 @@ def run_with_live_plot(port: str, baudrate: int, on_holes, on_command, on_frame=
                 port,
                 baudrate,
                 on_holes=on_holes,
-                on_command=on_command,
+                on_command=plot_on_command,
                 stop_event=stop_event,
                 on_frame=plot_on_frame,
                 require_calibration=False,
@@ -445,7 +531,9 @@ def run_with_live_plot(port: str, baudrate: int, on_holes, on_command, on_frame=
         return line
 
     def search_window():
-        return pg.LinearRegionItem(values=(start, stop), movable=False, brush=(255, 255, 255, 20), pen=pg.mkPen((255, 255, 255, 60)))
+        return pg.LinearRegionItem(
+            values=(start, stop), movable=False, brush=(255, 255, 255, 20), pen=pg.mkPen((255, 255, 255, 60))
+        )
 
     def set_status(text, color):
         guide.setTitle(text, size="16pt", color=color)
@@ -459,7 +547,9 @@ def run_with_live_plot(port: str, baudrate: int, on_holes, on_command, on_frame=
     raw.addLegend(offset=(-10, 10))
     raw.addItem(search_window())
     frame_curve = raw.plot(pen=pg.mkPen("c", width=1.5), name="latest frame")
-    background_curve = raw.plot(pen=pg.mkPen((255, 150, 0, 200), width=1.5), name="background")  # On top: the echo hides it otherwise
+    background_curve = raw.plot(
+        pen=pg.mkPen((255, 150, 0, 200), width=1.5), name="background"
+    )  # On top: the echo hides it otherwise
     raw_echo = echo_line("r")
     raw.addItem(raw_echo)
 
@@ -490,7 +580,9 @@ def run_with_live_plot(port: str, baudrate: int, on_holes, on_command, on_frame=
     # (ScatterPlotItem.clear/setData) does not repaint where it was and leaves it on screen
     idle_color, covered_color = np.array([70, 70, 70]), np.array([255, 60, 60])
     idle_pen, covered_pen = pg.mkPen((160, 160, 160)), pg.mkPen("w", width=2)
-    holes = pg.ScatterPlotItem(x=hole_cm, y=np.zeros(len(hole_cm)), size=18, brush=pg.mkBrush(*idle_color), pen=idle_pen)
+    holes = pg.ScatterPlotItem(
+        x=hole_cm, y=np.zeros(len(hole_cm)), size=18, brush=pg.mkBrush(*idle_color), pen=idle_pen
+    )
     guide.addItem(holes)
     for hole, x in zip(hole_ids, hole_cm):
         label = pg.TextItem(str(hole), anchor=(0.5, 0.0), color=(170, 170, 170))
@@ -524,6 +616,12 @@ def run_with_live_plot(port: str, baudrate: int, on_holes, on_command, on_frame=
         if errors:
             app.quit()
             return
+
+        if (command := latest["command"]) is not None:
+            raw.setTitle(
+                f"Last command: {command.axis} {command.distance * 100:+.1f} cm at {command.speed * 100:.1f} cm/s"
+                f" ({time.monotonic() - command.t_created:.1f} s ago)"
+            )
 
         if latest["frame"] is not None:
             frame_curve.setData(latest["frame"])  # Only the latest; the plot cannot keep up with every frame
