@@ -18,6 +18,7 @@ import json
 import multiprocessing as mp
 import queue
 import sqlite3
+import threading
 import time
 from contextlib import closing
 from dataclasses import dataclass
@@ -69,6 +70,9 @@ def check_port(port: str) -> None:
 
 def open_serial(port: str, baudrate: int) -> serial.Serial:
     check_port(port)
+
+    print(f"Waveguide sensor loop started on {port} at {baudrate} baud (Ctrl+C to quit)")
+
     return serial.Serial(port, baudrate, timeout=SERIAL_TIMEOUT)
 
 
@@ -100,15 +104,6 @@ class FrameReader:
                 return None
             self._buffer.extend(chunk)
         return frame
-
-    def read_available(self) -> list[np.ndarray]:
-        """Complete frames among the bytes already received (non-blocking)."""
-        if self.ser.in_waiting:
-            self._buffer.extend(self.ser.read(self.ser.in_waiting))
-        frames = []
-        while (frame := self._pop_frame()) is not None:
-            frames.append(frame)
-        return frames
 
     def _pop_frame(self) -> np.ndarray | None:
         """Take the first complete frame out of the buffer, if there is one."""
@@ -308,43 +303,78 @@ def print_frames_and_holes(port: str, baudrate: int) -> None:
 
 
 def live_plot(port: str, baudrate: int) -> None:
-    """Plot the latest raw frame at ~60 Hz (from sensor_live_plot.py)."""
+    """Plot the latest raw frame at ~60 Hz, with the frame rate and the pressed holes in the title.
+
+    The frames come from `run_sensor_loop` in a background thread (Qt needs the main thread), so the
+    plot shows what the processing sees. Commands are printed.
+    """
     check_port(port)
     import pyqtgraph as pg  # Only needed here
     from pyqtgraph.Qt import QtCore
 
-    with open_serial(port, baudrate) as ser:
-        reader = FrameReader(ser)
-        reader.flush()
+    # Written by the sensor loop thread, read by the plot
+    latest = {"frame": None, "holes": frozenset(), "n_frames": 0}
+    errors = []
+    stop_event = threading.Event()
 
-        app = pg.mkQApp("Waveguide raw frames")
-        win = pg.GraphicsLayoutWidget(show=True, title="Waveguide raw frames")
-        win.resize(1200, 450)
-        plot = win.addPlot(title="Echo (time-locked to the PW pin)")
-        plot.setYRange(0, 4096)
-        plot.setXRange(0, FRAME_SIZE)
-        plot.setLabel("bottom", "Sample index (distance = index * c / (2 * fs))")
-        plot.setLabel("left", "ADC raw amplitude (12-bit)")
-        plot.showGrid(x=True, y=True, alpha=0.3)
-        curve = plot.plot(pen=pg.mkPen("c", width=1.5))
+    def on_frame(t, frame):
+        latest["frame"] = frame
+        latest["n_frames"] += 1
 
-        n_frames, t_last = 0, time.monotonic()
+    def on_holes(state):
+        latest["holes"] = state.pressed
 
-        def update():
-            nonlocal n_frames, t_last
-            frames = reader.read_available()
-            if frames:
-                curve.setData(frames[-1])  # Only the latest; the plot cannot keep up with every frame
-            n_frames += len(frames)
-            t = time.monotonic()
-            if t - t_last >= 1.0:
-                win.setWindowTitle(f"Waveguide raw frames ({n_frames / (t - t_last):.0f} frames/s)")
-                n_frames, t_last = 0, t
+    def sensor_loop():
+        try:
+            run_sensor_loop(
+                port,
+                baudrate,
+                on_holes=on_holes,
+                on_command=lambda command: print(f"{command.t_created:.3f}  command: {command}"),
+                stop_event=stop_event,
+                on_frame=on_frame,
+            )
+        except Exception as e:
+            errors.append(e)
 
-        timer = QtCore.QTimer()
-        timer.timeout.connect(update)
-        timer.start(16)
+    app = pg.mkQApp("Waveguide raw frames")
+    win = pg.GraphicsLayoutWidget(show=True, title="Waveguide raw frames")
+    win.resize(1200, 450)
+    plot = win.addPlot(title="Echo (time-locked to the PW pin)")
+    plot.setYRange(0, 4096)
+    plot.setXRange(0, FRAME_SIZE)
+    plot.setLabel("bottom", "Sample index (distance = index * c / (2 * fs))")
+    plot.setLabel("left", "ADC raw amplitude (12-bit)")
+    plot.showGrid(x=True, y=True, alpha=0.3)
+    curve = plot.plot(pen=pg.mkPen("c", width=1.5))
+
+    n_frames_last, t_last = 0, time.monotonic()
+
+    def update():
+        nonlocal n_frames_last, t_last
+        if errors:
+            app.quit()
+            return
+        if latest["frame"] is not None:
+            curve.setData(latest["frame"])  # Only the latest; the plot cannot keep up with every frame
+        t = time.monotonic()
+        if t - t_last >= 1.0:
+            rate = (latest["n_frames"] - n_frames_last) / (t - t_last)
+            win.setWindowTitle(f"Waveguide raw frames ({rate:.0f} frames/s, holes {sorted(latest['holes'])})")
+            n_frames_last, t_last = latest["n_frames"], t
+
+    thread = threading.Thread(target=sensor_loop, name="waveguide_sensor_loop", daemon=True)
+    thread.start()
+    timer = QtCore.QTimer()
+    timer.timeout.connect(update)
+    timer.start(16)
+    try:
         app.exec()
+    finally:
+        stop_event.set()
+        thread.join(timeout=1.0)
+    if errors:
+        raise errors[0]
 
 
 def main():
@@ -358,11 +388,15 @@ def main():
 
     try:
         if args.calibrate:
+            print("---- Calibration mode ----")
             calibrate(args.port, args.baudrate)
         elif args.live_plot:
+            print("---- Live plot mode ----")
             live_plot(args.port, args.baudrate)
         else:
+            print("---- Default mode ----")
             print_frames_and_holes(args.port, args.baudrate)
+
     except (FileNotFoundError, serial.SerialException) as e:
         parser.exit(1, f"Error: {e}\n")
     except KeyboardInterrupt:
