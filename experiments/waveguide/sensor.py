@@ -379,14 +379,15 @@ def print_frames_and_holes(port: str, baudrate: int, plot: bool = False) -> None
         run_sensor_loop(port, baudrate, on_holes=on_holes, on_command=on_command, on_frame=on_frame, require_calibration=False)
 
 
-def run_with_live_plot(port: str, baudrate: int, on_holes, on_command, on_frame=None) -> None:
+def run_with_live_plot(port: str, baudrate: int, on_holes, on_command, on_frame=None, trail_s: float = 2.0) -> None:
     """`run_sensor_loop` with a live view of the processing, refreshed at ~60 Hz:
 
     1. Raw frame: the latest frame (cyan), the background (orange), the echo search window (shaded) and the
        detected echo (red line)
     2. Detection signal: envelope of the averaged frame minus the background, as `wg_helpers.estimate` computes
        it, against the detection threshold (dashed)
-    3. Waveguide: the holes at their calibrated distance, the covered one (red) and the estimated distance (yellow)
+    3. Waveguide: the holes at their calibrated distance and the estimated distance (yellow). The covered hole
+       is bright red (white outline); released holes fade back to grey over `trail_s` [s], showing the swipe.
 
     The loop runs in a background thread (Qt needs the main thread), so the plot shows what the processing
     sees. The callbacks are passed on to the loop, and called from its thread.
@@ -401,9 +402,17 @@ def run_with_live_plot(port: str, baudrate: int, on_holes, on_command, on_frame=
     errors = []
     stop_event = threading.Event()
 
+    hole_ids = np.asarray(calibration["hole_ids"])
+    hole_index = {int(hole): i for i, hole in enumerate(hole_ids)}
+    last_covered = np.full(len(hole_ids), -np.inf)  # Last time each hole was covered (CLOCK_MONOTONIC) [s]
+
     def plot_on_frame(t, frame, detector):
         latest["frame"], latest["detector"] = frame, detector
         latest["n_frames"] += 1
+        # Every frame, not every redraw: a fast swipe can cover a hole for less than a redraw period
+        result = detector.last_result
+        if result is not None and result["detected"]:
+            last_covered[hole_index[result["hole"]]] = t
         if on_frame is not None:
             on_frame(t, frame, detector)
 
@@ -422,7 +431,7 @@ def run_with_live_plot(port: str, baudrate: int, on_holes, on_command, on_frame=
             errors.append(e)
 
     start, stop = int(calibration["search_start"]), int(calibration["search_stop"])
-    hole_ids, hole_cm = np.asarray(calibration["hole_ids"]), np.asarray(calibration["hole_cm"])
+    hole_cm = np.asarray(calibration["hole_cm"])
     threshold = float(calibration["threshold"])
     samples_per_ms = calibration["sampling_rate_hz"] / 1000
 
@@ -477,27 +486,28 @@ def run_with_live_plot(port: str, baudrate: int, on_holes, on_command, on_frame=
     guide.setYRange(-1.0, 1.0)
     margin = 2 * float(np.min(np.diff(hole_cm))) if len(hole_cm) > 1 else 1.0
     guide.setXRange(hole_cm.min() - margin, hole_cm.max() + margin)
-    # The covered hole is shown by recolouring its spot: the spots never move or resize, as removing a spot
+    # Holes are shown by recolouring their spots: the spots never move or resize, as removing a spot
     # (ScatterPlotItem.clear/setData) does not repaint where it was and leaves it on screen
-    idle_brush, idle_pen = pg.mkBrush(70, 70, 70), pg.mkPen((160, 160, 160))
-    covered_brush, covered_pen = pg.mkBrush(255, 60, 60), pg.mkPen("w", width=2)
-    holes = pg.ScatterPlotItem(x=hole_cm, y=np.zeros(len(hole_cm)), size=18, brush=idle_brush, pen=idle_pen)
+    idle_color, covered_color = np.array([70, 70, 70]), np.array([255, 60, 60])
+    idle_pen, covered_pen = pg.mkPen((160, 160, 160)), pg.mkPen("w", width=2)
+    holes = pg.ScatterPlotItem(x=hole_cm, y=np.zeros(len(hole_cm)), size=18, brush=pg.mkBrush(*idle_color), pen=idle_pen)
     guide.addItem(holes)
     for hole, x in zip(hole_ids, hole_cm):
         label = pg.TextItem(str(hole), anchor=(0.5, 0.0), color=(170, 170, 170))
         label.setPos(x, -0.3)
         guide.addItem(label)
-    shown_hole = None
+    shown_trail = None
 
-    def show_covered(hole: int | None) -> None:
-        """Highlight `hole` (None: no hole)."""
-        nonlocal shown_hole
-        if hole == shown_hole:
-            return
-        is_covered = hole_ids == hole
-        holes.setBrush([covered_brush if c else idle_brush for c in is_covered])
-        holes.setPen([covered_pen if c else idle_pen for c in is_covered])
-        shown_hole = hole
+    def show_trail(covered_hole: int | None) -> None:
+        """Covered hole bright red; the others from red (just released) back to grey over trail_s."""
+        nonlocal shown_trail
+        level = np.clip(1 - (time.monotonic() - last_covered) / trail_s, 0, 1)
+        colors = np.round(idle_color + level[:, None] * (covered_color - idle_color)).astype(int)
+        if shown_trail is not None and covered_hole == shown_trail[0] and np.array_equal(colors, shown_trail[1]):
+            return  # Nothing visibly changed
+        holes.setBrush([pg.mkBrush(*color) for color in colors])
+        holes.setPen([covered_pen if hole == covered_hole else idle_pen for hole in hole_ids])
+        shown_trail = (covered_hole, colors)
 
     distance_line = echo_line("y")
     guide.addItem(distance_line)
@@ -532,7 +542,6 @@ def run_with_live_plot(port: str, baudrate: int, on_holes, on_command, on_frame=
 
             if result["detected"]:
                 set_status(f"Hole {result['hole']}  —  {result['distance_cm']:.1f} cm", "r")
-                show_covered(result["hole"])
                 distance_line.setPos(result["distance_cm"])
                 distance_line.show()
                 if result["echo_time_ms"] is not None:  # None for template matching
@@ -542,9 +551,9 @@ def run_with_live_plot(port: str, baudrate: int, on_holes, on_command, on_frame=
                         line.show()
             else:
                 set_status("No touch", (200, 200, 200))
-                show_covered(None)
                 for line in (raw_echo, signal_echo, distance_line):
                     line.hide()
+        show_trail(result["hole"] if result is not None and result["detected"] else None)
 
         t = time.monotonic()
         if t - t_last >= 1.0:
