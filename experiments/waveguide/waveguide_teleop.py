@@ -17,19 +17,18 @@ Terminal commands:
     q                           quit
 """
 
+import time
+
 import numpy as np
-from arm_client.robot import Pose, Robot, Twist
+from arm_client.robot import Pose, Robot
 
 from arm_client import CONFIG_DIR
 
 # --- Parameters ---
 AXES = {"x": 0, "y": 1, "z": 2}
-MAX_SPEED = 0.05  # m/s, average speed of a move (the peak is 1.5x, cubic profile)
+MAX_SPEED = 0.15  # m/s, average speed of a move (the peak is 1.875x, minimum-jerk profile)
 MAX_DISTANCE = 0.2  # m, per command
-
-# Ramp fr3_pose_controller prepends to each trajectory: max(MIN_RAMP_TIME, distance / RAMP_SPEED)
-CONTROLLER_MIN_RAMP_TIME = 0.5  # s
-CONTROLLER_RAMP_SPEED = 0.05  # m/s
+CONTROLLER_MIN_MOVE_TIME = 0.5  # s, fr3_pose_controller stretches shorter moves to this
 
 # Workspace box, relative to the home position [m]
 WORKSPACE_LOWER = np.array([-0.15, -0.30, -0.25])
@@ -50,6 +49,9 @@ homing_pose = robot.end_effector_pose.copy()
 def switch_to_pose_controller():
     robot.controller_switcher_client.switch_controller("fr3_pose_controller")
     robot.fr3_pose_controller_parameters_client.load_param_config(file_path=CONFIG_DIR / "controllers" / "fr3_pose" / "default.yaml")
+    # Publish each goal once instead of republishing at 100 Hz: once a move ends, fr3_pose_controller
+    # takes every repeat as a new (zero-length, >= 0.5 s) move and ignores new goals meanwhile
+    robot.set_target_streaming(True)
 
 
 switch_to_pose_controller()
@@ -83,23 +85,17 @@ def move_along_axis(axis: str, distance: float, speed: float):
         print("Already at the workspace limit, not moving.")
         return
 
-    # Send the move as a trajectory: fr3_pose_controller follows it as one smooth spline (rest to rest).
-    # Streaming target poses (`move_to`) makes it stop at every intermediate target.
-    # Only the goal is sent: the controller prepends its commanded pose at t=0 and shifts our times by a
-    # ramp of max(0.5 s, d / 5 cm/s). Sending the start too makes it an interior waypoint with a
-    # non-zero spline velocity, and the hold segment before it then dips backwards.
-    goal_pose = Pose(clipped, homing_pose.orientation)
-    distance_to_goal = float(np.linalg.norm(clipped - target_position))
-    duration = distance_to_goal / speed
-    ramp_time = max(CONTROLLER_MIN_RAMP_TIME, distance_to_goal / CONTROLLER_RAMP_SPEED)
-    if duration < ramp_time:
-        print(f"Move limited by the controller ramp: {duration:.2f} s -> {ramp_time:.2f} s")
+    # fr3_pose_controller moves to a single target pose with a minimum-jerk profile (rest to rest) whose
+    # duration is distance / motion.max_linear_velocity, so set that parameter to the requested speed.
+    # Streaming intermediate poses (`move_to`) instead makes it stop at every one of them, and a
+    # `target_trajectory` is limited to 5 cm/s by the ramp the controller prepends to it.
+    robot.fr3_pose_controller_parameters_client.set_parameters([("motion.max_linear_velocity", float(speed))])
+    time.sleep(0.01)  # The controller refreshes its parameters on its next update
 
-    robot.execute_cartesian_traj([(goal_pose, Twist(np.zeros(3), np.zeros(3)))], [max(duration - ramp_time, 0.0)])
+    duration = max(float(np.linalg.norm(clipped - target_position)) / speed, CONTROLLER_MIN_MOVE_TIME)
+    robot.publish_target(pose=Pose(clipped, homing_pose.orientation))
     target_position = clipped
-
-    while robot.wait_for_trajectory_completion(max(duration, ramp_time), timeout_margin=0.2):
-        pass
+    time.sleep(duration + 0.1)
 
 
 def go_home():
