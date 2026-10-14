@@ -61,7 +61,8 @@ test-install = { cmd = [
 ] } # Test installation
 
 [environments]
-humble = { features = ["humble", "dev"] }
+humble = { features = ["humble", "dev"], solve-group = "humble" }
+waveguide-demo = { features = ["humble", "dev", "waveguide"], solve-group = "humble" } # Same versions as humble, plus the waveguide deps
 
 # -----------------------------
 # MARK: General dependencies
@@ -131,6 +132,16 @@ libstdcxx-ng = "*"
 [feature.humble.pypi-dependencies]
 viser = ">=1.0.16, <2"
 websockets = "*"
+
+# -----------------------------
+# MARK: Waveguide demo
+# -----------------------------
+# Dependencies of the waveguide sensor processing (experiments/waveguide)
+[feature.waveguide.dependencies]
+
+[feature.waveguide.tasks]
+waveguide-teleop = "python experiments/waveguide/waveguide_teleop.py"
+waveguide-sensor = "python experiments/waveguide/sensor.py"
 
 # -----------------------------
 # MARK: Dev
