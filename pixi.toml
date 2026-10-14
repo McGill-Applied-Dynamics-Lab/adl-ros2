@@ -62,7 +62,11 @@ test-install = { cmd = [
 
 [environments]
 humble = { features = ["humble", "dev"], solve-group = "humble" }
-waveguide-demo = { features = ["humble", "dev", "waveguide"], solve-group = "humble" } # Same versions as humble, plus the waveguide deps
+wg = { features = [
+    "humble",
+    "dev",
+    "waveguide",
+], solve-group = "humble" } # Same versions as humble, plus the waveguide deps
 
 # -----------------------------
 # MARK: General dependencies
@@ -87,6 +91,7 @@ ipykernel = ">=7.2.0,<8"
 pandas = ">=3.0.2,<4"
 mcap = ">=1.3.1,<2"
 pyserial = ">=3.5,<4"
+
 
 [pypi-dependencies]
 adl-ros2 = { path = ".", editable = true }
@@ -138,10 +143,15 @@ websockets = "*"
 # -----------------------------
 # Dependencies of the waveguide sensor processing (experiments/waveguide)
 [feature.waveguide.dependencies]
+pyqtgraph = ">=0.14.0,<0.15"
+scipy = ">=1.17.1,<2" # wg_helpers
 
 [feature.waveguide.tasks]
 waveguide-teleop = "python experiments/waveguide/waveguide_teleop.py"
 waveguide-sensor = "python experiments/waveguide/sensor.py"
+
+[feature.waveguide.pypi-dependencies]
+pyqt5 = "*"
 
 # -----------------------------
 # MARK: Dev
