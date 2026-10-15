@@ -12,8 +12,9 @@ Each command `<axis> <distance> <speed>` moves the end-effector by `distance` [m
 `speed` [m/s]. Commands come from the terminal or from the waveguide sensor (see `commands.py` and
 `sensor.py`). Commands created while the robot is moving are ignored.
 
-    pixi run -e wg python experiments/waveguide/waveguide_teleop.py                    # terminal
-    pixi run -e wg python experiments/waveguide/waveguide_teleop.py --input waveguide   # Teensy on /dev/ttyACM0 (--port)
+    pixi run -e wg python experiments/waveguide/wg_teleop.py                     # waveguide, Teensy on /dev/ttyACM0 (--port)
+    pixi run -e wg python experiments/waveguide/wg_teleop.py --live-plot         # same, with the sensor live plot
+    pixi run -e wg python experiments/waveguide/wg_teleop.py --input terminal    # commands typed in the terminal
 """
 
 import argparse
@@ -55,7 +56,9 @@ class AxisTeleop:
 
     def _switch_to_pose_controller(self):
         self.robot.controller_switcher_client.switch_controller("fr3_pose_controller")
-        self.robot.fr3_pose_controller_parameters_client.load_param_config(file_path=CONFIG_DIR / "controllers" / "fr3_pose" / "default.yaml")
+        self.robot.fr3_pose_controller_parameters_client.load_param_config(
+            file_path=CONFIG_DIR / "controllers" / "fr3_pose" / "default.yaml"
+        )
         # Publish each goal once instead of republishing at 100 Hz: once a move ends, fr3_pose_controller
         # takes every repeat as a new (zero-length, >= 0.5 s) move and ignores new goals meanwhile
         self.robot.set_target_streaming(True)
@@ -74,7 +77,9 @@ class AxisTeleop:
 
         new_position = self.target_position.copy()
         new_position[AXES[axis]] += distance
-        clipped = np.clip(new_position, self.homing_pose.position + WORKSPACE_LOWER, self.homing_pose.position + WORKSPACE_UPPER)
+        clipped = np.clip(
+            new_position, self.homing_pose.position + WORKSPACE_LOWER, self.homing_pose.position + WORKSPACE_UPPER
+        )
         if not np.allclose(clipped, new_position):
             print(f"Target clipped to workspace: {new_position} -> {clipped}")
 
@@ -128,17 +133,22 @@ def run(teleop: AxisTeleop, source: CommandSource):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--input", choices=["terminal", "waveguide"], default="terminal")
+    parser.add_argument("--input", choices=["terminal", "waveguide"], default="waveguide")
     parser.add_argument("--port", default=DEFAULT_PORT, help=f"Serial port of the Teensy (default: {DEFAULT_PORT})")
     parser.add_argument("--baudrate", type=int, default=DEFAULT_BAUDRATE)
+    parser.add_argument(
+        "--live-plot", action="store_true", help="Show the sensor live plot (closing it stops the teleop)"
+    )
     args = parser.parse_args()
 
     if args.input == "waveguide":
         try:
-            source = WaveguideSource(args.port, args.baudrate)
+            source = WaveguideSource(args.port, args.baudrate, plot=args.live_plot)
         except FileNotFoundError as e:
             parser.exit(1, f"Error: {e}\n")
     else:
+        if args.live_plot:
+            parser.error("--live-plot needs --input waveguide")
         source = TerminalSource()
 
     robot = Robot(namespace="fr3")
@@ -150,6 +160,8 @@ def main():
         run(teleop, source)
     except KeyboardInterrupt:
         print()
+    except RuntimeError as e:  # The sensor process ended
+        print(f"Stopping: {e}")
     finally:
         # The robot holds the last target
         source.close()

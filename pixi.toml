@@ -147,7 +147,7 @@ pyqtgraph = ">=0.14.0,<0.15"
 scipy = ">=1.17.1,<2" # wg_helpers
 
 [feature.waveguide.tasks]
-waveguide-teleop = "python experiments/waveguide/waveguide_teleop.py"
+waveguide-teleop = "python experiments/waveguide/wg_teleop.py"
 waveguide-sensor = "python experiments/waveguide/sensor.py"
 
 [feature.waveguide.pypi-dependencies]

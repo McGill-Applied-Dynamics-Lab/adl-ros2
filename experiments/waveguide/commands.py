@@ -1,7 +1,7 @@
 """Teleop commands and the sources producing them.
 
 A source turns some input (terminal, waveguide sensor) into commands for the robot loop in
-`waveguide_teleop.py`. Every source has the same interface, so the robot loop does not depend on
+`wg_teleop.py`. Every source has the same interface, so the robot loop does not depend on
 where the commands come from.
 
 Nothing here imports ROS: `sensor.py` (run in its own process) also uses `MoveCommand`.
@@ -81,12 +81,15 @@ class TerminalSource(CommandSource):
 
 
 class WaveguideSource(CommandSource):
-    """Commands from the waveguide sensor, processed in a separate process (see `sensor.py`)."""
+    """Commands from the waveguide sensor, processed in a separate process (see `sensor.py`).
 
-    def __init__(self, port: str, baudrate: int):
+    With `plot`, that process also shows the sensor live plot.
+    """
+
+    def __init__(self, port: str, baudrate: int, plot: bool = False):
         from sensor import SensorProcess  # Not at the top: sensor.py imports this module
 
-        self._sensor = SensorProcess(port, baudrate)
+        self._sensor = SensorProcess(port, baudrate, plot=plot)
 
     def start(self) -> None:
         self._sensor.start()
@@ -94,7 +97,7 @@ class WaveguideSource(CommandSource):
 
     def get_command(self, timeout: float) -> Command | None:
         if not self._sensor.is_alive():
-            raise RuntimeError("Waveguide sensor process died")
+            raise RuntimeError("Waveguide sensor process ended (see its error above, or the plot window was closed)")
         return self._sensor.get_command(timeout)
 
     def close(self) -> None:

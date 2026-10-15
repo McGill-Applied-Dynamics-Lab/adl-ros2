@@ -17,6 +17,7 @@ import argparse
 import json
 import multiprocessing as mp
 import queue
+import signal
 import sqlite3
 import threading
 import time
@@ -68,11 +69,11 @@ class GestureConfig:
     """Gesture processing (layer 2) settings: swipe -> MoveCommand(axis, distance, speed)."""
 
     hole_idx: int = 15  # Hole where the waveguide bends: swipes starting at holes <= hole_idx are along x, else y
-    x_sign: int = 1  # +1: increasing hole index moves +x; -1 to flip
-    y_sign: int = 1  # +1: increasing hole index moves +y; -1 to flip
-    distance_scale: float = 0.01  # Robot motion [m] per cm of swipe (0.01: 1:1)
-    max_speed: float = 0.15  # [m/s] Faster swipes are capped (waveguide_teleop.MAX_SPEED)
-    max_distance: float = 0.2  # [m] Longer swipes are capped (waveguide_teleop.MAX_DISTANCE)
+    x_sign: int = -1  # +1: increasing hole index moves +x; -1 to flip
+    y_sign: int = -1  # +1: increasing hole index moves +y; -1 to flip
+    distance_scale: float = 0.02  # Robot motion [m] per cm of swipe (0.01: 1:1)
+    max_speed: float = 0.15  # [m/s] Faster swipes are capped (wg_teleop.MAX_SPEED)
+    max_distance: float = 0.2  # [m] Longer swipes are capped (wg_teleop.MAX_DISTANCE)
     min_holes: int = 2  # Holes a swipe must span (start and end included); shorter touches send nothing
     debounce_s: float = 0.3  # The swipe ends after no hole is detected for this long
 
@@ -348,17 +349,23 @@ def run_sensor_loop(
                     on_command(swipe.command)
 
 
-def _process_main(port: str, baudrate: int, commands: mp.Queue, stop_event) -> None:
-    try:
+def _process_main(port: str, baudrate: int, commands: mp.Queue, stop_event, plot: bool) -> None:
+    # Ctrl+C reaches the whole process group: the parent handles it and stops us with stop_event. (In the
+    # plot, a KeyboardInterrupt would also be raised inside a Qt callback, which aborts the process.)
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
+    if plot:
+        run_with_live_plot(port, baudrate, on_holes=lambda state: None, on_command=commands.put, stop_event=stop_event)
+    else:
         run_sensor_loop(port, baudrate, on_holes=lambda state: None, on_command=commands.put, stop_event=stop_event)
-    except KeyboardInterrupt:
-        pass  # Ctrl+C reaches the whole process group; the parent handles it
 
 
 class SensorProcess:
-    """Runs `run_sensor_loop` in a separate process and hands its commands over a queue."""
+    """Runs `run_sensor_loop` in a separate process and hands its commands over a queue.
 
-    def __init__(self, port: str = DEFAULT_PORT, baudrate: int = DEFAULT_BAUDRATE):
+    With `plot`, the process also shows the live plot (`run_with_live_plot`); closing its window ends the process.
+    """
+
+    def __init__(self, port: str = DEFAULT_PORT, baudrate: int = DEFAULT_BAUDRATE, plot: bool = False):
         # Checked here, not only in the child: there it would just end the process
         check_port(port)
         load_calibration()
@@ -368,7 +375,7 @@ class SensorProcess:
         self._stop_event = ctx.Event()
         self._process = ctx.Process(
             target=_process_main,
-            args=(port, baudrate, self._commands, self._stop_event),
+            args=(port, baudrate, self._commands, self._stop_event, plot),
             name="waveguide_sensor",
             daemon=True,
         )
@@ -493,6 +500,7 @@ def run_with_live_plot(
     on_frame=None,
     trail_s: float = 2.0,
     swipe_display_s: float = 3.0,
+    stop_event=None,
 ) -> None:
     """`run_sensor_loop` with a live view of the processing, refreshed at ~60 Hz:
 
@@ -507,7 +515,8 @@ def run_with_live_plot(
        the x (blue) and y (purple) segments.
 
     The loop runs in a background thread (Qt needs the main thread), so the plot shows what the processing
-    sees. The callbacks are passed on to the loop, and called from its thread.
+    sees. The callbacks are passed on to the loop, and called from its thread. Runs until the window is
+    closed or `stop_event` (if given) is set.
     """
     check_port(port)
     calibration = load_calibration(CAL_CFG.npz_path)
@@ -521,7 +530,8 @@ def run_with_live_plot(
         latest["swipe"] = swipe
 
     errors = []
-    stop_event = threading.Event()
+    if stop_event is None:
+        stop_event = threading.Event()
 
     hole_ids = np.asarray(calibration["hole_ids"])
     hole_index = {int(hole): i for i, hole in enumerate(hole_ids)}
@@ -704,7 +714,7 @@ def run_with_live_plot(
 
     def update():
         nonlocal n_frames_last, t_last, shown_background
-        if errors:
+        if errors or stop_event.is_set():
             app.quit()
             return
 
