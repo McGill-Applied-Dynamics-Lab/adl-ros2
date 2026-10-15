@@ -60,7 +60,7 @@ class DetectionConfig:
     n_background_frames: int = 50  # Frames averaged at startup, with nothing covered
     # Latest frames averaged for each estimate: the threshold comes from 5-frame averages (CYCLES_PER_PRESS),
     # single frames give false detections. More: less noise, more lag
-    n_average_frames: int = 5
+    n_average_frames: int = 2
     method: str = "leading_edge"  # One of wg_helpers.METHODS
 
 
@@ -75,7 +75,19 @@ class GestureConfig:
     max_speed: float = 0.15  # [m/s] Faster swipes are capped (wg_teleop.MAX_SPEED)
     max_distance: float = 0.2  # [m] Longer swipes are capped (wg_teleop.MAX_DISTANCE)
     min_holes: int = 2  # Holes a swipe must span (start and end included); shorter touches send nothing
-    debounce_s: float = 0.3  # The swipe ends after no hole is detected for this long
+    debounce_s: float = 0.3  # A touch (swipe or z hold) ends after no hole is detected for this long
+
+    # z: hold a z hole; on release, move z by z_speed * hold time, at z_speed. The holes from the lowest to the
+    # highest z hole (the z zone, with the bend) are reserved for z: swipes stop before them
+    z_up_holes: tuple[int, ...] = (13, 14)
+    z_down_holes: tuple[int, ...] = (16, 17)
+    z_speed: float = 0.02  # [m/s] z motion per second of hold, and the speed of that motion
+    z_min_hold_s: float = 0.2  # Shorter z touches send nothing
+
+    @property
+    def z_zone(self) -> range:
+        z_holes = self.z_up_holes + self.z_down_holes
+        return range(min(z_holes), max(z_holes) + 1)
 
 
 # Configs
@@ -226,62 +238,98 @@ class HoleDetector:
 # --- Layer 2: gesture processing ---
 @dataclass(frozen=True)
 class Swipe:
-    """A finished swipe over holes `start_hole` -> `end_hole` (end stopped at the bend), and its command."""
+    """A finished touch and its command: a swipe over holes `start_hole` -> `end_hole` (end stopped before the
+    z zone), or a z hold (`kind` "z", first and last hole touched)."""
 
-    t: float  # Time the swipe ended (after the debounce), CLOCK_MONOTONIC [s]
+    t: float  # Time the touch ended (after the debounce), CLOCK_MONOTONIC [s]
     start_hole: int
     end_hole: int
-    duration_s: float  # From the first touch to reaching the end hole
+    duration_s: float  # Swipe: from the first touch to reaching the end hole. z hold: hold time
     command: MoveCommand | None  # None: ignored, see `ignored_reason`
     ignored_reason: str = ""
+    kind: str = "swipe"  # "swipe" or "z"
 
 
 class GestureProcessor:
-    """Turn swipes along the waveguide into teleop commands.
+    """Turn touches along the waveguide into teleop commands: swipes (x, y) and holds (z).
 
-    A swipe starts at the first detected hole and ends once no hole is detected for `debounce_s`. Only its
-    first and last hole count (noisy or skipped holes in between do not matter):
-    - axis: x if it starts at or before the bend (`hole_idx`), else y. A swipe crossing the bend stops there.
+    A touch starts at the first detected hole and ends once no hole is detected for `debounce_s`. Its first
+    hole tells which gesture it is.
+
+    Swipe (first hole outside the z zone). Only its first and last hole count (noisy or skipped holes in
+    between do not matter):
+    - axis: x if it starts at or before the bend (`hole_idx`), else y. A swipe stops before the z zone.
     - distance: swipe length [cm, from the calibration] * `distance_scale`, signed by the direction
     - speed: swipe speed (start to reaching the last hole, without the debounce) * `distance_scale`
     Distance and speed are capped at `max_distance` and `max_speed`; swipes shorter than `min_holes` send nothing.
+
+    z hold (first hole in the z zone): moves z by `z_speed` * hold time (first to last touch, without the
+    debounce), at `z_speed`. The detection may jump between holes while held (e.g. 13 <-> 14): the direction
+    is the one of the z holes detected most often. Holds shorter than `z_min_hold_s` send nothing.
     """
 
     def __init__(self, calibration: dict, gesture_cfg: GestureConfig = GESTURE_CFG):
         self.cfg = gesture_cfg
         self.hole_ids = np.asarray(calibration["hole_ids"]).astype(int)
         self.hole_cm = dict(zip(self.hole_ids.tolist(), np.asarray(calibration["hole_cm"]).tolist()))
+        swipe_holes = self.hole_ids[~np.isin(self.hole_ids, list(gesture_cfg.z_zone))]
+        self._x_holes = swipe_holes[swipe_holes <= gesture_cfg.hole_idx]
+        self._y_holes = swipe_holes[swipe_holes > gesture_cfg.hole_idx]
         self._reset()
 
     def _reset(self) -> None:
-        self._t_start = None  # Time the swipe started (first hole detected), None: no swipe
+        self._t_start = None  # Time the touch started (first hole detected), None: no touch
         self._t_last_touch = None  # Last time a hole was detected
-        self._reached = {}  # Hole -> time it was first reached in this swipe
+        self._reached = {}  # Hole -> time it was first reached in this touch
         self._start_hole = self._last_hole = None
+        self._z_counts = {1: 0, -1: 0}  # z hold: frames on the up (+1) and down (-1) holes
 
     def update(self, t: float, pressed: frozenset[int]) -> Swipe | None:
-        """Call on every frame (the swipe end needs the time to advance); returns the swipe when it ends."""
+        """Call on every frame (the touch end needs the time to advance); returns the touch when it ends."""
         if pressed:
             hole = min(pressed)  # One hole at a time from the detection
             if self._t_start is None:
                 self._t_start, self._start_hole = t, hole
             self._reached.setdefault(hole, t)
             self._last_hole, self._t_last_touch = hole, t
+            if hole in self.cfg.z_up_holes:
+                self._z_counts[1] += 1
+            elif hole in self.cfg.z_down_holes:
+                self._z_counts[-1] += 1
             return None
 
         if self._t_start is None or t - self._t_last_touch < self.cfg.debounce_s:
             return None
-        swipe = self._finish_swipe(t)
+        is_z = self._start_hole in self.cfg.z_zone
+        swipe = self._finish_z_hold(t) if is_z else self._finish_swipe(t)
         self._reset()
         return swipe
+
+    def _finish_z_hold(self, t: float) -> Swipe:
+        cfg = self.cfg
+        hold_s = self._t_last_touch - self._t_start
+
+        if self._z_counts[1] == self._z_counts[-1]:  # Only the bend, or as long on both
+            reason = "no z direction"
+        elif hold_s < cfg.z_min_hold_s:
+            reason = f"held less than {cfg.z_min_hold_s:g} s"
+        else:
+            direction = 1 if self._z_counts[1] > self._z_counts[-1] else -1
+            distance = float(np.clip(direction * cfg.z_speed * hold_s, -cfg.max_distance, cfg.max_distance))
+            speed = min(cfg.z_speed, cfg.max_speed)
+            print(f"z hold {hold_s:.2f} s: z {distance * 100:+.1f} cm at {speed * 100:.1f} cm/s")
+            return Swipe(t, self._start_hole, self._last_hole, hold_s, MoveCommand("z", distance, speed), kind="z")
+
+        print(f"z hold {hold_s:.2f} s: {reason}, ignored")
+        return Swipe(t, self._start_hole, self._last_hole, hold_s, None, reason, kind="z")
 
     def _finish_swipe(self, t: float) -> Swipe:
         cfg = self.cfg
         start, end = self._start_hole, self._last_hole
 
-        # Axis from the start hole; a swipe crossing the bend stops at the end of the start segment
+        # Axis from the start hole; a swipe stops at the end of its segment (before the z zone)
         on_x = start <= cfg.hole_idx
-        segment = self.hole_ids[self.hole_ids <= cfg.hole_idx] if on_x else self.hole_ids[self.hole_ids > cfg.hole_idx]
+        segment = self._x_holes if on_x else self._y_holes
         end = int(np.clip(end, segment.min(), segment.max()))
 
         # Time to reach the end hole (the last touched one if the end was clipped at the bend and never detected)
@@ -510,9 +558,9 @@ def run_with_live_plot(
        it, against the detection threshold (dashed)
     3. Waveguide: the holes at their calibrated distance and the estimated distance (yellow). The covered hole
        is bright red (white outline); released holes fade back to grey over `trail_s` [s], showing the swipe.
-       The last swipe is an arrow over its holes with its command (green) or why it was ignored (grey),
-       fading out over `swipe_display_s` [s]. The bend (`GestureConfig.hole_idx`) is the dashed line, between
-       the x (blue) and y (purple) segments.
+       The last touch is an arrow (swipe: along the waveguide, z hold: up or down) with its command (green) or
+       why it was ignored (grey), fading out over `swipe_display_s` [s]. The segments are tinted: x (blue), the
+       z zone (amber, +z and -z holes) and y (purple); the bend (`GestureConfig.hole_idx`) is the dashed line.
 
     The loop runs in a background thread (Qt needs the main thread), so the plot shows what the processing
     sees. The callbacks are passed on to the loop, and called from its thread. Runs until the window is
@@ -647,12 +695,25 @@ def run_with_live_plot(
         holes.setPen([covered_pen if hole == covered_hole else idle_pen for hole in hole_ids])
         shown_trail = (covered_hole, colors)
 
-    # Bend (GestureConfig.hole_idx): dashed line after hole_idx, x and y segments tinted and labelled
-    hole_idx = GESTURE_CFG.hole_idx
+    # Segments (GestureConfig): x (blue) up to the z zone (amber, +z and -z holes), y (purple) after it; the bend
+    # (hole_idx) is the dashed line
+    cfg = GESTURE_CFG
     x_min, x_max = hole_cm.min() - margin, hole_cm.max() + margin
-    after_bend = hole_cm[hole_ids > hole_idx]
-    bend_x = (hole_cm[hole_ids <= hole_idx].max() + after_bend.min()) / 2 if len(after_bend) else x_max
-    for (lo, hi), tint in (((x_min, bend_x), (80, 160, 255, 25)), ((bend_x, x_max), (200, 120, 255, 25))):
+    hole_cm_of = dict(zip(hole_ids.astype(int).tolist(), hole_cm.tolist()))
+
+    def boundary(before, after):
+        """Middle between the last hole <= `before` and the first hole >= `after` (or the plot edge)."""
+        lo, hi = hole_cm[hole_ids <= before], hole_cm[hole_ids >= after]
+        return (lo.max() + hi.min()) / 2 if len(lo) and len(hi) else (x_min if not len(lo) else x_max)
+
+    bend_x = boundary(cfg.hole_idx, cfg.hole_idx + 1)
+    zone_lo, zone_hi = boundary(cfg.z_zone.start - 1, cfg.z_zone.start), boundary(cfg.z_zone.stop - 1, cfg.z_zone.stop)
+    z_color = (255, 190, 80)
+    for (lo, hi), tint in (
+        ((x_min, zone_lo), (80, 160, 255, 25)),
+        ((zone_lo, zone_hi), (*z_color, 35)),
+        ((zone_hi, x_max), (200, 120, 255, 25)),
+    ):
         segment = pg.LinearRegionItem(values=(lo, hi), movable=False, brush=tint, pen=pg.mkPen(None))
         segment.setZValue(-10)  # Behind the holes
         guide.addItem(segment)
@@ -661,17 +722,24 @@ def run_with_live_plot(
             pos=bend_x, angle=90, pen=pg.mkPen((220, 220, 220), width=1.5, style=QtCore.Qt.PenStyle.DashLine)
         )
     )
-    for text, anchor, color in (("◀ x", (1.0, 0.0), (120, 180, 255)), ("y ▶", (0.0, 0.0), (210, 150, 255))):
+    z_up_x = float(np.mean([hole_cm_of[h] for h in cfg.z_up_holes if h in hole_cm_of] or [bend_x]))
+    z_down_x = float(np.mean([hole_cm_of[h] for h in cfg.z_down_holes if h in hole_cm_of] or [bend_x]))
+    for text, x, anchor, color in (
+        ("◀ x", zone_lo, (1.0, 0.0), (120, 180, 255)),
+        ("+z", z_up_x, (0.5, 0.0), z_color),
+        ("−z", z_down_x, (0.5, 0.0), z_color),
+        ("y ▶", zone_hi, (0.0, 0.0), (210, 150, 255)),
+    ):
         label = pg.TextItem(text, anchor=anchor, color=color)
-        label.setPos(bend_x, -0.62)
+        label.setPos(x, -0.62)
         guide.addItem(label)
 
     distance_line = echo_line("y")
     guide.addItem(distance_line)
 
-    # Last swipe: an arrow over its holes, with its command (green) or why it was ignored (grey); fades out
+    # Last touch: an arrow over its holes (swipe: along the waveguide, z hold: up or down), with its command
+    # (green) or why it was ignored (grey); fades out
     swipe_y = 0.5
-    hole_cm_of = dict(zip(hole_ids.astype(int).tolist(), hole_cm.tolist()))
     swipe_line = pg.PlotCurveItem()
     swipe_head = pg.ArrowItem(headLen=20, tipAngle=40, pen=None)
     swipe_label = pg.TextItem(anchor=(0.5, 1.0))
@@ -686,18 +754,32 @@ def run_with_live_plot(
         if swipe is None:
             return
         if swipe is not shown_swipe:
-            color = (80, 220, 120) if swipe.command is not None else (150, 150, 150)
-            x0, x1 = hole_cm_of[swipe.start_hole], hole_cm_of[swipe.end_hole]
-            swipe_line.setData([x0, x1], [swipe_y, swipe_y], pen=pg.mkPen(color, width=4))
-            swipe_head.setStyle(angle=180 if x1 > x0 else 0, brush=pg.mkBrush(color))  # angle 0 points left
-            swipe_head.setPos(x1, swipe_y)
-            swipe_head.setVisible(x1 != x0)
-            if (command := swipe.command) is not None:
+            command = swipe.command
+            color = (80, 220, 120) if command is not None else (150, 150, 150)
+            if command is not None:
                 text = f"{command.axis} {command.distance * 100:+.1f} cm @ {command.speed * 100:.1f} cm/s"
             else:
                 text = f"Ignored: {swipe.ignored_reason}"
+
+            if swipe.kind == "z":  # Vertical arrow over the z holes, up or down
+                up = command is None or command.distance > 0
+                x = (z_up_x if up else z_down_x) if command is not None else bend_x
+                y0, y1 = (0.2, 0.85) if up else (0.85, 0.2)
+                swipe_line.setData([x, x], [y0, y1], pen=pg.mkPen(color, width=4))
+                swipe_head.setStyle(angle=90 if up else -90, brush=pg.mkBrush(color))
+                swipe_head.setPos(x, y1)
+                swipe_head.setVisible(command is not None)
+                swipe_label.setAnchor((0.0, 0.5))
+                swipe_label.setPos(x + 0.4, 0.55)
+            else:  # Arrow along the waveguide, from the start to the end hole
+                x0, x1 = hole_cm_of[swipe.start_hole], hole_cm_of[swipe.end_hole]
+                swipe_line.setData([x0, x1], [swipe_y, swipe_y], pen=pg.mkPen(color, width=4))
+                swipe_head.setStyle(angle=180 if x1 > x0 else 0, brush=pg.mkBrush(color))  # angle 0 points left
+                swipe_head.setPos(x1, swipe_y)
+                swipe_head.setVisible(x1 != x0)
+                swipe_label.setAnchor((0.5, 1.0))
+                swipe_label.setPos((x0 + x1) / 2, swipe_y + 0.15)
             swipe_label.setText(text, color=color)
-            swipe_label.setPos((x0 + x1) / 2, swipe_y + 0.15)
             swipe_line.show()
             swipe_label.show()
             shown_swipe = swipe

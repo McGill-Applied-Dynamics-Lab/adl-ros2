@@ -34,8 +34,8 @@ MAX_DISTANCE = 0.2  # m, per command
 CONTROLLER_MIN_MOVE_TIME = 0.5  # s, fr3_pose_controller stretches shorter moves to this
 
 # Workspace box, relative to the home position [m]
-WORKSPACE_LOWER = np.array([-0.15, -0.30, -0.25])
-WORKSPACE_UPPER = np.array([0.30, 0.30, 0.20])
+WORKSPACE_LOWER = np.array([-0.15, -0.15, -0.20])
+WORKSPACE_UPPER = np.array([0.15, 0.15, 0.20])
 
 POLL_TIMEOUT = 0.1  # s, wait for a command
 
