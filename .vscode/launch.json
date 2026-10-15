@@ -100,11 +100,11 @@
             }
         },
         {
-            "name": "Python Debugger: rim_teleop",
+            "name": "Python Debugger: fr3_haptic",
             "type": "debugpy",
             "request": "launch",
-            // "program": "${workspaceFolder}/python/rim_teleop/src/rim_teleop/main.py",
-            "program": "${workspaceFolder}/python/rim_teleop/scripts/run_experiment.py",
+            // "program": "${workspaceFolder}/python/fr3_haptic/src/fr3_haptic/main.py",
+            "program": "${workspaceFolder}/python/fr3_haptic/scripts/run_experiment.py",
             "python": "${workspaceFolder}/.pixi/envs/humble/bin/python",
             "pythonArgs": [
                 "-Xfrozen_modules=off", // To speed up debugger launch
@@ -117,7 +117,7 @@
             "console": "internalConsole",
             "args": [
                 "--config",
-                "${workspaceFolder}/python/rim_teleop/configs/rim_teleop_default.yaml",
+                "${workspaceFolder}/python/fr3_haptic/configs/fr3_haptic_default.yaml",
                 // "--dry-run"
             ],
             "pathMappings": [
@@ -147,8 +147,8 @@
             "name": "Python: haptic stability bench",
             "type": "debugpy",
             "request": "launch",
-            // "program": "${workspaceFolder}/python/rim_teleop/src/rim_teleop/main.py",
-            "program": "${workspaceFolder}/python/rim_teleop/examples/stability_bench.py",
+            // "program": "${workspaceFolder}/python/fr3_haptic/src/fr3_haptic/main.py",
+            "program": "${workspaceFolder}/python/fr3_haptic/examples/stability_bench.py",
             "python": "${workspaceFolder}/.pixi/envs/humble/bin/python",
             "pythonArgs": [
                 "-Xfrozen_modules=off", // To speed up debugger launch

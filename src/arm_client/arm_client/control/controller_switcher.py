@@ -1,5 +1,7 @@
 """Script to switch to a different ros2_controller."""
 
+from collections.abc import Callable
+
 import rclpy
 from controller_manager_msgs.srv import (
     ConfigureController,
@@ -10,6 +12,8 @@ from controller_manager_msgs.srv import (
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.node import Node
 
+from arm_client.utils.futures import wait_for_future
+
 
 class ControllerSwitcherClient:
     """ControllerSwitcher class allows user to communicate with the controller_manager and manage controllers in an easy way."""
@@ -17,13 +21,18 @@ class ControllerSwitcherClient:
     def __init__(
         self,
         node: Node,
+        on_switch: Callable[[], None] | None = None,
     ):
         """Initialize the ControllerSwitcher.
 
         Args:
             node (Node): Node used for the communication with the controller_manager.
+            on_switch (Callable, optional): Called right before a switch request and again after
+                it succeeds, only when a switch actually happens. `Robot` uses it to re-seed its
+                republished targets so the newly activated controller never receives a stale one.
         """
         self.node = node
+        self.on_switch = on_switch
 
         self.load_client = node.create_client(
             LoadController,
@@ -64,10 +73,7 @@ class ControllerSwitcherClient:
 
         future = self.list_client.call_async(ListControllers.Request())
 
-        while not future.done():
-            self.node.get_logger().debug("Waiting for controller list...", throttle_duration_sec=1.0)
-
-        response = future.result()
+        response = wait_for_future(future)
 
         return response.controller
 
@@ -94,9 +100,7 @@ class ControllerSwitcherClient:
         request.name = controller_name
         future = self.load_client.call_async(request)
 
-        while not future.done():
-            self.node.get_logger().debug("Waiting for load controller answer...", throttle_duration_sec=1.0)
-        response = future.result()
+        response = wait_for_future(future)
 
         return response.ok
 
@@ -106,9 +110,7 @@ class ControllerSwitcherClient:
         request.name = controller_name
         future = self.configure_client.call_async(request)
 
-        while not future.done():
-            self.node.get_logger().debug("Waiting for configure controller answer...", throttle_duration_sec=1.0)
-        response = future.result()
+        response = wait_for_future(future)
 
         return response.ok
 
@@ -123,9 +125,7 @@ class ControllerSwitcherClient:
 
         future = self.switch_client.call_async(request)
 
-        while not future.done():
-            self.node.get_logger().debug("Waiting for switch controller answer...", throttle_duration_sec=1.0)
-        response = future.result()
+        response = wait_for_future(future)
 
         return response.ok
 
@@ -151,9 +151,7 @@ class ControllerSwitcherClient:
         if controller_name not in inactive_controllers:
             ok = self.load_controller(controller_name)
             if not ok:
-                self.node.get_logger().error(
-                    f"Failed to load controller {controller_name}. Are you sure the controller exists?"
-                )
+                self.node.get_logger().error(f"Failed to load controller {controller_name}. Are you sure the controller exists?")
                 raise RuntimeError(f"Failed to load controller {controller_name}.")
 
             ok = self.configure_controller(controller_name)
@@ -168,11 +166,18 @@ class ControllerSwitcherClient:
 
         to_activate = [controller_name]
 
+        if self.on_switch is not None:
+            self.on_switch()
+
         ok = self._switch_controller(to_deactivate, to_activate)
 
         if not ok:
             self.node.get_logger().error(f"Failed to switch to controller {controller_name}.")
             raise RuntimeError(f"Failed to switch to controller {controller_name}.")
+
+        # Again after activation: the state may have moved while the request was processed
+        if self.on_switch is not None:
+            self.on_switch()
 
         print(f"Switched to controller {controller_name}.")
 

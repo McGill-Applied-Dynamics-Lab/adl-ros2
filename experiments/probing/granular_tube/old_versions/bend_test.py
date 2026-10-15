@@ -69,7 +69,7 @@ def execute_circular_arc(
         time_from_start.append(t)
 
     print(f"Executing circular arc (radius={radius} m, duration={duration} s)...")
-    robot.execute_trajectory(waypoints, time_from_start)
+    robot.execute_cartesian_traj(waypoints, time_from_start)
 
     while robot.wait_for_trajectory_completion(duration, timeout_margin=0.5):
         time.sleep(0.01)

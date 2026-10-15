@@ -161,6 +161,14 @@ This will automatically:
 This includes lines 10-20 from the specified file.
 
 
+### Diagrams
+
+Use a ` ```mermaid ` code block. On the site, each diagram gets **Fullscreen** (scroll to zoom,
+drag to pan, double-click to fit, Esc to close) and **New tab** buttons, and follows the
+light/dark toggle. This is done by `docs/javascripts/mermaid-zoom.js`: the theme's own Mermaid
+rendering cannot be zoomed, so the fence is mapped to the `mermaid-diagram` class in
+`zensical.toml` (`custom_fences`). The same block also renders on GitHub.
+
 ## Getting Help
 - [Zensical Documentation](https://zensical.org/docs)
 

@@ -60,10 +60,10 @@ RAMP_VELOCITY_M_S = 0.30  # m/s — approx. peak velocity seen from fast haptic 
 RAMP_DIST_M = -0.05       # 5 cm downward (negative = toward table, same direction as haptic push)
 RAMP_HOLD_S = 2.0         # hold at target to observe orientation settling after the transient
 
-# RIM coupling parameters — must match rim_teleop_default.yaml interface stiffness/damping
+# RIM coupling parameters — must match fr3_haptic_default.yaml interface stiffness/damping
 # During the ramp at constant velocity, the dominant coupling force is D * v (~27 N at 0.3 m/s).
 # This is the force missing from a pure position-tracking test; it is what excites Ry.
-RAMP_FF_D = 90.0   # N·s/m  (interface damping K_i from rim_teleop config)
+RAMP_FF_D = 90.0   # N·s/m  (interface damping K_i from fr3_haptic config)
 RAMP_FF_K = 1000.0 # N/m    (interface stiffness D_i — contributes when proxy lags robot)
 
 RATE_HZ = 200.0

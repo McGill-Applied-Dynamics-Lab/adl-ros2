@@ -26,11 +26,14 @@ pixi run gen-vscode-env
 
 Build artifacts go to `build_humble/` and `install_humble/`. Tests use pytest via `colcon test --python-testing pytest`; test files live in `src/*/test/`.
 
-To run a single test file directly (after sourcing the install):
+The pixi environment auto-sources `install_humble/setup.sh` on activation ([scripts/activate_overlay.sh](scripts/activate_overlay.sh), POSIX so it works from bash and zsh), so no manual `source` is needed. A package newly added by a build is only visible in a fresh `pixi run` / `pixi shell`.
+
+To run a single test file directly:
 ```bash
-source install_humble/setup.bash
-pytest src/<package>/test/test_foo.py
+pixi run -e humble pytest src/<package>/test/test_foo.py
 ```
+
+Tests for the python-only packages in `python/`: `pixi run -e humble test-py`.
 
 ## Architecture
 
@@ -58,11 +61,19 @@ pytest src/<package>/test/test_foo.py
 - **acoustic_sensing** — TCP bridge for BeagleBone acoustic sensing
 - **adg_ros2_utils** — general ROS2 utilities
 - **robot_tasks** — task automation and experiment pipelines
-- **robot_arm/arm_client_rim** — RIM-based bilateral teleoperation for FR3
 - **robot_arm/franka_rim** — Reduced Interface Model computation for FR3
 - **teleop/teleop** — main teleoperation package
 - **teleop/inverse3_ros2** — Inverse3 haptic device integration
 - **teleop/network_sim** — network simulation for teleoperation
+
+## Python-only Packages in `python/`
+
+Plain Python packages (no `package.xml`), installed into the pixi env as editable `[pypi-dependencies]` — not built by colcon.
+
+- **pyrim** — ROS-free RIM core: interface frame, `RIMCalculator`, thread-safe `RIMIntegrator`, `RIM` facade
+- **rim_teleop** — RIM bilateral teleoperation for FR3; imports `arm_client`/`rclpy`, so it needs the colcon overlay sourced
+
+Put new code in `src/` as a colcon package if it needs ROS resources (msgs, launch, `ament_index` lookups); otherwise in `python/` with a `pyproject.toml` added to `pixi.toml`. Test with `pixi run -e humble test-py`.
 
 ## Controller Strategy
 
@@ -105,7 +116,7 @@ Controller switching is explicit via controller_manager services. `Robot.home()`
 
 Do not assume synchronized sample counts between pose and joint streams. Always use explicit per-stream timestamps when computing derivatives, delays, or tracking error.
 
-## RIM Haptic Teleoperation (`arm_client_rim`)
+## RIM Haptic Teleoperation (`rim_teleop` + `pyrim`)
 
 ### What it does
 Implements real-time bilateral haptic teleoperation on the real FR3 via a Reduced Interface Model (RIM). The RIM acts as a physically consistent 1 kHz inertial proxy between the Haply Inverse3 haptic device and the 50 Hz robot controller, resolving unilateral contacts (e.g., table) locally at haptic rate without waiting for the control loop.
@@ -113,19 +124,22 @@ Implements real-time bilateral haptic teleoperation on the real FR3 via a Reduce
 ### Three-loop architecture
 | Loop | Rate | Thread | Responsibility |
 |------|------|--------|---------------|
-| Haptic | 1 kHz | `_haptic_loop` | Read Inverse3 position → `delay_rim.add_leader_state()`; read interface force → send to device |
-| RIM | 1 kHz | `_rim_loop` | `delay_rim.step()` — semi-implicit Euler integration of RIM proxy with LCP contact projection |
-| Control | 50 Hz | `_control_loop` | Pinocchio dynamics → `rim_calc.compute()` → `delay_rim.update_rim()`; publish `target_pose` + `target_wrench` to `osc_pd_controller` |
+| Haptic | 1 kHz | `_haptic_loop` | Read Inverse3 → `rim.add_leader_state()` → `rim.step()` (semi-implicit Euler + contact projection); send interface force (or measured robot force) to device |
+| RIM | 1 kHz | `_rim_loop` | Logs RIM proxy state and interface force (integration happens in the haptic loop) |
+| Control | 50 Hz | `_control_loop` | Pinocchio dynamics → `rim.update(model)` (`RIMCalculator` + integrator refresh); publish `target_pose` + `target_wrench` to `osc_pd_controller` |
+
+`rim` is a `pyrim.RIM` facade owning an `InterfaceFrame` (geometry: `project`/`lift`/`compose`), a `RIMCalculator`, and a thread-safe `RIMIntegrator`.
 
 ### Key files
 | File | Role |
 |------|------|
-| [src/robot_arm/arm_client_rim/arm_client_rim/orchestrator.py](src/robot_arm/arm_client_rim/arm_client_rim/orchestrator.py) | Top-level multi-rate coordinator; owns all threads |
-| [src/robot_arm/arm_client_rim/arm_client_rim/delay_rim.py](src/robot_arm/arm_client_rim/arm_client_rim/delay_rim.py) | Thread-safe RIM integrator with unilateral contact projection |
-| [src/robot_arm/arm_client_rim/arm_client_rim/rim_compute.py](src/robot_arm/arm_client_rim/arm_client_rim/rim_compute.py) | `RIMCalculator` — computes `M_eff`, `z_i`, `f_eff` from `DynModel` |
-| [src/robot_arm/arm_client_rim/arm_client_rim/adapters/model_estimator_adapter.py](src/robot_arm/arm_client_rim/arm_client_rim/adapters/model_estimator_adapter.py) | Pinocchio-based dynamics thread (50 Hz); produces `DynModel` from live robot state |
-| [src/robot_arm/arm_client_rim/arm_client_rim/adapters/teleop_interface_adapter.py](src/robot_arm/arm_client_rim/arm_client_rim/adapters/teleop_interface_adapter.py) | Extracts single interface axis from 3D Inverse3 device; applies force cap and scale |
-| [src/robot_arm/arm_client_rim/configs/rim_teleop_default.yaml](src/robot_arm/arm_client_rim/configs/rim_teleop_default.yaml) | All tunable parameters: rates, interface stiffness/damping, contact surface, Inverse3 origin |
+| [python/rim_teleop/src/rim_teleop/orchestrator.py](python/rim_teleop/src/rim_teleop/orchestrator.py) | Top-level multi-rate coordinator; owns all threads |
+| [python/pyrim/src/pyrim/rim.py](python/pyrim/src/pyrim/rim.py) | `RIM` facade tying frame, calculator and integrator together |
+| [python/pyrim/src/pyrim/integrator.py](python/pyrim/src/pyrim/integrator.py) | `RIMIntegrator` — thread-safe RIM integrator with unilateral contact projection |
+| [python/pyrim/src/pyrim/calculator.py](python/pyrim/src/pyrim/calculator.py) | `RIMCalculator` — computes `M_eff`, `z_i`, `f_eff` from `DynModel` |
+| [python/rim_teleop/src/rim_teleop/adapters/model_estimator_adapter.py](python/rim_teleop/src/rim_teleop/adapters/model_estimator_adapter.py) | Pinocchio-based dynamics; produces `DynModel` from live robot state |
+| [python/rim_teleop/src/rim_teleop/adapters/teleop_interface_adapter.py](python/rim_teleop/src/rim_teleop/adapters/teleop_interface_adapter.py) | Extracts the interface axis from the 3D Inverse3 device; applies force cap and scale |
+| [python/rim_teleop/configs/rim_teleop_default.yaml](python/rim_teleop/configs/rim_teleop_default.yaml) | All tunable parameters: rates, interface stiffness/damping, contact surface, Inverse3 origin |
 
 ### Robot command pattern (OSC)
 The control loop sends two continuous commands via `Robot`:
@@ -135,7 +149,7 @@ The control loop sends two continuous commands via `Robot`:
 `osc_pd_controller` on franka-server subscribes to `target_pose` and `target_wrench` and applies `τ = J^T(Fcmd − λi)`.
 
 ### Sign convention for feedforward
-`delay_rim.get_interface_force()` returns `K*(x_rim − x_leader) + D*(v_rim − v_leader)` which equals `−λi` in the paper's notation. Pass it directly as `feedforward[axis]` — no sign flip. If the robot moves away from the surface on contact instead of pressing in, negate it.
+`rim.get_interface_force()` returns `K*(x_rim − x_leader) + D*(v_rim − v_leader)`. The control loop currently sends `feedforward = rim.lift(-interface_force)` (see `_control_loop` in the orchestrator). If the robot moves away from the surface on contact instead of pressing in, the sign is wrong.
 
 ### Key tuning parameters
 - `contact_surface` in the YAML: z-coordinate of the physical surface in the robot base frame — must be set correctly for each experimental setup

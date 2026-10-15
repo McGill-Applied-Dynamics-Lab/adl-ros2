@@ -1,0 +1,61 @@
+# controller: OSC Controller (fr3_controllers/OSCController), haptic teleoperation preset.
+# Loaded by fr3_teleop (--osc-params) before it sets the interface-axis gains itself:
+# for the coupling methods, gains.{k,d}_pos_<interface axis> become the coupling kv, dv.
+# inertia_decoupling is off, so gains are in N/m, N·s/m, Nm/rad, Nm·s/rad.
+# Damping -1.0 = critically damped from the task-space inertia (2*sqrt(k*Lambda_ii)).
+
+control.inertia_decoupling: false
+control.partial_inertia_decoupling: false
+control.coriolis_compensation: true
+
+# Free axes and orientation: held. inertia_decoupling is off (the coupling axis must be a spring
+# in N/m), so each gain is the physical stiffness. Values = the tuned decoupled preset
+# (configs/controllers/osc/default.yaml: k_pos 650, k_rot 500/500/5000) times the task-space
+# inertia at home (Lambda = 11.4, 4.6, 5.4 kg; 0.17, 0.53, 0.002 kg m^2, see
+# experiments/benchmarks/osc_controller/FINDINGS.md), so the arm behaves like that preset at home.
+# Away from home Lambda changes (yaw by ~100x), so these are only right near home.
+# k_pos_x/y are lower than that (1500, not 5000/3000): with decoupling off, each axis is damped
+# with its own Lambda_ii only, while x and pitch move together on j2/j4/j6 as a much lighter
+# coupled mode. At 5000 the automatic x damping (~384 N.s/m) drove a 35-40 Hz oscillation on the
+# torque rate limit during z motion (audible; j4/j6 at the limit on 11-15 % of ticks). 1500 cut
+# it 5-10x (rate-limited ticks ~1 %), at the cost of a softer x/y hold (x spread 7-12 mm vs 3-6
+# mm while moving). Measured 2026-10-08, torque_debug/ab.npz.
+# The interface-axis gains are overridden per run (coupling methods: kv, dv).
+gains.k_pos_x: 1500.0
+gains.k_pos_y: 1500.0
+gains.k_pos_z: 3500.0
+gains.d_pos_x: -1.0
+gains.d_pos_y: -1.0
+gains.d_pos_z: -1.0
+gains.k_rot_x: 85.0
+gains.k_rot_y: 265.0
+gains.k_rot_z: 10.0
+gains.d_rot_x: -1.0
+gains.d_rot_y: -1.0
+gains.d_rot_z: -1.0
+# d = -1 -> 2*zeta*sqrt(k*Lambda_ii). zeta 0.7, not 1: at critical damping the FR3 can enter a
+# 50-60 Hz limit cycle on the torque rate limit (FINDINGS.md).
+gains.damping_ratio_pos: 0.7
+gains.damping_ratio_rot: 0.7
+
+feedforward.twist: true
+feedforward.accel: false
+feedforward.wrench: false
+feedforward.timeout_ticks: 100
+
+nullspace.stiffness: 10.0
+nullspace.damping: -1.0
+nullspace.posture_from_activation: true
+
+# Wide error clamp: the coupling must stay a linear spring over the teleop range,
+# or the methods' model of it is wrong. The force limit still bounds the pull.
+limits.max_position_error: 0.3
+limits.max_rotation_error: 0.3
+limits.force_limit: 80.0
+limits.torque_limit: 15.0
+limits.delta_tau_max: 1.0
+
+filter.joint_velocity: 1.0
+filter.target_pose: 1.0
+
+log.enabled: false
