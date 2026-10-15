@@ -57,6 +57,8 @@ safety:
 robot:
   namespace: fr3
   controller: osc_controller
+  start_position: null       # [x, y, z]: the end effector moves here first, orientation kept [m, base frame]; null = stay
+  start_speed: 0.05          # speed of that move [m/s]
   osc_params: python/fr3_haptic/configs/osc_teleop.yaml
   ee_state_topic: /fr3/osc/ee_state
   task_wrench_topic: /fr3/osc/task_wrench

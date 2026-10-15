@@ -185,6 +185,15 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--controller", default="osc_controller")
     g.add_argument("--osc-params", default=None, help="controller parameter YAML loaded before the coupling gains")
     g.add_argument("--home", action="store_true", help="move to the home configuration first")
+    g.add_argument(
+        "--start-position",
+        type=float,
+        nargs=3,
+        default=None,
+        metavar=("X", "Y", "Z"),
+        help="move the end effector here before starting (after --home), orientation kept [m, robot base frame]",
+    )
+    g.add_argument("--start-speed", type=float, default=0.05, help="speed of the move to --start-position [m/s]")
     g.add_argument("--ee-state-topic", default="/fr3/osc/ee_state")
     g.add_argument("--task-wrench-topic", default="/fr3/osc/task_wrench")
     g.add_argument("--tool-tip-offset", type=float, nargs=3, default=None, help="proxy-rim: model interface point [m]")
@@ -278,6 +287,19 @@ def controller_gains(args: argparse.Namespace) -> list[tuple[str, object]]:
     ]
 
 
+def move_to_start(robot: Robot, position: list[float], speed: float) -> None:
+    """Move the end effector to ``position``, keeping its orientation, through
+    ``joint_trajectory_controller`` (IK + joint trajectory). Blocks until the move ends."""
+    if speed <= 0:
+        raise ValueError(f"--start-speed must be > 0, got {speed}")
+    target = robot.end_effector_pose
+    print(f"{TAG} moving to the start position {np.asarray(position)} m from {target.position} m")
+    target.position = np.asarray(position, dtype=float)
+    robot.controller_switcher_client.switch_controller("joint_trajectory_controller")
+    robot.move_to(pose=target, speed=speed)
+    robot.wait_until_ready()
+
+
 def main(argv: list[str] | None = None) -> None:
     args = apply_yaml_config(build_parser(), argv)
     axes, signs = args.axes
@@ -300,6 +322,8 @@ def main(argv: list[str] | None = None) -> None:
     robot.wait_until_ready()
     if args.home:
         robot.home()
+    if args.start_position is not None:
+        move_to_start(robot, args.start_position, args.start_speed)
     robot.set_target_streaming(True)  # before the switch: no stale target reaches the controller
     # Collector off from here to the end of the run (on again in the run's finally). A
     # generation-2 collection of this heap (rclpy, arm_client, JAX) takes ~75 ms and stalls every
