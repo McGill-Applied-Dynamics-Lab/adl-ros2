@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 from fr3_haptic.links import DelayedPlant, Links, LinksConfig
 from fr3_haptic.teleop import build_parser, links_config
-from haptic_teleop import DelayConfig, ModelMailbox, PlantMailbox
+from haptic_teleop import DelayConfig, DelayLine, ModelMailbox, PlantMailbox
 
 
 class FakePlant:
@@ -115,8 +115,24 @@ def test_drain_covers_the_longest_feedback_delay():
     assert normal.drain_s(margin_s=0.0) == pytest.approx(0.060)
 
 
-def test_worst_delivery_gap_includes_the_delay_spread():
-    cfg = LinksConfig(feedback=DelayConfig(base_ms=30, jitter_ms=10, jitter_dist="uniform"))
-    assert cfg.worst_delivery_gap_s(50.0) == pytest.approx(0.020 + 0.020)
-    normal = LinksConfig(feedback=DelayConfig(base_ms=30, jitter_ms=10, jitter_dist="normal"))
-    assert normal.worst_delivery_gap_s(100.0) == pytest.approx(0.010 + 0.060)
+def test_feedback_gaps_without_jitter_are_the_update_period():
+    assert len(LinksConfig().feedback_gaps_s(500.0, 1.0)[0]) == 0
+    gaps, superseded = LinksConfig(feedback=DelayConfig(base_ms=250)).feedback_gaps_s(500.0, 2.0)
+    np.testing.assert_allclose(gaps, 0.002)
+    assert superseded == pytest.approx(0.0, abs=1e-3)
+
+
+def test_feedback_gaps_match_the_delay_line():
+    """The vectorised replay delivers on the same ticks as a DelayLine pumped at 1 kHz."""
+    cfg = LinksConfig(feedback=DelayConfig(base_ms=250, jitter_ms=250, seed=3))
+    gaps, superseded = cfg.feedback_gaps_s(500.0, 5.0)
+    line = DelayLine(cfg.feedback.build())
+    delivered = []
+    for k in range(6000):
+        if k % 2 == 0 and k < 5000:
+            line.push(k, sent_s=k / 1000.0)
+        if line.poll(k / 1000.0 + 1e-9) is not None:
+            delivered.append(k)
+    np.testing.assert_allclose(gaps, np.diff(delivered) / 1000.0)
+    assert superseded == pytest.approx(1.0 - line.stats.delivered / line.stats.pushed)
+    assert gaps.max() > 0.05  # this jitter: gaps well past the 50 ms default watchdog

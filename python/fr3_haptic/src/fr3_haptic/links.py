@@ -49,13 +49,28 @@ class LinksConfig:
         spread = f.jitter_ms if f.jitter_dist == "uniform" else 3 * f.jitter_ms
         return (f.base_ms + spread) * 1e-3 + margin_s
 
-    def worst_delivery_gap_s(self, model_update_hz: float) -> float:
-        """Rough upper bound on the gap between two feedback deliveries [s]: one update period
-        plus the spread of the delay (3 sigma for a normal jitter). With a variable delay, an
-        update can be superseded by the next one, so deliveries are not evenly spaced."""
+    def feedback_gaps_s(self, model_update_hz: float, seconds: float) -> tuple[np.ndarray, float]:
+        """Simulated gaps between feedback deliveries [s] over ``seconds``, and the fraction of
+        samples superseded.
+
+        With a variable delay a sample that draws a short delay supersedes every older one still
+        in flight, so deliveries come in irregular gaps, longer than the update period. This
+        replays the run's link: a sample every update period, the delays from the same seed, the
+        newest due sample delivered on each 1 ms pump tick ([Links.pump][]). Empty without a
+        feedback delay.
+        """
         f = self.feedback
-        spread = 0.0 if f.jitter_ms <= 0 else (2 * f.jitter_ms if f.jitter_dist == "uniform" else 6 * f.jitter_ms)
-        return 1.0 / model_update_hz + spread * 1e-3
+        if not f.enabled:
+            return np.zeros(0), 0.0
+        model = f.build()
+        sent = np.arange(0.0, seconds, 1.0 / model_update_hz)
+        delays = np.array([model.sample_s() for _ in sent])
+        tick = np.ceil((sent + delays) * PUMP_HZ - 1e-9)  # the pump tick each sample is due on
+        order = np.lexsort((sent, tick))
+        newest = np.maximum.accumulate(sent[order])  # newest sample sent, among those due by then
+        advances = np.r_[True, newest[1:] > newest[:-1]]
+        delivered_ticks = np.unique(tick[order][advances])
+        return np.diff(delivered_ticks) / PUMP_HZ, 1.0 - len(delivered_ticks) / len(sent)
 
 
 class DelayedPlantWriter:

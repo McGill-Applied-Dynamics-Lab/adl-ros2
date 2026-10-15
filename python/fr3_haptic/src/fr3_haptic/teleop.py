@@ -470,12 +470,18 @@ def main(argv: list[str] | None = None) -> None:
     ):
         if d.enabled:
             print(f"{TAG} delay {name}: {d.base_ms:g} ms + {d.jitter_dist} jitter {d.jitter_ms:g} ms (seed {d.seed})")
-    gap_ms = links_cfg.worst_delivery_gap_s(model_update_hz) * 1e3
-    if links_cfg.feedback.enabled and gap_ms > 0.8 * args.plant_max_age_ms:
+    gaps_s, superseded = links_cfg.feedback_gaps_s(model_update_hz, args.seconds)
+    if len(gaps_s):
+        gaps_ms = gaps_s * 1e3
         print(
-            f"{TAG} WARNING: feedback deliveries can be ~{gap_ms:.0f} ms apart (update period + delay spread); "
-            f"the watchdog trips at {args.plant_max_age_ms:g} ms. Raise --plant-max-age-ms or lower the jitter."
+            f"{TAG} feedback deliveries (simulated, this seed): gap median {np.median(gaps_ms):.0f} ms, "
+            f"p99 {np.percentile(gaps_ms, 99):.0f} ms, max {gaps_ms.max():.0f} ms; {superseded:.0%} of samples superseded"
         )
+        if gaps_ms.max() > args.plant_max_age_ms:
+            print(
+                f"{TAG} WARNING: the watchdog trips at {args.plant_max_age_ms:g} ms, below the longest gap: "
+                f"set --plant-max-age-ms to at least {np.ceil(1.2 * gaps_ms.max() / 10) * 10:.0f}, or lower the jitter."
+            )
     print(f"{TAG} coupling kv = {args.kv:g} N/m, dv = {args.dv:g} N·s/m (world) → felt {felt_k:g} N/m")
     print(f"{TAG} controller {args.controller}: {gains}")
     print(f"{TAG} force {'ON, clamped at %.1f N' % args.max_i3_force if args.force else 'OFF (--force to enable)'}")
