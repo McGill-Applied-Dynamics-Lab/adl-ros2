@@ -41,6 +41,7 @@ import time
 from dataclasses import asdict
 
 import numpy as np
+import rclpy
 from arm_client.control.parameters_client import ParametersClient
 from arm_client.robot import Robot
 from experiment_logger import ExperimentLogger, LoggingConfig
@@ -58,6 +59,7 @@ from haptic_teleop import (
 from haptic_teleop.config import FixedMassConfig, LinearConfig, RenderingConfigs, SafetyConfig, TDPAConfig
 from haptic_teleop.delay import DelayConfig
 from pyrim import InterfaceFrame
+from rclpy.signals import SignalHandlerOptions
 from utilities import apply_yaml_config
 
 from .adapters import RobotModelAdapter
@@ -318,6 +320,10 @@ def main(argv: list[str] | None = None) -> None:
         )
 
     # -- robot and controller setup --------------------------------------------------------------
+    # Without rclpy's signal handler: it shuts the context down on Ctrl-C, before the run's
+    # finally can send the freeze target. Ctrl-C is then a plain KeyboardInterrupt.
+    if not rclpy.ok():
+        rclpy.init(signal_handler_options=SignalHandlerOptions.NO)
     robot = Robot(namespace=args.namespace)
     robot.wait_until_ready()
     if args.home:
@@ -500,19 +506,20 @@ def main(argv: list[str] | None = None) -> None:
                 daemon=True,
             )
             rim_thread.start()
-        try:
-            # haptic -> robot: the targets, on the main thread
-            run_loop(
-                command_hz, loop.step, stop_fn=lambda: not running(), n_ticks=round((args.seconds + 5.0) * command_hz)
-            )
-        except KeyboardInterrupt:
-            print(f"\n{TAG} interrupted")
+        # haptic -> robot: the targets, on the main thread
+        run_loop(command_hz, loop.step, stop_fn=lambda: not running(), n_ticks=round((args.seconds + 5.0) * command_hz))
+    except KeyboardInterrupt:
+        print(f"\n{TAG} interrupted")
+        loop.request_stop("interrupted")
     finally:
         loop.request_stop(loop.shared.stop_reason or "run ended")  # also ends the RIM thread
         gc.enable()
         haptic.stop()
         result = haptic.join()
-        loop.shutdown_robot()  # not delayed; drops targets still in flight
+        try:
+            loop.shutdown_robot()  # not delayed; drops targets still in flight
+        except Exception as e:  # e.g. the ROS context is gone: the cleanup below must still run
+            print(f"{TAG} WARNING: could not send the freeze target: {e!r}")
         links.stop()
         if recorder is not None:
             recorder.close()
