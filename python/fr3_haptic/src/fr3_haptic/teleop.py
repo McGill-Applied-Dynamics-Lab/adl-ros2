@@ -123,7 +123,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     g = p.add_argument_group("interface")
-    g.add_argument("--interface-axis", choices=tuple(AXES), default="z", help="robot base axis the interface moves along")
+    g.add_argument(
+        "--interface-axis", choices=tuple(AXES), default="z", help="robot base axis the interface moves along"
+    )
     g.add_argument("--interface-min", type=float, default=None, help="lowest commanded interface position [m]")
     g.add_argument("--interface-max", type=float, default=None, help="highest commanded interface position [m]")
     g.add_argument(
@@ -151,12 +153,17 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--saturation-abort-ms", type=float, default=0.0, help="guard: saturation [ms]; 0 disables")
     g.add_argument("--chatter-hz", type=float, default=25.0, help="guard: force reversal rate [Hz]; 0 disables")
     g.add_argument("--chatter-deadband-n", type=float, default=1.0, help="guard: reversal deadband [N]")
-    g.add_argument("--guard-cooldown-s", type=float, default=3.0, help="force off after a guard trip [s]; 0 ends the run")
+    g.add_argument(
+        "--guard-cooldown-s", type=float, default=3.0, help="force off after a guard trip [s]; 0 ends the run"
+    )
     g.add_argument("--plant-max-age-ms", type=float, default=50.0, help="watchdog: largest plant sample age [ms]")
     g.add_argument("--watchdog-ramp-ms", type=float, default=100.0, help="watchdog: force ramp [ms]")
     g.add_argument("--haptic-cpu", type=int, default=None, help="pin the haptic process to this CPU")
     g.add_argument(
-        "--haptic-rt-priority", type=int, default=None, help="SCHED_FIFO priority of the haptic process (needs the privilege)"
+        "--haptic-rt-priority",
+        type=int,
+        default=None,
+        help="SCHED_FIFO priority of the haptic process (needs the privilege)",
     )
     g.add_argument("--feedforward-cap", type=float, default=15.0, help="proxy methods: feedforward clamp [N]")
 
@@ -288,7 +295,7 @@ def main(argv: list[str] | None = None) -> None:
             np.inf if args.interface_max is None else args.interface_max,
         )
 
-    # -- robot and controller --------------------------------------------------------------
+    # -- robot and controller setup --------------------------------------------------------------
     robot = Robot(namespace=args.namespace)
     robot.wait_until_ready()
     if args.home:
@@ -303,6 +310,7 @@ def main(argv: list[str] | None = None) -> None:
     # does) stalls rclpy's executors.
     gc.collect()
     gc.disable()
+
     plant_box = PlantMailbox(dim)  # plant samples for the haptic process, written by the callbacks
     boxes = [plant_box]
     links = Links(links_cfg)  # simulated delays; a zero-delay link is bypassed
@@ -404,7 +412,10 @@ def main(argv: list[str] | None = None) -> None:
     )
     loop = CommandLoop(
         CommandLoopConfig(
-            method=args.method, command_hz=command_hz, feedforward_cap=args.feedforward_cap, tool_correction=tool_correction
+            method=args.method,
+            command_hz=command_hz,
+            feedforward_cap=args.feedforward_cap,
+            tool_correction=tool_correction,
         ),
         plant=links.command_plant(plant),
         haptic_state=haptic_state,
@@ -415,13 +426,18 @@ def main(argv: list[str] | None = None) -> None:
 
     np.set_printoptions(precision=4, suppress=True)
     felt_k = args.kv * args.scale * args.force_gain
-    print(f"{TAG} {args.method} along {args.interface_axis}; hold pose {hold.position} m, leader origin {leader_origin} m")
+    print(
+        f"{TAG} {args.method} along {args.interface_axis}; hold pose {hold.position} m, leader origin {leader_origin} m"
+    )
     print(
         f"{TAG} rates: haptic {args.haptic_hz:g} Hz (own process) | robot -> haptic: model update {model_update_hz:g} Hz"
         + (f", RIM {rim_update_hz:g} Hz" if rim_loop is not None else "")
         + f" | haptic -> robot: commands {command_hz:g} Hz"
     )
-    for name, d in (("feedback (robot -> haptic)", links_cfg.feedback), ("command (haptic -> robot)", links_cfg.command)):
+    for name, d in (
+        ("feedback (robot -> haptic)", links_cfg.feedback),
+        ("command (haptic -> robot)", links_cfg.command),
+    ):
         if d.enabled:
             print(f"{TAG} delay {name}: {d.base_ms:g} ms + {d.jitter_dist} jitter {d.jitter_ms:g} ms (seed {d.seed})")
     gap_ms = links_cfg.worst_delivery_gap_s(model_update_hz) * 1e3
@@ -483,7 +499,12 @@ def main(argv: list[str] | None = None) -> None:
     print(f"{TAG} stopped: {stop_reason}")
     if result.error:
         print(f"{TAG} haptic process error:\n{result.error}")
-    for line in (result.rate_summary, result.jitter_summary, f"gc: {result.gc_summary}", f"scheduling: {result.realtime}"):
+    for line in (
+        result.rate_summary,
+        result.jitter_summary,
+        f"gc: {result.gc_summary}",
+        f"scheduling: {result.realtime}",
+    ):
         if line:
             print(f"{TAG} {line}")
     print(f"{TAG} guard trips: {result.guard_trips}, watchdog trips: {result.watchdog_trips}")
@@ -531,7 +552,14 @@ def main(argv: list[str] | None = None) -> None:
                     continue
                 logger.log_sample(
                     "plant",
-                    {"x_i": s.x_i, "v_i": s.v_i, "lam": s.lam, "t_s": s.t_s, "ee_position": s.ee_position, "task_force": s.task_force},
+                    {
+                        "x_i": s.x_i,
+                        "v_i": s.v_i,
+                        "lam": s.lam,
+                        "t_s": s.t_s,
+                        "ee_position": s.ee_position,
+                        "task_force": s.task_force,
+                    },
                     timestamp_s=s.rx_s - t0,
                 )
             for t_s, x, v, f_ff in loop.shared.commands:
@@ -542,10 +570,16 @@ def main(argv: list[str] | None = None) -> None:
             # Every delivery on a delayed link: when it was sent, how long it took
             for rx_s, delivered_s, delay_s, t_s in links.records.feedback:
                 if delivered_s >= t0:
-                    logger.log_sample("feedback_link", {"delay_ms": delay_s * 1e3, "sent_s": rx_s - t0, "t_s": t_s}, timestamp_s=delivered_s - t0)
+                    logger.log_sample(
+                        "feedback_link",
+                        {"delay_ms": delay_s * 1e3, "sent_s": rx_s - t0, "t_s": t_s},
+                        timestamp_s=delivered_s - t0,
+                    )
             for sent_s, delivered_s, delay_s in links.records.command:
                 if delivered_s >= t0:
-                    logger.log_sample("command_link", {"delay_ms": delay_s * 1e3, "sent_s": sent_s - t0}, timestamp_s=delivered_s - t0)
+                    logger.log_sample(
+                        "command_link", {"delay_ms": delay_s * 1e3, "sent_s": sent_s - t0}, timestamp_s=delivered_s - t0
+                    )
     finally:
         for box in boxes:
             box.close()

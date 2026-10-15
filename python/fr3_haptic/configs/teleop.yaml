@@ -3,7 +3,7 @@
 
 method:
   method: zoh                # zoh | linear | tdpa-zoh | tdpa-linear | proxy-rim | proxy-fixed-mass
-  kv: 500.0                  # coupling stiffness, world [N/m]; = osc_controller interface-axis stiffness
+  kv: 1000.0                  # coupling stiffness, world [N/m]; = osc_controller interface-axis stiffness
   dv: 70.0                   # coupling damping, world [N·s/m]; ~0.7 damping ratio with kv 500 on z at home (Lambda_z 5.4 kg)
   linear_max_extrapolation: 1.0
   tdpa_max_damping: 10.0
@@ -14,7 +14,7 @@ rates:
   haptic_hz: 1000.0
   # robot -> haptic: the robot's state. The controller measures at 1 kHz; this many per second
   # reach the haptic loop (0 = every controller tick).
-  model_update_hz: 50.0
+  model_update_hz: 500.0
   rim_update_hz: null        # RIM dynamics model (proxy-rim); null = model_update_hz (and at most that)
   # haptic -> robot: targets sent to osc_controller; null = model_update_hz
   command_hz: null
@@ -31,7 +31,7 @@ interface:
   interface_axis: z
   interface_min: null        # commanded interface position bounds [m], robot base frame
   interface_max: null
-  interface_range: 0.1       # commanded position stays within ± this of the start [m]; 0 disables
+  interface_range: 0       # commanded position stays within ± this of the start [m]; 0 disables
   free_axis_stiffness: 0.0   # handle spring keeping the hand on the axis [world N/m]
   free_axis_damping: 0.0
 
@@ -40,7 +40,7 @@ inverse3:
   axes: "y,-x,z"             # signed device axis per robot base axis
   scale: 1.0                 # robot metres per device metre
   force_gain: 0.1            # handle N per world N: felt stiffness = kv * scale * force_gain
-  max_i3_force: 3.0          # clamp at the handle [N]
+  max_i3_force: 10.0          # clamp at the handle [N]
   vel_filter_hz: 8.0
   force_ramp_s: 1.0
 
