@@ -503,7 +503,8 @@ def run_with_live_plot(
     3. Waveguide: the holes at their calibrated distance and the estimated distance (yellow). The covered hole
        is bright red (white outline); released holes fade back to grey over `trail_s` [s], showing the swipe.
        The last swipe is an arrow over its holes with its command (green) or why it was ignored (grey),
-       fading out over `swipe_display_s` [s].
+       fading out over `swipe_display_s` [s]. The bend (`GestureConfig.hole_idx`) is the dashed line, between
+       the x (blue) and y (purple) segments.
 
     The loop runs in a background thread (Qt needs the main thread), so the plot shows what the processing
     sees. The callbacks are passed on to the loop, and called from its thread.
@@ -635,6 +636,25 @@ def run_with_live_plot(
         holes.setBrush([pg.mkBrush(*color) for color in colors])
         holes.setPen([covered_pen if hole == covered_hole else idle_pen for hole in hole_ids])
         shown_trail = (covered_hole, colors)
+
+    # Bend (GestureConfig.hole_idx): dashed line after hole_idx, x and y segments tinted and labelled
+    hole_idx = GESTURE_CFG.hole_idx
+    x_min, x_max = hole_cm.min() - margin, hole_cm.max() + margin
+    after_bend = hole_cm[hole_ids > hole_idx]
+    bend_x = (hole_cm[hole_ids <= hole_idx].max() + after_bend.min()) / 2 if len(after_bend) else x_max
+    for (lo, hi), tint in (((x_min, bend_x), (80, 160, 255, 25)), ((bend_x, x_max), (200, 120, 255, 25))):
+        segment = pg.LinearRegionItem(values=(lo, hi), movable=False, brush=tint, pen=pg.mkPen(None))
+        segment.setZValue(-10)  # Behind the holes
+        guide.addItem(segment)
+    guide.addItem(
+        pg.InfiniteLine(
+            pos=bend_x, angle=90, pen=pg.mkPen((220, 220, 220), width=1.5, style=QtCore.Qt.PenStyle.DashLine)
+        )
+    )
+    for text, anchor, color in (("◀ x", (1.0, 0.0), (120, 180, 255)), ("y ▶", (0.0, 0.0), (210, 150, 255))):
+        label = pg.TextItem(text, anchor=anchor, color=color)
+        label.setPos(bend_x, -0.62)
+        guide.addItem(label)
 
     distance_line = echo_line("y")
     guide.addItem(distance_line)
