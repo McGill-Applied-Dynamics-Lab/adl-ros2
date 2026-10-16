@@ -54,6 +54,7 @@ from haptic_teleop import (
     ModelMailbox,
     PlantMailbox,
     StatusMailbox,
+    TelemetryMailbox,
     run_loop,
 )
 from haptic_teleop.config import FixedMassConfig, LinearConfig, RenderingConfigs, SafetyConfig, TDPAConfig
@@ -65,6 +66,7 @@ from utilities import apply_yaml_config
 from .adapters import RobotModelAdapter
 from .config import ModelConfig
 from .links import Links, LinksConfig
+from .live import LiveView, live_logger
 from .plant import FR3Plant, FR3System
 from .recorder import RobotStateRecorder
 from .session import PROXY_METHODS, CommandLoop, CommandLoopConfig, RimModelLoop
@@ -199,6 +201,12 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--ee-state-topic", default="/fr3/osc/ee_state")
     g.add_argument("--task-wrench-topic", default="/fr3/osc/task_wrench")
     g.add_argument("--tool-tip-offset", type=float, nargs=3, default=None, help="proxy-rim: model interface point [m]")
+
+    g = p.add_argument_group("live view (Foxglove)")
+    g.add_argument(
+        "--live-hz", type=float, default=50.0, help="stream the run's state to Foxglove at this rate [Hz]; 0 disables"
+    )
+    g.add_argument("--live-port", type=int, default=8766, help="Foxglove websocket port (ws://<host>:<port>)")
 
     g = p.add_argument_group("run")
     g.add_argument("--seconds", type=float, default=60.0, help="run length [s]")
@@ -395,6 +403,10 @@ def main(argv: list[str] | None = None) -> None:
     )
     haptic_state, status = HapticStateMailbox(dim), StatusMailbox()
     boxes += [haptic_state, status]
+    telemetry = None
+    if args.live_hz > 0:
+        telemetry = TelemetryMailbox(dim)
+        boxes.append(telemetry)
     model_box = None
     if system is not None:
         model_box = ModelMailbox(system.model.n, dim)
@@ -437,6 +449,7 @@ def main(argv: list[str] | None = None) -> None:
         model=model_box,
         state_out=haptic_state,
         status_out=status,
+        telemetry=telemetry,
         cpu=args.haptic_cpu,
         rt_priority=args.haptic_rt_priority,
     )
@@ -490,6 +503,20 @@ def main(argv: list[str] | None = None) -> None:
     recorder = None
     if args.robot_log_hz > 0:
         recorder = RobotStateRecorder(plant.node, args.robot_log_hz, seconds=args.seconds + 10.0)
+    live = None
+    if telemetry is not None:
+        live = LiveView(
+            live_logger(args.live_port),
+            args.live_hz,
+            plant=plant,
+            plant_box=plant_box,
+            haptic_state=haptic_state,
+            telemetry=telemetry,
+            status=status,
+            commands=loop.shared.commands,
+        )
+        live.start()
+        print(f"{TAG} live view: Foxglove → ws://localhost:{args.live_port}, {args.live_hz:g} Hz")
     haptic = HapticProcess(spec)
     result = HapticResult(error="not started")
     t0 = time.monotonic()
@@ -527,6 +554,8 @@ def main(argv: list[str] | None = None) -> None:
         except Exception as e:  # e.g. the ROS context is gone: the cleanup below must still run
             print(f"{TAG} WARNING: could not send the freeze target: {e!r}")
         links.stop()
+        if live is not None:
+            live.stop()
         if recorder is not None:
             recorder.close()
         plant.close()

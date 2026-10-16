@@ -143,7 +143,11 @@ class FR3Plant:
         """Every sample, in order, when ``record`` is set."""
         self.sample: tuple[int, FR3PlantSample] | None = None
         """Latest ``(updates, sample)``, replaced whole; ``None`` before the first one."""
+        self.last_target: tuple[int, np.ndarray, np.ndarray, np.ndarray, np.ndarray | None] | None = None
+        """Latest target published to the robot, ``(count, position (3,) base frame, x, v, f_ff)``,
+        replaced whole; ``None`` before the first one."""
 
+        self._targets = 0
         self._updates = 0
         self._next_keep_ns: int | None = None
         self._lock = threading.Lock()
@@ -365,6 +369,8 @@ class FR3Plant:
         twist = Twist(self._frame.lift(v), np.zeros(3))
         force = None if f_ff is None else self._frame.lift(np.asarray(f_ff, dtype=float))
         self._robot.publish_target(pose=pose, twist=twist, force=force)
+        self._targets += 1
+        self.last_target = (self._targets, pose.position.copy(), x.copy(), v, None if f_ff is None else np.asarray(f_ff, dtype=float))
 
     def _spin(self) -> None:
         try:

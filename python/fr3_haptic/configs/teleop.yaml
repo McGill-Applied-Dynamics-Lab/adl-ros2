@@ -64,6 +64,10 @@ robot:
   task_wrench_topic: /fr3/osc/task_wrench
   tool_tip_offset: null      # proxy-rim: model interface point offset from fr3_hand_tcp [m]
 
+live:                        # Foxglove live view: open ws://localhost:<live_port>, layout configs/foxglove_live_layout.json
+  live_hz: 50.0              # 0 disables
+  live_port: 8766
+
 run:
   seconds: 60.0
   output_dir: /home/athena/csirois/data/franka/fr3_haptic
