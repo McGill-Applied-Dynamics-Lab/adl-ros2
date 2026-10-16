@@ -1,12 +1,14 @@
 """Franka gripper client based on ROS2 actions."""
 
 import threading
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
 import rclpy
 import yaml
+from action_msgs.msg import GoalStatus
 from franka_msgs.action import Grasp, Homing, Move
 from rclpy.action import ActionClient
 from rclpy.callback_groups import ReentrantCallbackGroup
@@ -14,6 +16,7 @@ from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from rclpy.qos import qos_profile_system_default
 from sensor_msgs.msg import JointState
+from std_srvs.srv import Trigger
 
 from arm_client.utils.callback_monitor import CallbackMonitor
 
@@ -36,6 +39,7 @@ class GripperConfig:
     move_action: str = "franka_gripper/move"
     homing_action: str = "franka_gripper/homing"
     gripper_command_action: str = "franka_gripper/gripper_action"
+    stop_service: str = "franka_gripper/stop"
     max_joint_delay: float = 1.0
     action_timeout: float = 10.0  # Timeout for action calls in seconds
 
@@ -68,6 +72,7 @@ class GripperConfig:
                 "move_action": config.get("move_action", "franka_gripper/move"),
                 "homing_action": config.get("homing_action", "franka_gripper/homing"),
                 "gripper_command_action": config.get("gripper_command_action", "franka_gripper/gripper_action"),
+                "stop_service": config.get("stop_service", "franka_gripper/stop"),
                 "max_joint_delay": config.get("max_joint_delay", 1.0),
                 "action_timeout": config.get("action_timeout", 10.0),
             }
@@ -91,6 +96,7 @@ class GripperActionFuture:
         self._goal_handle = None
         self._result_future = None
         self._final_result = None
+        self._final_status = None
 
     def done(self) -> bool:
         """Check if the action is complete."""
@@ -106,6 +112,7 @@ class GripperActionFuture:
             if self._result_future.done():
                 result = self._result_future.result()
                 self._final_result = result.result.success
+                self._final_status = result.status
                 return True
             return False
 
@@ -138,10 +145,34 @@ class GripperActionFuture:
 
         return self._final_result if self._final_result is not None else False
 
+    def cancel(self, timeout: float = 1.0) -> bool:
+        """Request the cancellation of the action, without waiting for it: `done()` once the gripper stopped.
+
+        The franka_gripper server checks for cancel requests at its `feedback_publish_rate` and then stops the
+        gripper (libfranka `stop()`) where it is.
+
+        Args:
+            timeout (float, optional): Time to wait for the goal to be accepted, if it is not yet [s].
+
+        Returns:
+            bool: True if the cancel request was sent, False if the goal was not accepted (within `timeout`).
+        """
+        if not self._server_available:
+            return False
+        t_end = time.monotonic() + timeout
+        while not self._goal_future.done():  # Resolved by the gripper's spin thread
+            if time.monotonic() > t_end:
+                return False
+            time.sleep(0.001)
+        self._goal_handle = self._goal_future.result()
+        if not self._goal_handle.accepted:
+            return False
+        self._goal_handle.cancel_goal_async()
+        return True
+
     def cancelled(self) -> bool:
         """Check if the action was cancelled."""
-        # For simplicity, we don't implement cancellation in this version
-        return False
+        return self.done() and self._final_status == GoalStatus.STATUS_CANCELED
 
     def exception(self) -> Exception | None:
         """Get any exception that occurred."""
@@ -198,6 +229,7 @@ class Gripper:
         self._grasp_client = ActionClient(self.node, Grasp, self.config.grasp_action)
         self._move_client = ActionClient(self.node, Move, self.config.move_action)
         self._homing_client = ActionClient(self.node, Homing, self.config.homing_action)
+        self._stop_client = self.node.create_client(Trigger, self.config.stop_service)
 
         if spin_node:
             threading.Thread(target=self._spin_node, daemon=True).start()
@@ -336,6 +368,31 @@ class Gripper:
             return self._send_goal_blocking(self._homing_client, goal)
         else:
             return self._send_goal_non_blocking(self._homing_client, goal)
+
+    def stop(self, block: bool = True) -> bool:
+        """Stop the current gripper motion (franka_gripper `stop` service).
+
+        Cancelling the action of a non-blocking call (`GripperActionFuture.cancel`) also stops the gripper.
+
+        Args:
+            block (bool, optional): If True, wait for the service response.
+
+        Returns:
+            bool: True if the request was sent (and, when `block`, the gripper stopped), False otherwise.
+        """
+        if not self._stop_client.wait_for_service(timeout_sec=2.0):
+            self.node.get_logger().error(f"Service {self.config.stop_service} not available")
+            return False
+        future = self._stop_client.call_async(Trigger.Request())
+        if not block:
+            return True
+        t_end = time.monotonic() + self.config.action_timeout
+        while not future.done():  # Resolved by the gripper's spin thread
+            if time.monotonic() > t_end:
+                self.node.get_logger().error("Timeout waiting for the gripper to stop")
+                return False
+            time.sleep(0.01)
+        return future.result().success
 
     def set_target(self, target_width: float, speed: float | None = None, block: bool = True):
         """Set target width for the gripper using move action.
