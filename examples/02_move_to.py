@@ -23,9 +23,16 @@ robot.wait_until_ready(timeout=2.0)
 #     file_path=CONFIG_DIR / "controllers" / "osc_pd" / "default.yaml"
 # )
 
-#
-robot.controller_switcher_client.switch_controller("osc_controller")
-robot.osc_controller_parameters_client.load_param_config(file_path=CONFIG_DIR / "controllers" / "osc" / "default.yaml")
+# # osc_controller
+# robot.controller_switcher_client.switch_controller("osc_controller")
+# robot.osc_controller_parameters_client.load_param_config(file_path=CONFIG_DIR / "controllers" / "osc" / "default.yaml")
+
+# fr3_pose_controller
+robot.controller_switcher_client.switch_controller("fr3_pose_controller")
+robot.fr3_pose_controller_parameters_client.load_param_config(
+    file_path=CONFIG_DIR / "controllers" / "fr3_pose" / "default.yaml"
+)
+
 
 # -- Move
 position = [0.4, 0.2, 0.5]  # x, y, z in meters

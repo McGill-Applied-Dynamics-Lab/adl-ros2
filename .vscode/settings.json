@@ -150,20 +150,13 @@
         "**/install/**/*.py": true
     },
     "ROS2.distro": "humble",
-    "python-envs.defaultEnvManager": "renan-r-santos.pixi-code:pixi",
-    "python-envs.defaultPackageManager": "renan-r-santos.pixi-code:pixi",
+    "python-envs.defaultEnvManager": "ms-python.python:system",
+    "python-envs.defaultPackageManager": "ms-python.python:pip",
     "[python]": {
         "editor.defaultFormatter": "charliermarsh.ruff",
         "editor.formatOnSave": true,
         "editor.codeActionsOnSave": {
             "source.organizeImports": "explicit"
         }
-    },
-    "python-envs.pythonProjects": [
-        {
-            "path": ".",
-            "envManager": "ms-python.python:system",
-            "packageManager": "ms-python.python:pip"
-        }
-    ]
+    }
 }
