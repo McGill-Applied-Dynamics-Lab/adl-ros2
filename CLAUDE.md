@@ -101,10 +101,13 @@ Controller switching is explicit via controller_manager services. `Robot.home()`
 - `Robot.execute_sequence()` for ordered multi-step experiment pipelines (supports trajectories and callables).
 - `Robot.online_planning()` for online IK in teleoperation loops.
 - Avoid simultaneous command streams (continuous pose publishing vs. trajectory mode conflict).
+- `Robot.set_target(pose, twist=None, accel=None)` sets the **reference**: the pose and its optional feedforward twist/accel are republished together (100 Hz, one timer). `target_twist`/`target_accel` are feedforward only (e.g. `osc_controller`), never a velocity command; they are not published unless given.
+- `Robot.jog(linear, angular)` / `stop_jog()` send a **velocity command** on `target_jog` (only `fr3_pose_controller`, listed in `config.jog_controllers`). Exclusive with the reference: the pose is not republished from `jog()` until the next pose target.
+- With `fr3_pose_controller`, send pose goals once (`set_target` / `move_to`): the controller replans a jerk-limited move (Ruckig) on every new target, limits in `configs/controllers/fr3_pose/`.
 
 ## ROS Topics/Services (arm_client)
 
-**Published:** `target_pose` (PoseStamped), `target_joint` (JointState), `target_trajectory` (CartesianTrajectory), `target_wrench` (WrenchStamped), `target_twist` (TwistStamped)
+**Published:** `target_pose` (PoseStamped), `target_joint` (JointState), `target_trajectory` (CartesianTrajectory), `target_wrench` (WrenchStamped), `target_twist` (TwistStamped, feedforward), `target_accel` (AccelStamped, feedforward), `target_jog` (TwistStamped, velocity command)
 
 **Subscribed:** `current_pose` (PoseStamped), `joint_states` (JointState), `/fr3/franka_robot_state_broadcaster/external_wrench_in_base_frame` (WrenchStamped)
 

@@ -12,7 +12,7 @@ import rclpy
 import rclpy.executors
 from builtin_interfaces.msg import Duration
 from franka_msgs.msg import FrankaRobotState
-from geometry_msgs.msg import PoseStamped, TwistStamped, WrenchStamped
+from geometry_msgs.msg import AccelStamped, PoseStamped, TwistStamped, WrenchStamped
 from numpy.typing import NDArray
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.node import Node
@@ -109,6 +109,8 @@ class Robot:
 
     _JOINT_CONTROLLER_KEYWORDS = ("joint_trajectory_controller", "joint_impedance_controller", "joint_space_controller")
     TRAJECTORY_WAIT_HZ = 100.0  # rate at which wait_for_trajectory_completion paces the caller's loop
+    MOVE_TO_POSITION_TOLERANCE = 2e-3  # (m) move_to with fr3_pose_controller: reached when within
+    MOVE_TO_ROTATION_TOLERANCE = 0.02  # (rad)
 
     def __init__(
         self,
@@ -177,7 +179,14 @@ class Robot:
         self._target_pose = None
         self._target_joint = None
         self._target_wrench = None
-        self._target_twist = None
+        # Feedforward of the reference, published with the pose (None: not published)
+        self._target_twist: Twist | None = None
+        self._target_accel: Twist | None = None
+        # Jog (velocity command), exclusive with the pose reference (see jog)
+        self._target_jog: Twist | None = None
+        self._jog_lock = threading.Lock()
+        # True from jog() until the next pose target: the pose reference is not republished
+        self._jog_holds_pose = False
         self._current_wrench = None  # added current wrench
         self._current_wrench_filtered: dict | None = None
         self._wrench_filter_alpha: float | None = None
@@ -211,7 +220,13 @@ class Robot:
             JointState, self.config.target_joint_topic, qos_profile_system_default
         )
         self._target_twist_publisher = self.node.create_publisher(
-            TwistStamped, "target_twist", qos_profile_system_default
+            TwistStamped, self.config.target_twist_topic, qos_profile_system_default
+        )
+        self._target_accel_publisher = self.node.create_publisher(
+            AccelStamped, self.config.target_accel_topic, qos_profile_system_default
+        )
+        self._target_jog_publisher = self.node.create_publisher(
+            TwistStamped, self.config.target_jog_topic, qos_profile_system_default
         )
 
         # Current state subscriptions
@@ -256,13 +271,15 @@ class Robot:
             callback_group=ReentrantCallbackGroup(),
         )
 
-        # Periodic target republishing; paused in streaming mode (see set_target_streaming)
+        # Periodic target republishing; paused in streaming mode (see set_target_streaming).
+        # The reference (pose + twist/accel feedforward) is published by one timer so the three
+        # messages describe the same sample.
         self._streaming = False
         self._target_publish_timers = [
             self.node.create_timer(
                 1.0 / 100.0,
                 self._callback_monitor.monitor(
-                    f"{namespace.capitalize()} Target Pose", self._callback_publish_target_pose
+                    f"{namespace.capitalize()} Target Pose", self._callback_publish_reference
                 ),
                 ReentrantCallbackGroup(),
             ),
@@ -280,7 +297,7 @@ class Robot:
             ),
             self.node.create_timer(
                 1.0 / self.config.publish_frequency,
-                self._callback_publish_target_twist,
+                self._callback_publish_target_jog,
                 ReentrantCallbackGroup(),
             ),
         ]
@@ -533,10 +550,14 @@ class Robot:
     def reset_targets(self):
         """Reset all target values to None.
 
-        This method clears the target pose, joint values, and wrench values,
-        effectively stopping any ongoing movement or force application.
+        This method clears the target pose, joint values, wrench and feedforward values,
+        effectively stopping any ongoing movement or force application. An active jog is stopped.
         """
+        if self._target_jog is not None:
+            self.stop_jog()
         self._target_pose = None
+        self._target_twist = None
+        self._target_accel = None
         self._q_target = None
         self._target_wrench = None
 
@@ -546,12 +567,15 @@ class Robot:
         The timers republish the targets to whichever controller is active, so a target left from
         before (e.g. the pose before a joint-trajectory move) would make a newly activated
         controller jump to it. Called around every controller switch and after blocking joint
-        trajectories. Feedforward targets (twist, wrench) are zeroed. Targets not measured yet
-        stay None and are seeded by the state callbacks.
+        trajectories. The twist/accel feedforward and any jog are cleared (not published), the
+        wrench is zeroed. Targets not measured yet stay None and are seeded by the state callbacks.
         """
         self._target_pose = self._current_pose.copy() if self._current_pose is not None else None
         self._q_target = self._q_current.copy() if self._q_current is not None else None
-        self._target_twist = Twist(np.zeros(3), np.zeros(3))
+        self._target_twist = None
+        self._target_accel = None
+        self._target_jog = None
+        self._jog_holds_pose = False
         if self._target_wrench is not None:
             self._target_wrench = {"force": np.zeros(3), "torque": np.zeros(3)}
 
@@ -574,19 +598,39 @@ class Robot:
 
         print("Robot is ready.")
 
-    def set_target(self, position: List | NDArray | None = None, pose: Pose | None = None):
-        """Set the target pose for the end-effector.
+    def set_target(
+        self,
+        position: List | NDArray | None = None,
+        pose: Pose | None = None,
+        twist: Twist | None = None,
+        accel: Twist | None = None,
+    ):
+        """Set the reference of the end-effector: a target pose and its optional feedforward.
+
+        The reference is republished at 100 Hz, the pose on ``target_pose`` and, when given, the
+        twist on ``target_twist`` and the acceleration on ``target_accel``, in the same timer
+        callback so they describe one sample. Tracking controllers (e.g. ``osc_controller``) use
+        the feedforward; ``fr3_pose_controller`` only uses the pose and plans the motion to it.
+
+        Each call replaces the whole reference: a feedforward not given is no longer published
+        (the controllers reset it to zero after their timeout). An active jog is stopped.
 
         Args:
             position (List | NDArray, optional): Target position as [x, y, z]. If None, uses current orientation.
             pose (Pose, optional): Target pose as SE3 transform. If None, uses position.
+            twist (Twist, optional): Feedforward twist of the reference (base frame).
+            accel (Twist, optional): Feedforward acceleration of the reference (base frame),
+                linear [m/s^2] and angular [rad/s^2].
 
         Note:
             Either position or pose must be provided. If both are provided, position overrides
             the translation component of pose.
         """
         target_pose = self._parse_pose_or_position(position, pose)
+        self._end_jog()
         self._target_pose = target_pose.copy()
+        self._target_twist = twist.copy() if twist is not None else None
+        self._target_accel = accel.copy() if accel is not None else None
         # Re-enable continuous pose publishing (single-pose mode)
         self._trajectory_mode_active = False
 
@@ -630,8 +674,9 @@ class Robot:
     def set_target_streaming(self, enabled: bool) -> None:
         """Pause or resume the periodic republishing of the targets.
 
-        By default the latest target pose, joint, wrench and twist are republished by timers
-        (pose at 100 Hz, the others at ``config.publish_frequency``). A caller that streams its
+        By default the latest targets are republished by timers: the reference (pose and its
+        twist/accel feedforward) at 100 Hz, the joint, wrench and jog targets at
+        ``config.publish_frequency``. A caller that streams its
         own targets at a chosen rate (e.g. haptic teleoperation) enables streaming mode, which
         cancels those timers, and publishes with `publish_target`.
 
@@ -657,29 +702,103 @@ class Robot:
         twist: Twist | None = None,
         force: List | NDArray | None = None,
         torque: List | NDArray | None = None,
+        accel: Twist | None = None,
     ) -> None:
         """Publish targets immediately, and store them as the current targets.
 
         Meant for streaming mode (see `set_target_streaming`). Only the given targets are
-        published: ``pose`` on ``target_pose``, ``twist`` on ``target_twist``, and the wrench on
-        ``target_wrench`` if ``force`` or ``torque`` is given (the other one defaults to zero).
+        published: ``pose`` on ``target_pose``, ``twist`` on ``target_twist``, ``accel`` on
+        ``target_accel``, and the wrench on ``target_wrench`` if ``force`` or ``torque`` is given
+        (the other one defaults to zero). Twist and accel are the feedforward of the reference
+        (see `set_target`); publishing a pose stops an active jog.
 
         Args:
             pose (Pose, optional): Target end-effector pose (base frame).
-            twist (Twist, optional): Target end-effector twist (base frame).
+            twist (Twist, optional): Feedforward end-effector twist (base frame).
             force (list, optional): Feedforward force [fx, fy, fz] in N.
             torque (list, optional): Feedforward torque [tx, ty, tz] in Nm.
+            accel (Twist, optional): Feedforward end-effector acceleration (base frame).
         """
         if pose is not None:
+            self._end_jog()
             self._target_pose = pose.copy()
             self._trajectory_mode_active = False
             self._target_pose_publisher.publish(self._pose_to_pose_msg(self._target_pose))
         if twist is not None:
             self._target_twist = twist.copy()
             self._target_twist_publisher.publish(self._twist_to_twist_msg(self._target_twist))
+        if accel is not None:
+            self._target_accel = accel.copy()
+            self._target_accel_publisher.publish(self._accel_to_accel_msg(self._target_accel))
         if force is not None or torque is not None:
             self.set_target_wrench(force=force, torque=torque)
             self._target_wrench_publisher.publish(self._wrench_to_wrench_msg(self._target_wrench))
+
+    @property
+    def jogging(self) -> bool:
+        """True while a jog velocity is streamed (see `jog`)."""
+        return self._target_jog is not None
+
+    def jog(self, linear: List | NDArray | None = None, angular: List | NDArray | None = None) -> None:
+        """Move the end-effector at a velocity until `stop_jog` (hold-to-move).
+
+        The velocity is published on ``target_jog`` now and republished at
+        ``config.publish_frequency``; call again to change it. The controller ramps to it within
+        its jerk limits, clamps it (``jog.max_*`` parameters), stops at its workspace box, and
+        brakes to a stop if no command arrives for ``jog.timeout`` (e.g. if this process dies).
+
+        A jog is a velocity command, exclusive with the pose reference: the pose is not
+        republished from the first `jog` until the next `set_target` / `publish_target(pose=...)`,
+        so the held target does not pull the robot back. After `stop_jog` the robot holds where it
+        stopped. In streaming mode (see `set_target_streaming`) nothing is republished: call
+        `jog` faster than the controller's ``jog.timeout``.
+
+        Only the controllers in ``config.jog_controllers`` (``fr3_pose_controller``) accept jogs;
+        the active controller is checked when a jog starts.
+
+        Args:
+            linear (list, optional): Linear velocity [vx, vy, vz] in m/s (base frame). Zero if None.
+            angular (list, optional): Angular velocity [wx, wy, wz] in rad/s (base frame). Zero if None.
+
+        Raises:
+            ValueError: if a velocity is not a 3D vector.
+            RuntimeError: if the active controller does not accept jog commands.
+        """
+        linear = np.zeros(3) if linear is None else np.asarray(linear, dtype=float)
+        angular = np.zeros(3) if angular is None else np.asarray(angular, dtype=float)
+        if linear.shape != (3,) or angular.shape != (3,):
+            raise ValueError("jog: linear and angular must be 3D vectors")
+
+        if self._target_jog is None:
+            active = self.controller_switcher_client.get_active_controller()
+            if active is None or not any(name in active for name in self.config.jog_controllers):
+                raise RuntimeError(
+                    f"jog needs one of {self.config.jog_controllers}, active controller is {active}"
+                )
+
+        with self._jog_lock:
+            self._target_jog = Twist(linear, angular)
+            self._jog_holds_pose = True
+            self._target_jog_publisher.publish(self._twist_to_twist_msg(self._target_jog))
+
+    def stop_jog(self) -> None:
+        """Stop jogging: the robot brakes to a stop and holds there.
+
+        Publishes one zero velocity (immediate stop, without waiting for the controller's
+        timeout) and stops republishing. The pose reference stays paused until the next pose
+        target (see `jog`).
+        """
+        with self._jog_lock:
+            if self._target_jog is None:
+                return
+            self._target_jog = None
+            self._target_jog_publisher.publish(self._twist_to_twist_msg(Twist(np.zeros(3), np.zeros(3))))
+
+    def _end_jog(self) -> None:
+        """Hand over from jogging to a pose target (no stop command: the pose takes over)."""
+        with self._jog_lock:
+            self._target_jog = None
+            self._jog_holds_pose = False
 
     def _is_joint_controller(self, controller_name: str) -> bool:
         """Return True if the controller name corresponds to a joint-space controller."""
@@ -707,18 +826,23 @@ class Robot:
     # MARK: Callbacks
     # =======================
 
-    def _callback_publish_target_pose(self):
-        """Publish the current target pose if one exists.
+    def _callback_publish_reference(self):
+        """Publish the reference: the target pose, and the twist/accel feedforward if set.
 
-        This callback is triggered periodically to publish the target pose
-        to the ROS topic for the robot controller.
+        This callback is triggered periodically to publish the reference to the robot
+        controller. The three messages come from the same callback, so they describe one sample.
 
-        Note: Does not publish when trajectory mode is active to avoid
-        interfering with trajectory execution.
+        Note: Does not publish when trajectory mode is active (to avoid interfering with
+        trajectory execution) or while a jog holds the pose (see `jog`).
         """
-        if self._target_pose is None or not rclpy.ok() or self._trajectory_mode_active:
+        if self._target_pose is None or not rclpy.ok() or self._trajectory_mode_active or self._jog_holds_pose:
             return
-        self._target_pose_publisher.publish(self._pose_to_pose_msg(self._target_pose))
+        pose, twist, accel = self._target_pose, self._target_twist, self._target_accel
+        self._target_pose_publisher.publish(self._pose_to_pose_msg(pose))
+        if twist is not None:
+            self._target_twist_publisher.publish(self._twist_to_twist_msg(twist))
+        if accel is not None:
+            self._target_accel_publisher.publish(self._accel_to_accel_msg(accel))
 
     def _callback_publish_target_joint(self):
         """Publish the current target joint configuration if one exists.
@@ -740,15 +864,12 @@ class Robot:
             return
         self._target_wrench_publisher.publish(self._wrench_to_wrench_msg(self._target_wrench))
 
-    def _callback_publish_target_twist(self):
-        """Publish the current target twist if one exists.
-
-        This callback is triggered periodically to publish the target twist
-        to the ROS topic for the robot controller.
-        """
-        if self._target_twist is None or not rclpy.ok():
-            return
-        self._target_twist_publisher.publish(self._twist_to_twist_msg(self._target_twist))
+    def _callback_publish_target_jog(self):
+        """Republish the jog velocity while jogging (see `jog`)."""
+        with self._jog_lock:
+            if self._target_jog is None or not rclpy.ok():
+                return
+            self._target_jog_publisher.publish(self._twist_to_twist_msg(self._target_jog))
 
     def _callback_current_wrench(self, msg: WrenchStamped):
         """Update the current wrench from a ROS message.
@@ -807,9 +928,6 @@ class Robot:
         """
         self._current_twist = self._twist_msg_to_twist(msg)
         self._last_twist_update_time = time.time()
-        if self._target_twist is None:
-            # Target twist is a velocity feedforward: start at rest, not at the measured twist
-            self._target_twist = Twist(np.zeros(3), np.zeros(3))
 
     def _callback_current_joint(self, msg: JointState):
         """Update the current joint state (position, velocity and torque) from a ROS message.
@@ -946,6 +1064,16 @@ class Robot:
         msg.header.stamp = self.node.get_clock().now().to_msg()
         msg.twist.linear.x, msg.twist.linear.y, msg.twist.linear.z = twist.linear
         msg.twist.angular.x, msg.twist.angular.y, msg.twist.angular.z = twist.angular
+
+        return msg
+
+    def _accel_to_accel_msg(self, accel: Twist) -> AccelStamped:
+        msg = AccelStamped()
+
+        msg.header.frame_id = self.config.base_frame
+        msg.header.stamp = self.node.get_clock().now().to_msg()
+        msg.accel.linear.x, msg.accel.linear.y, msg.accel.linear.z = accel.linear
+        msg.accel.angular.x, msg.accel.angular.y, msg.accel.angular.z = accel.angular
 
         return msg
 
@@ -1414,6 +1542,9 @@ class Robot:
 
         Dispatches behavior based on the active controller:
         - Joint controller: plan IK trajectory and execute through joint trajectory action.
+        - ``fr3_pose_controller``: send the goal once; the controller plans a jerk-limited move
+          (its ``motion.*`` parameters set the speed) and this waits until the end-effector is
+          there. ``speed`` / ``time_to_move`` only bound the wait.
         - Other controllers: keep Cartesian interpolation/publishing behavior.
 
         Args:
@@ -1448,6 +1579,15 @@ class Robot:
             self._target_pose = desired_pose.copy()
             return
 
+        if active_controller is not None and "fr3_pose_controller" in active_controller:
+            self.set_target(pose=desired_pose)
+            if not self._wait_until_at_pose(desired_pose, timeout=2.0 * time_to_move + 5.0):
+                self.node.get_logger().warn(
+                    "move_to: the end-effector did not reach the target in time (is it outside the "
+                    "controller's workspace box, or are its motion limits low?)"
+                )
+            return
+
         N = int(time_to_move * self.config.publish_frequency)
 
         rate = self.node.create_rate(self.config.publish_frequency)
@@ -1464,6 +1604,26 @@ class Robot:
             rate.sleep()
 
         self._target_pose = desired_pose
+
+    def _wait_until_at_pose(self, target: Pose, timeout: float) -> bool:
+        """Wait until the measured end-effector pose is within the move_to tolerances of target.
+
+        Returns:
+            bool: True once there, False after ``timeout`` seconds.
+        """
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            current = self._current_pose
+            if current is not None:
+                position_error = np.linalg.norm(target.position - current.position)
+                rotation_error = (target.orientation * current.orientation.inv()).magnitude()
+                if (
+                    position_error <= self.MOVE_TO_POSITION_TOLERANCE
+                    and rotation_error <= self.MOVE_TO_ROTATION_TOLERANCE
+                ):
+                    return True
+            time.sleep(1.0 / self.TRAJECTORY_WAIT_HZ)
+        return False
 
     def execute_cartesian_traj(
         self,

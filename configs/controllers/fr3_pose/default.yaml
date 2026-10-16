@@ -11,14 +11,14 @@ motion.max_angular_acceleration: 2.0  # (rad/s^2) [0.01, 25.0]
 motion.max_linear_jerk: 10.0  # (m/s^3) [0.1, 6500.0]
 motion.max_angular_jerk: 20.0  # (rad/s^3) [0.1, 12500.0]
 
-# -- Jog (target_twist, stream it while moving) --
+# -- Jog (target_jog, see Robot.jog / stop_jog) --
 jog.max_linear_velocity: 0.1  # (m/s) norm of the commanded linear velocity [0.0, 1.0]
 jog.max_angular_velocity: 0.3  # (rad/s) norm of the commanded angular velocity [0.0, 2.5]
 jog.max_linear_acceleration: 0.2  # (m/s^2) [0.01, 13.0]
 jog.max_angular_acceleration: 1.0  # (rad/s^2) [0.01, 25.0]
 jog.max_linear_jerk: 2.0  # (m/s^3) [0.1, 6500.0]
 jog.max_angular_jerk: 10.0  # (rad/s^3) [0.1, 12500.0]
-jog.timeout: 0.2  # (s) without a twist before braking to a stop [0.01, 2.0]
+jog.timeout: 0.2  # (s) without a jog command before braking to a stop [0.01, 2.0]
 
 # -- Workspace box (EE position, base frame) --
 # target_pose goals are clipped into it; jogging stops `margin` inside it.

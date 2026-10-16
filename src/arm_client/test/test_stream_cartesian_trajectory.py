@@ -1,6 +1,7 @@
 """Robot.stream_cartesian_traj: interpolation, timing and cleanup (no robot needed)."""
 
 import gc
+import threading
 from unittest.mock import MagicMock
 
 import numpy as np
@@ -45,8 +46,13 @@ def bare_robot():
     robot._target_publish_timers = [MagicMock() for _ in range(4)]
     robot._trajectory_mode_active = False
     robot._target_pose = robot._target_twist = robot._target_wrench = None
+    robot._target_accel = robot._target_jog = None
+    robot._jog_holds_pose = False
+    robot._jog_lock = threading.Lock()
     robot._target_pose_publisher = MagicMock()
     robot._target_twist_publisher = MagicMock()
+    robot._target_accel_publisher = MagicMock()
+    robot._target_jog_publisher = MagicMock()
     robot._target_wrench_publisher = MagicMock()
     robot._current_pose = Pose(np.array([0.4, 0.0, 0.5]), Rotation.identity())
     robot.controller_switcher_client = MagicMock()
