@@ -73,3 +73,16 @@ def test_operator_reads_the_script_and_records_the_force():
         dev.write(np.array([0.0, 0.0, 100.0]))
         np.testing.assert_allclose(dev.last_command_dev, [0.0, 0.0, 3.0])  # clamped
     assert not dev.stop_requested
+
+
+def test_hand_yields_to_the_handle_force():
+    from fr3_haptic.scripted import HandConfig
+
+    cfg = ScriptConfig(surface_z=0.1, rest_s=100.0)  # holds the origin for the whole test
+    dev = ScriptedOperator(origin=ORIGIN, script=cfg, force_gain=0.1, max_force=5.0,
+                           hand=HandConfig(mass=0.5, stiffness=200.0, damping=20.0))
+    dev.settle_and_zero()
+    dev.write(np.array([0.0, 0.0, 20.0]))  # 2 N at the handle, upward
+    dev.advance_hand(5.0)
+    np.testing.assert_allclose(dev._x, ORIGIN + [0.0, 0.0, 2.0 / 200.0], atol=1e-6)  # script + f / k
+    np.testing.assert_allclose(dev._v, 0.0, atol=1e-6)

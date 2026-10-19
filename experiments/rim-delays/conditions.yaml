@@ -1,0 +1,43 @@
+# Delay experiment: methods x round-trip delays x tasks x repeats.
+#   pixi run -e humble python experiments/rim-delays/run_conditions.py --backend sim
+#   pixi run -e humble python experiments/rim-delays/run_conditions.py --backend robot --session 2026-10-21
+# Each round trip is split evenly between the links (feedback = command = rtt / 2).
+
+conf: python/fr3_haptic/configs/teleop.yaml   # fr3_teleop defaults; `common` and the task flags override it
+output_dir: data/rim-delays                    # runs go to <output_dir>/<backend>/<session>/<run name>
+seed: 0                                        # run order (shuffled within each repeat)
+repeats: 3
+margin_s: 3.0                                  # run length = script + round trip + this [s]
+
+methods: [zoh, tdpa-zoh, proxy-rim]
+rtt_ms: [0, 50, 850, 2600]                     # none, local surface link, orbit-to-ground relay, Earth-Moon
+
+# fr3_teleop flags for every run (key = flag without the dashes; true = bare flag)
+common:
+  interface_axis: xyz
+  contact_surface: 0.1       # MEASURE on the robot: table height at the interface point [m]
+  interface_range: 0.15
+  model_update_hz: 500
+  plant_max_age_ms: 100      # watchdog on delivery gaps (constant delays: the sample period)
+  device: scripted
+  hand: true                 # the scripted handle is held by a simulated hand (closed loop)
+  start_position: [0.4, 0.0, 0.2]
+
+tasks:
+  press:                     # approach, press 1 cm into the table, hold, retract
+    script: press
+    script_depth: 0.01
+    script_repeats: 3
+    script_hold_s: 2.0
+  circle:                    # draw circles on the table
+    script: circle
+    script_depth: 0.01
+    script_radius: 0.05
+    script_period_s: 6.0
+    script_laps: 2
+
+# Flags only for one backend
+sim: {}
+robot:
+  robot_log_hz: 200
+  live_hz: 0

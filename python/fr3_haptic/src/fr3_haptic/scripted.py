@@ -15,6 +15,12 @@ Profiles (``ScriptConfig.profile``):
 
 Every move is a minimum-jerk segment, so position and velocity are continuous. After the last
 segment the operator holds the origin.
+
+With a [HandConfig][] the operator is no longer a pure position source: the handle is a
+mass-spring-damper (a grip) pulled along the script, and the rendered handle force acts on it.
+The loop is then closed through the operator, as with a person: a late force lets the hand
+overshoot into the table, and a non-passive rendering can drive it unstable. Without one, the
+rendered force is recorded and never applied.
 """
 
 from __future__ import annotations
@@ -24,7 +30,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-__all__ = ["PROFILES", "ScriptConfig", "Script", "ScriptedOperator"]
+__all__ = ["PROFILES", "HandConfig", "ScriptConfig", "Script", "ScriptedOperator"]
 
 PROFILES = ("press", "circle")
 
@@ -67,6 +73,29 @@ class ScriptConfig:
             raise ValueError("speed and period_s must be > 0, depth >= 0")
         if self.repeats < 1 or self.laps < 1:
             raise ValueError("repeats and laps must be >= 1")
+
+
+@dataclass(kw_only=True)
+class HandConfig:
+    """The operator's hand on the handle: ``m a = k (x_s - x) + b (v_s - v) + f``, with
+    ``(x_s, v_s)`` the script and ``f`` the handle force (rendered world force × ``force_gain``,
+    clamped). In world units, for ``scale = 1``.
+
+    Args:
+        mass: handle plus hand [kg].
+        stiffness: grip stiffness toward the script [N/m].
+        damping: grip damping [N·s/m].
+        max_step_s: integration substep [s].
+    """
+
+    mass: float = 0.6
+    stiffness: float = 200.0
+    damping: float = 8.0
+    max_step_s: float = 5e-4
+
+    def __post_init__(self) -> None:
+        if self.mass <= 0 or self.stiffness < 0 or self.damping < 0:
+            raise ValueError("hand mass must be > 0, stiffness and damping >= 0")
 
 
 @dataclass
@@ -194,6 +223,7 @@ class ScriptedOperator:
             store the recorded force in device axes like the real device does.
         force_gain: handle N per world N, applied to the recorded force.
         max_force: clamp on the recorded force [N]; 0 records zero.
+        hand: a hand on the handle (see the module docstring); ``None``: the handle is the script.
         **_: the other ``Inverse3Device`` arguments (``uri``, ``write_through``, …), ignored.
     """
 
@@ -207,6 +237,7 @@ class ScriptedOperator:
         signs=None,
         force_gain: float = 1.0,
         max_force: float = 0.0,
+        hand: HandConfig | None = None,
         **_,
     ) -> None:
         if dim != 3:
@@ -214,12 +245,19 @@ class ScriptedOperator:
         self.dim = dim
         self.stop_requested = False
         self.script = Script(script, np.asarray(origin, dtype=float))
+        self.hand = hand
         self._axes = tuple(axes)
         self._signs = np.ones(3) if signs is None else np.asarray(signs, dtype=float)
         self.force_gain = float(force_gain)
         self.max_force = float(max_force)
         self._command_dev = np.zeros(3)
+        self._f_hand = np.zeros(3)  # handle force, world axes [N]
         self._t0 = time.perf_counter()
+        self._reset_hand(0.0)
+
+    def _reset_hand(self, t: float) -> None:
+        self._x, self._v = self.script.sample(t)
+        self._t_hand = t
 
     def __enter__(self) -> "ScriptedOperator":
         return self
@@ -230,6 +268,8 @@ class ScriptedOperator:
     def settle_and_zero(self, warmup_s: float = 0.0) -> np.ndarray:
         """Start the script now; returns the origin."""
         self._t0 = time.perf_counter()
+        self._f_hand = np.zeros(3)
+        self._reset_hand(0.0)
         return self.script.origin.copy()
 
     @property
@@ -237,7 +277,25 @@ class ScriptedOperator:
         return time.perf_counter() - self._t0
 
     def read(self) -> tuple[np.ndarray, np.ndarray]:
-        return self.script.sample(self.elapsed_s)
+        t = self.elapsed_s
+        if self.hand is None:
+            return self.script.sample(t)
+        self.advance_hand(t)
+        return self._x.copy(), self._v.copy()
+
+    def advance_hand(self, t: float) -> None:
+        """Integrate the hand to script time ``t`` [s] (semi-implicit Euler, the last handle force held)."""
+        h = self.hand
+        remaining = t - self._t_hand
+        n = max(1, int(np.ceil(remaining / h.max_step_s))) if remaining > 0 else 0
+        for k in range(n):
+            dt = remaining / n
+            x_s, v_s = self.script.sample(self._t_hand + (k + 1) * dt)
+            a = (h.stiffness * (x_s - self._x) + h.damping * (v_s - self._v) + self._f_hand) / h.mass
+            self._v = self._v + dt * a
+            self._x = self._x + dt * self._v
+        if n:
+            self._t_hand = t
 
     def write(self, force: np.ndarray) -> None:
         f = np.asarray(force, dtype=float).reshape(3) * self.force_gain
@@ -246,6 +304,7 @@ class ScriptedOperator:
             f = np.zeros(3)
         elif norm > self.max_force:
             f *= self.max_force / norm
+        self._f_hand = f
         dev = np.zeros(3)
         dev[list(self._axes)] = self._signs * f
         self._command_dev = dev
@@ -260,3 +319,4 @@ class ScriptedOperator:
 
     def close(self) -> None:
         self._command_dev = np.zeros(3)
+        self._f_hand = np.zeros(3)

@@ -22,7 +22,6 @@ from pathlib import Path
 import numpy as np
 from experiment_logger import ExperimentLogger, LoggingConfig
 from fr3_haptic.links import Links
-from fr3_haptic.scripted import Script, ScriptedOperator
 from fr3_haptic.session import PROXY_METHODS, CommandLoop, CommandLoopConfig, RimModelLoop
 from fr3_haptic.teleop import (
     TAG,
@@ -32,6 +31,7 @@ from fr3_haptic.teleop import (
     links_config,
     resolve_rates,
     script_config,
+    scripted_device,
 )
 from haptic_teleop import (
     HapticProcess,
@@ -97,12 +97,7 @@ def main(argv: list[str] | None = None) -> None:
     links.start()
     leader_origin = np.asarray(start, dtype=float)
 
-    device_factory, device_extra = None, {}
-    if script is not None:
-        script_s = Script(script, leader_origin).duration_s
-        if args.seconds < script_s:
-            print(f"{TAG} WARNING: --seconds {args.seconds:g} ends the run before the script ({script_s:.1f} s)")
-        device_factory, device_extra = ScriptedOperator, {"script": script}
+    device_factory, device_extra, _ = scripted_device(args, leader_origin)
 
     haptic_state, status = HapticStateMailbox(dim), StatusMailbox()
     boxes += [haptic_state, status]
@@ -229,6 +224,7 @@ def main(argv: list[str] | None = None) -> None:
         "rates": {"haptic_hz": args.haptic_hz, "model_update_hz": model_update_hz,
                   "rim_update_hz": rim_update_hz if rim_loop else None, "command_hz": command_hz},
         "script": asdict(script) if script is not None else None,
+        "hand": asdict(device_extra["hand"]) if device_extra.get("hand") is not None else None,
         "interface_basis": basis.tolist(),
         "contact_axis": contact_axis,
         "contact_surface": args.contact_surface,

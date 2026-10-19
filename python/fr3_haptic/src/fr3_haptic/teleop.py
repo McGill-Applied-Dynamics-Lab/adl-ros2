@@ -69,7 +69,7 @@ from .links import Links, LinksConfig
 from .live import LiveView, live_logger
 from .plant import FR3Plant, FR3System
 from .recorder import RobotStateRecorder
-from .scripted import PROFILES, Script, ScriptConfig, ScriptedOperator
+from .scripted import PROFILES, HandConfig, Script, ScriptConfig, ScriptedOperator
 from .session import PROXY_METHODS, CommandLoop, CommandLoopConfig, RimModelLoop
 
 TAG = "[fr3_teleop]"
@@ -203,6 +203,15 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--script-radius", type=float, default=0.05, help="circle: radius [m]")
     g.add_argument("--script-period-s", type=float, default=6.0, help="circle: time per lap [s]")
     g.add_argument("--script-laps", type=int, default=2, help="circle: number of laps")
+    g.add_argument(
+        "--hand",
+        action="store_true",
+        help="a simulated hand holds the scripted handle, so the rendered force acts on the operator "
+        "(closed loop: try it in sim first)",
+    )
+    g.add_argument("--hand-mass", type=float, default=0.6, help="hand + handle mass [kg]")
+    g.add_argument("--hand-stiffness", type=float, default=200.0, help="grip stiffness [N/m]")
+    g.add_argument("--hand-damping", type=float, default=8.0, help="grip damping [N·s/m]")
 
     g = p.add_argument_group("safety")
     g.add_argument("--energy-budget-mj", type=float, default=0.0, help="guard: energy budget [mJ]; 0 disables")
@@ -393,6 +402,23 @@ def script_config(args: argparse.Namespace) -> ScriptConfig | None:
     )
 
 
+def scripted_device(args: argparse.Namespace, leader_origin: np.ndarray) -> tuple[object | None, dict, float | None]:
+    """``(device_factory, extra device kwargs, script duration [s])`` for ``--device scripted``;
+    ``(None, {}, None)`` for the Inverse3. Warns when ``--seconds`` ends the run before the script.
+
+    Raises:
+        ValueError: as `script_config`, or for a script that starts below the table.
+    """
+    script = script_config(args)
+    if script is None:
+        return None, {}, None
+    duration = Script(script, leader_origin).duration_s  # also checks the origin is above the table
+    if args.seconds < duration:
+        print(f"{TAG} WARNING: --seconds {args.seconds:g} ends the run before the script ({duration:.1f} s)")
+    hand = HandConfig(mass=args.hand_mass, stiffness=args.hand_stiffness, damping=args.hand_damping) if args.hand else None
+    return ScriptedOperator, {"script": script, "hand": hand}, duration
+
+
 def move_to_start(robot: Robot, position: list[float], speed: float) -> None:
     """Move the end effector to ``position``, keeping its orientation, through
     ``joint_trajectory_controller`` (IK + joint trajectory). Blocks until the move ends."""
@@ -480,12 +506,7 @@ def main(argv: list[str] | None = None) -> None:
         system.update()
         tool_correction = first.x_i - system.model.x_i
     leader_origin = hold.position - frame.lift(tool_correction)
-    device_factory, device_extra = None, {}
-    if script is not None:
-        script_s = Script(script, leader_origin).duration_s  # also checks the origin is above the table
-        if args.seconds < script_s:
-            print(f"{TAG} WARNING: --seconds {args.seconds:g} ends the run before the script ({script_s:.1f} s)")
-        device_factory, device_extra = ScriptedOperator, {"script": script}
+    device_factory, device_extra, _ = scripted_device(args, leader_origin)
 
     # -- haptic process: method, device and safety live there ------------------------------
     rendering = RenderingConfigs(
@@ -705,6 +726,7 @@ def main(argv: list[str] | None = None) -> None:
         },
         "haptic_step": asdict(spec.step),
         "script": asdict(script) if script is not None else None,
+        "hand": asdict(device_extra["hand"]) if device_extra.get("hand") is not None else None,
         "interface_basis": basis.tolist(),
         "contact_axis": contact_axis,
         "hold_position": hold.position.tolist(),
