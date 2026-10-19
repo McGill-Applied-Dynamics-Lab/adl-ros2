@@ -2,7 +2,7 @@
 #   pixi run -e humble fr3_teleop --conf python/fr3_haptic/configs/teleop.yaml [--force] [--method ...]
 
 method:
-  method: proxy-rim               # zoh | linear | tdpa-zoh | tdpa-linear | proxy-rim | proxy-fixed-mass
+  method: tdpa-zoh               # zoh | linear | tdpa-zoh | tdpa-linear | proxy-rim | proxy-fixed-mass
   kv: 1000.0                  # coupling stiffness, world [N/m]; = osc_controller interface-axis stiffness
   dv: 70.0                   # coupling damping, world [N·s/m]; ~0.7 damping ratio with kv 500 on z at home (Lambda_z 5.4 kg)
   linear_max_extrapolation: 1.0
@@ -69,7 +69,7 @@ live:                        # Foxglove live view: open ws://localhost:<live_por
   live_port: 8766
 
 run:
-  seconds: 60.0
+  seconds: 99999.0
   output_dir: /home/athena/csirois/data/franka/fr3_haptic
   notes: ""
   robot_log_hz: 50.0         # robot state, commanded torques, task error/wrench, EE state [Hz]; 0 disables

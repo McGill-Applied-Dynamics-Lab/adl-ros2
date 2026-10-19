@@ -307,6 +307,8 @@ def move_to_start(robot: Robot, position: list[float], speed: float) -> None:
     print(f"{TAG} moving to the start position {np.asarray(position)} m from {target.position} m")
     target.position = np.asarray(position, dtype=float)
     robot.controller_switcher_client.switch_controller("joint_trajectory_controller")
+    # robot.controller_switcher_client.switch_controller("fr3_pose_controller")
+
     robot.move_to(pose=target, speed=speed)
     robot.wait_until_ready()
 

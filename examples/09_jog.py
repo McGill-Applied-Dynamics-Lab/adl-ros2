@@ -16,15 +16,17 @@ robot.fr3_pose_controller_parameters_client.load_param_config(
 start = robot.end_effector_pose
 
 # -- Jog: up at 2 cm/s for 2 s, then brake to a stop and hold there
-robot.jog(linear=[0.0, 0.0, 0.02])
+print("Starting linear jog")
+robot.jog(linear=[0.1, 0.0, -0.02])
 time.sleep(2.0)
 robot.stop_jog()
 time.sleep(0.5)
 print(f"Jogged {(robot.end_effector_pose.position - start.position) * 1e3} mm")
 
 # -- Rotate about the base z axis at 0.2 rad/s for 1 s
-robot.jog(angular=[0.0, 0.0, 0.2])
-time.sleep(1.0)
+print("Starting angular jog")
+robot.jog(angular=[0.2, 0.3, -0.2])
+time.sleep(5.0)
 robot.stop_jog()
 time.sleep(0.5)
 

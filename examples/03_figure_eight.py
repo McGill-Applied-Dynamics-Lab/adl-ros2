@@ -42,9 +42,13 @@ max_time = 8.0
 #     file_path=CONFIG_DIR / "controllers" / "osc_pd" / "default.yaml"
 # )
 
-robot.controller_switcher_client.switch_controller("osc_controller")
-robot.osc_controller_parameters_client.load_param_config(file_path=CONFIG_DIR / "controllers" / "osc" / "default.yaml")
+# robot.controller_switcher_client.switch_controller("osc_controller")
+# robot.osc_controller_parameters_client.load_param_config(file_path=CONFIG_DIR / "controllers" / "osc" / "default.yaml")
 
+robot.controller_switcher_client.switch_controller("fr3_pose_controller")
+robot.fr3_pose_controller_parameters_client.load_param_config(
+    file_path=CONFIG_DIR / "controllers" / "fr3_pose" / "default.yaml"
+)
 
 # --- Figure eight trajectory setup
 # Center the figure eight on the current end-effector position (the trajectory starts at the center)
