@@ -10,7 +10,17 @@ from pathlib import Path
 import numpy as np
 import pytest
 from fr3_haptic.session import CommandLoop, CommandLoopConfig, RimModelLoop
-from fr3_haptic.teleop import CONTROLLER_HZ, build_parser, controller_gains, interface_limits, parse_axes, resolve_rates
+from fr3_haptic.teleop import (
+    CONTROLLER_HZ,
+    absolute_limits,
+    build_parser,
+    controller_gains,
+    interface_basis,
+    interface_limits,
+    parse_axes,
+    resolve_rates,
+    script_config,
+)
 from haptic_teleop import HapticStateMailbox, ModelMailbox, StatusMailbox
 from pyrim import DynModel
 from utilities import apply_yaml_config
@@ -138,12 +148,57 @@ def test_default_yaml_keys_are_all_flags():
 
 
 def test_interface_limits_combine_absolute_and_range():
-    assert interface_limits(None, 0.3, 0.1) == pytest.approx((0.2, 0.4))
-    assert interface_limits((0.25, np.inf), 0.3, 0.1) == pytest.approx((0.25, 0.4))
-    assert interface_limits(None, 0.3, 0.0) is None
-    assert interface_limits((0.1, 0.5), 0.3, 0.0) == (0.1, 0.5)
+    def lim(absolute, start, half_range):
+        out = interface_limits(absolute, np.array([start]), half_range)
+        return None if out is None else (float(out[0][0]), float(out[1][0]))
+
+    assert lim(None, 0.3, 0.1) == pytest.approx((0.2, 0.4))
+    assert lim((np.array([0.25]), np.array([np.inf])), 0.3, 0.1) == pytest.approx((0.25, 0.4))
+    assert lim(None, 0.3, 0.0) is None
+    assert lim((np.array([0.1]), np.array([0.5])), 0.3, 0.0) == (0.1, 0.5)
     with pytest.raises(ValueError):
-        interface_limits((0.4, 0.5), 0.3, 0.1)
+        interface_limits((np.array([0.4]), np.array([0.5])), np.array([0.3]), 0.1)
+
+
+def test_interface_limits_per_axis():
+    absolute = absolute_limits([0.15], [1.0, 1.0, 1.0], 3)  # one min for every axis
+    low, high = interface_limits(absolute, np.array([0.4, 0.2, 0.2]), 0.1)
+    np.testing.assert_allclose(low, [0.3, 0.15, 0.15])
+    np.testing.assert_allclose(high, [0.5, 0.3, 0.3])
+    assert absolute_limits(None, None, 3) is None
+    with pytest.raises(ValueError):
+        absolute_limits([0.1, 0.2], None, 3)
+
+
+def test_interface_axes_and_contact_axis():
+    args = build_parser().parse_args(["--interface-axis", "xyz"])
+    basis, contact_axis = interface_basis(args.interface_axis)
+    np.testing.assert_allclose(basis, np.eye(3))
+    assert contact_axis == 2  # the table is on z
+    basis, contact_axis = interface_basis("z")
+    np.testing.assert_allclose(basis[:, 0], [0.0, 0.0, 1.0])
+    assert contact_axis == 0
+    for bad in ("xx", "w", ""):
+        with pytest.raises(SystemExit):
+            build_parser().parse_args(["--interface-axis", bad])
+
+
+def test_script_config_from_the_cli():
+    assert script_config(build_parser().parse_args([])) is None  # the Inverse3
+    args = build_parser().parse_args(["--device", "scripted", "--script", "circle", "--contact-surface", "0.12"])
+    cfg = script_config(args)
+    assert cfg.profile == "circle" and cfg.surface_z == 0.12
+    args = build_parser().parse_args(["--device", "scripted", "--contact-surface", "0.12", "--script-surface-z", "0.1"])
+    assert script_config(args).surface_z == 0.1
+    with pytest.raises(ValueError):
+        script_config(build_parser().parse_args(["--device", "scripted"]))  # no table height
+
+
+def test_controller_gains_on_every_interface_axis():
+    args = build_parser().parse_args(["--method", "zoh", "--kv", "400", "--dv", "30", "--interface-axis", "xyz"])
+    gains = dict(controller_gains(args))
+    for axis in "xyz":
+        assert gains[f"gains.k_pos_{axis}"] == 400.0 and gains[f"gains.d_pos_{axis}"] == 30.0
 
 
 def test_controller_gains_follow_the_method():

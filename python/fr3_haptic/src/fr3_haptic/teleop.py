@@ -69,6 +69,7 @@ from .links import Links, LinksConfig
 from .live import LiveView, live_logger
 from .plant import FR3Plant, FR3System
 from .recorder import RobotStateRecorder
+from .scripted import PROFILES, Script, ScriptConfig, ScriptedOperator
 from .session import PROXY_METHODS, CommandLoop, CommandLoopConfig, RimModelLoop
 
 TAG = "[fr3_teleop]"
@@ -91,6 +92,22 @@ def parse_axes(spec: str) -> tuple[tuple[int, ...], tuple[float, ...]]:
     if len(axes) != 3 or len(set(axes)) != 3:
         raise argparse.ArgumentTypeError(f"--axes needs each of x, y, z once, got {spec!r}")
     return tuple(axes), tuple(signs)
+
+
+def parse_interface_axes(spec: str) -> str:
+    """``"z"``, ``"xyz"``, ``"xz"``…: the robot base axes the interface moves along, each once."""
+    spec = spec.strip().lower()
+    if not spec or any(a not in AXES for a in spec) or len(set(spec)) != len(spec):
+        raise argparse.ArgumentTypeError(f"--interface-axis takes distinct axes among x, y, z, got {spec!r}")
+    return spec
+
+
+def interface_basis(axes: str) -> tuple[np.ndarray, int]:
+    """``(basis, contact_axis)`` for the interface axes: the ``(3, dim)`` basis, one base-frame
+    unit vector per axis in the given order, and the interface coordinate of the proxies' wall
+    (the z axis, a table; the first axis without z)."""
+    basis = np.eye(3)[:, [AXES.index(a) for a in axes]]
+    return basis, axes.index("z") if "z" in axes else 0
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -129,15 +146,31 @@ def build_parser() -> argparse.ArgumentParser:
 
     g = p.add_argument_group("interface")
     g.add_argument(
-        "--interface-axis", choices=tuple(AXES), default="z", help="robot base axis the interface moves along"
+        "--interface-axis",
+        type=parse_interface_axes,
+        default="z",
+        help="robot base axes the interface moves along: z (1-DoF), xyz (3-DoF translation), ...; "
+        "the proxies' wall (--contact-surface) is on z",
     )
-    g.add_argument("--interface-min", type=float, default=None, help="lowest commanded interface position [m]")
-    g.add_argument("--interface-max", type=float, default=None, help="highest commanded interface position [m]")
+    g.add_argument(
+        "--interface-min",
+        type=float,
+        nargs="+",
+        default=None,
+        help="lowest commanded interface position [m]: one value for every axis, or one per axis",
+    )
+    g.add_argument(
+        "--interface-max",
+        type=float,
+        nargs="+",
+        default=None,
+        help="highest commanded interface position [m]: one value for every axis, or one per axis",
+    )
     g.add_argument(
         "--interface-range",
         type=float,
         default=0.1,
-        help="commanded interface position stays within ± this of the start [m]; 0 disables",
+        help="commanded interface position stays within ± this of the start, per axis [m]; 0 disables",
     )
     g.add_argument("--free-axis-stiffness", type=float, default=0.0, help="handle spring on the free axes [world N/m]")
     g.add_argument("--free-axis-damping", type=float, default=0.0, help="handle damper on the free axes [world N·s/m]")
@@ -152,6 +185,24 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--vel-filter-hz", type=float, default=8.0, help="leader velocity low-pass [Hz]; 0 disables")
     g.add_argument("--no-write-through", action="store_true", help="send the force on the next read instead")
     g.add_argument("--force-ramp-s", type=float, default=1.0, help="force fade-in at the start [s]")
+
+    g = p.add_argument_group("scripted operator (--device scripted: the leader follows a script, no hand)")
+    g.add_argument("--device", choices=("inverse3", "scripted"), default="inverse3", help="operator input")
+    g.add_argument("--script", choices=PROFILES, default="press", help="press: down and up; circle: circles on the table")
+    g.add_argument(
+        "--script-surface-z",
+        type=float,
+        default=None,
+        help="table height in leader coordinates [m]; default --contact-surface",
+    )
+    g.add_argument("--script-depth", type=float, default=0.01, help="leader depth below the surface [m]")
+    g.add_argument("--script-speed", type=float, default=0.05, help="peak approach/retract speed [m/s]")
+    g.add_argument("--script-hold-s", type=float, default=2.0, help="press: time at the bottom [s]")
+    g.add_argument("--script-rest-s", type=float, default=1.0, help="time at the origin between moves [s]")
+    g.add_argument("--script-repeats", type=int, default=3, help="press: number of presses")
+    g.add_argument("--script-radius", type=float, default=0.05, help="circle: radius [m]")
+    g.add_argument("--script-period-s", type=float, default=6.0, help="circle: time per lap [s]")
+    g.add_argument("--script-laps", type=int, default=2, help="circle: number of laps")
 
     g = p.add_argument_group("safety")
     g.add_argument("--energy-budget-mj", type=float, default=0.0, help="guard: energy budget [mJ]; 0 disables")
@@ -214,6 +265,7 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--save", action="store_true", help="write an MCAP run")
     g.add_argument("--output-dir", default="data/fr3_haptic", help="where --save writes runs")
     g.add_argument("--notes", default="", help="free text stored with the run")
+    g.add_argument("--run-name", default=None, help="--save: run directory name; default run_<date>_<time>")
     g.add_argument(
         "--robot-log-hz",
         type=float,
@@ -245,21 +297,44 @@ def resolve_rates(args: argparse.Namespace) -> tuple[float, float, float]:
     return model_update_hz, rim_update_hz, command_hz
 
 
+def absolute_limits(
+    low: list[float] | None, high: list[float] | None, dim: int
+) -> tuple[np.ndarray, np.ndarray] | None:
+    """``--interface-min/max`` as ``(dim,)`` bounds (a single value applies to every axis), or ``None``.
+
+    Raises:
+        ValueError: for a list that is neither one value nor one per axis.
+    """
+    if low is None and high is None:
+        return None
+
+    def per_axis(values: list[float] | None, fill: float, flag: str) -> np.ndarray:
+        if values is None:
+            return np.full(dim, fill)
+        if len(values) not in (1, dim):
+            raise ValueError(f"{flag} takes 1 or {dim} values, got {len(values)}")
+        return np.broadcast_to(np.asarray(values, dtype=float), (dim,)).copy()
+
+    return per_axis(low, -np.inf, "--interface-min"), per_axis(high, np.inf, "--interface-max")
+
+
 def interface_limits(
-    absolute: tuple[float, float] | None, start: float, half_range: float
-) -> tuple[float, float] | None:
-    """Commanded interface bounds: ``absolute`` (``--interface-min/max``) intersected with
+    absolute: tuple[np.ndarray, np.ndarray] | None, start: np.ndarray, half_range: float
+) -> tuple[np.ndarray, np.ndarray] | None:
+    """Commanded interface bounds, per axis: ``absolute`` (`absolute_limits`) intersected with
     ``start ± half_range`` (``--interface-range``; 0 disables it).
 
     Raises:
         ValueError: if the start lies outside the absolute bounds.
     """
-    low, high = absolute if absolute is not None else (-np.inf, np.inf)
-    if not low <= start <= high:
-        raise ValueError(f"the robot starts at {start:.3f} m, outside --interface-min/max ({low}, {high})")
+    start = np.atleast_1d(np.asarray(start, dtype=float))
+    low, high = absolute if absolute is not None else (np.full(start.shape, -np.inf), np.full(start.shape, np.inf))
+    low, high = np.asarray(low, dtype=float), np.asarray(high, dtype=float)
+    if not np.all((low <= start) & (start <= high)):
+        raise ValueError(f"the robot starts at {start} m, outside --interface-min/max ({low}, {high})")
     if half_range > 0:
-        low, high = max(low, start - half_range), min(high, start + half_range)
-    if np.isinf(low) and np.isinf(high):
+        low, high = np.maximum(low, start - half_range), np.minimum(high, start + half_range)
+    if np.all(np.isinf(low)) and np.all(np.isinf(high)):
         return None
     return low, high
 
@@ -281,21 +356,41 @@ def links_config(args: argparse.Namespace) -> LinksConfig:
 def controller_gains(args: argparse.Namespace) -> list[tuple[str, object]]:
     """``osc_controller`` parameters this run sets, after ``--osc-params``.
 
-    Coupling methods: the interface axis becomes the coupling spring (``kv``, ``dv``, in N/m,
+    Coupling methods: each interface axis becomes the coupling spring (``kv``, ``dv``, in N/m,
     so decoupling off), the twist feedforward carries the leader velocity, no wrench
     feedforward. Proxy methods: wrench feedforward on; gains are left to ``--osc-params``.
     """
-    axis = args.interface_axis
     if args.method in PROXY_METHODS:
         return [("feedforward.wrench", True), ("feedforward.twist", True)]
-    return [
-        ("control.inertia_decoupling", False),
-        (f"gains.k_pos_{axis}", float(args.kv)),
-        (f"gains.d_pos_{axis}", float(args.dv)),
-        ("feedforward.twist", True),
-        ("feedforward.accel", False),
-        ("feedforward.wrench", False),
-    ]
+    gains: list[tuple[str, object]] = [("control.inertia_decoupling", False)]
+    for axis in args.interface_axis:
+        gains += [(f"gains.k_pos_{axis}", float(args.kv)), (f"gains.d_pos_{axis}", float(args.dv))]
+    return gains + [("feedforward.twist", True), ("feedforward.accel", False), ("feedforward.wrench", False)]
+
+
+def script_config(args: argparse.Namespace) -> ScriptConfig | None:
+    """The programmed operator's script (``--device scripted``), or ``None`` for the Inverse3.
+
+    Raises:
+        ValueError: without a table height (``--script-surface-z`` or ``--contact-surface``).
+    """
+    if args.device != "scripted":
+        return None
+    surface = args.script_surface_z if args.script_surface_z is not None else args.contact_surface
+    if surface is None:
+        raise ValueError("--device scripted needs the table height: --script-surface-z or --contact-surface")
+    return ScriptConfig(
+        profile=args.script,
+        surface_z=surface,
+        depth=args.script_depth,
+        speed=args.script_speed,
+        hold_s=args.script_hold_s,
+        rest_s=args.script_rest_s,
+        repeats=args.script_repeats,
+        radius=args.script_radius,
+        period_s=args.script_period_s,
+        laps=args.script_laps,
+    )
 
 
 def move_to_start(robot: Robot, position: list[float], speed: float) -> None:
@@ -317,18 +412,13 @@ def main(argv: list[str] | None = None) -> None:
     args = apply_yaml_config(build_parser(), argv)
     axes, signs = args.axes
     signs = np.asarray(signs)
-    direction = np.zeros(3)
-    direction[AXES.index(args.interface_axis)] = 1.0
-    frame = InterfaceFrame.from_direction(direction)
+    basis, contact_axis = interface_basis(args.interface_axis)
+    frame = InterfaceFrame(basis)
     dim = frame.dim
     model_update_hz, rim_update_hz, command_hz = resolve_rates(args)
     links_cfg = links_config(args)
-    limits = None
-    if args.interface_min is not None or args.interface_max is not None:
-        limits = (
-            -np.inf if args.interface_min is None else args.interface_min,
-            np.inf if args.interface_max is None else args.interface_max,
-        )
+    limits = absolute_limits(args.interface_min, args.interface_max, dim)
+    script = script_config(args)  # checked before the robot moves
 
     # -- robot and controller setup --------------------------------------------------------------
     # Without rclpy's signal handler: it shuts the context down on Ctrl-C, before the run's
@@ -377,7 +467,7 @@ def main(argv: list[str] | None = None) -> None:
     first = plant.wait_for_sample()
     hold = first.ee_pose
     plant.set_hold_pose(hold)
-    plant.set_interface_limits(interface_limits(limits, float(first.x_i[0]), args.interface_range))
+    plant.set_interface_limits(interface_limits(limits, first.x_i, args.interface_range))
 
     # -- interface point (proxy-rim: the model's) ------------------------------------------
     system = None
@@ -390,6 +480,12 @@ def main(argv: list[str] | None = None) -> None:
         system.update()
         tool_correction = first.x_i - system.model.x_i
     leader_origin = hold.position - frame.lift(tool_correction)
+    device_factory, device_extra = None, {}
+    if script is not None:
+        script_s = Script(script, leader_origin).duration_s  # also checks the origin is above the table
+        if args.seconds < script_s:
+            print(f"{TAG} WARNING: --seconds {args.seconds:g} ends the run before the script ({script_s:.1f} s)")
+        device_factory, device_extra = ScriptedOperator, {"script": script}
 
     # -- haptic process: method, device and safety live there ------------------------------
     rendering = RenderingConfigs(
@@ -423,6 +519,7 @@ def main(argv: list[str] | None = None) -> None:
         stiffness=args.kv,
         damping=args.dv,
         contact_surface=-np.inf if args.contact_surface is None else args.contact_surface,
+        contact_axis=contact_axis,
         step=HapticStepConfig(
             haptic_hz=args.haptic_hz,
             max_force_world=args.max_i3_force / args.force_gain,
@@ -442,11 +539,14 @@ def main(argv: list[str] | None = None) -> None:
             "dim": 3,
             "force_gain": args.force_gain,
             "force_enabled": args.force,
-            "max_force": args.max_i3_force if args.force else 0.0,
+            # the scripted operator only records the force, so it always does
+            "max_force": args.max_i3_force if (args.force or script is not None) else 0.0,
             "write_through": not args.no_write_through,
             "velocity_filter_hz": args.vel_filter_hz,
             "uri": args.uri,
+            **device_extra,
         },
+        **({"device_factory": device_factory} if device_factory is not None else {}),
         seconds=args.seconds,
         plant=plant_box,
         model=model_box,
@@ -604,6 +704,9 @@ def main(argv: list[str] | None = None) -> None:
             "controller_hz": CONTROLLER_HZ,
         },
         "haptic_step": asdict(spec.step),
+        "script": asdict(script) if script is not None else None,
+        "interface_basis": basis.tolist(),
+        "contact_axis": contact_axis,
         "hold_position": hold.position.tolist(),
         "hold_orientation_xyzw": hold.orientation.as_quat().tolist(),
         "leader_origin": leader_origin.tolist(),
@@ -611,7 +714,9 @@ def main(argv: list[str] | None = None) -> None:
         "haptic_scheduling": result.realtime,
     }
     logger_config = (
-        LoggingConfig.to_file(args.output_dir, notes=args.notes or f"fr3 {args.method} kv={args.kv} dv={args.dv}")
+        LoggingConfig.to_file(
+            args.output_dir, run_name=args.run_name, notes=args.notes or f"fr3 {args.method} kv={args.kv} dv={args.dv}"
+        )
         if args.save
         else LoggingConfig.in_memory()
     )

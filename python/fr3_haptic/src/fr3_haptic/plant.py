@@ -106,7 +106,7 @@ class FR3Plant:
         sample_period_s: keep at most one sample per this many seconds of controller time,
             to emulate a slower plant. 0 keeps every controller tick.
         interface_limits: ``(low, high)`` bounds on the commanded interface coordinate [m],
-            applied to every component. ``None`` disables them.
+            a scalar for every component or ``(dim,)`` per component. ``None`` disables them.
         record: keep every sample (after decimation) in [history][FR3Plant.history], for logging.
         node: subscribe on this node, which the caller spins. ``None`` (the default) creates
             the plant's own node and a single-threaded executor thread for it.
@@ -192,15 +192,20 @@ class FR3Plant:
         self._hold_pose = pose.copy()
 
     @property
-    def interface_limits(self) -> tuple[float, float] | None:
-        """``(low, high)`` bounds on the commanded interface coordinate [m], or ``None``."""
+    def interface_limits(self) -> tuple[np.ndarray, np.ndarray] | None:
+        """``(low, high)`` bounds on the commanded interface coordinates [m], each ``(dim,)``, or ``None``."""
         return self._limits
 
-    def set_interface_limits(self, limits: tuple[float, float] | None) -> None:
-        """Set ``(low, high)`` bounds on the commanded interface coordinate [m]; ``None`` removes them."""
-        if limits is not None and not limits[0] < limits[1]:
+    def set_interface_limits(self, limits: tuple[np.ndarray | float, np.ndarray | float] | None) -> None:
+        """Set ``(low, high)`` bounds on the commanded interface coordinates [m]: scalars (every
+        axis) or ``(dim,)`` arrays (per axis); ``None`` removes them."""
+        if limits is None:
+            self._limits = None
+            return
+        low, high = (np.broadcast_to(np.asarray(b, dtype=float), (self.dim,)).copy() for b in limits)
+        if not np.all(low < high):
             raise ValueError(f"interface_limits must be (low, high) with low < high, got {limits}")
-        self._limits = None if limits is None else (float(limits[0]), float(limits[1]))
+        self._limits = (low, high)
 
     def wait_for_sample(self, timeout_s: float = 2.0, poll_s: float = 0.005) -> FR3PlantSample:
         """Block until a sample arrives and return it.

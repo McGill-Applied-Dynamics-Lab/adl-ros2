@@ -211,6 +211,16 @@ def test_interface_limits_validated():
         make_plant(interface_limits=(0.5, 0.1))
 
 
+def test_interface_limits_per_axis_in_3d():
+    robot = FakeRobot()
+    plant = FR3Plant(robot, InterfaceFrame(np.eye(3)), HOLD, node=robot.node,
+                     interface_limits=(np.array([0.3, -0.1, 0.1]), np.array([0.5, 0.1, 0.4])))
+    plant.aim(np.array([0.6, 0.0, 0.05]), np.array([0.1, 0.1, -0.1]))
+    cmd = robot.published[-1]
+    np.testing.assert_allclose(cmd["pose"].position, [0.5, 0.0, 0.1])
+    np.testing.assert_allclose(cmd["twist"].linear, [0.0, 0.1, 0.0])  # only the outward components are cut
+
+
 def test_freeze_holds_last_measured_position():
     plant, robot = make_plant()
     plant.freeze()  # no sample yet: hold pose
