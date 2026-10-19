@@ -9,19 +9,28 @@ stays valid as long as link 5 does not rotate much (its drift is printed, see `l
   stopped until every hole is released
 - The arm moves within an absolute bounding box (base frame): reaching it stops the arm
 
+The hole -> direction mapping comes from a calibration (`--calibrate`, with the arm at home): the script asks
+to touch all the holes of each direction in turn, and saves the mapping (`BodyDemoConfig.calibration_path`)
+for the next runs. Without one, the placeholder `BodyDemoConfig.direction_holes` is used.
+
 The arm streams pose + velocity targets to osc_pd_controller (`OscJogger`); fr3_pose_controller's jog
 mode can replace it once available (same `Jogger` interface).
 
     pixi run -e wg python experiments/waveguide/wg_body_demo.py                    # waveguide, Teensy on /dev/ttyACM0 (--port)
+    pixi run -e wg python experiments/waveguide/wg_body_demo.py --calibrate        # calibrate the hole -> direction mapping first
     pixi run -e wg python experiments/waveguide/wg_body_demo.py --input terminal   # covered holes typed in the terminal
 """
 
 import argparse
+import json
+import threading
 import time
-from dataclasses import dataclass, field
+from collections import Counter
+from dataclasses import dataclass, field, replace
+from pathlib import Path
 
 import numpy as np
-from touch import DEFAULT_BAUDRATE, DEFAULT_PORT, TeensyTouchSource, TerminalTouchSource, TouchSource
+from touch import DEFAULT_BAUDRATE, DEFAULT_PORT, TeensyTouchSource, TerminalTouchSource, TouchFrame, TouchSource
 
 DIRECTIONS = {
     "+x": np.array([1.0, 0.0, 0.0]),
@@ -36,7 +45,7 @@ DIRECTIONS = {
 # --- Update as desired
 @dataclass(frozen=True)
 class BodyDemoConfig:
-    # Holes of each base-frame direction, with the arm at home. TODO: measure on the mounted waveguide
+    # Holes of each base-frame direction, with the arm at home. Placeholder, used without a calibration
     direction_holes: dict[str, tuple[int, ...]] = field(
         default_factory=lambda: {
             "+x": (1, 2, 3, 4, 5),
@@ -60,8 +69,87 @@ class BodyDemoConfig:
     link_drift_warn_deg: float = 10.0  # Warn once its orientation drifted this much from the start
     drift_print_s: float = 1.0
 
+    # Calibration (--calibrate)
+    calibration_path: Path = Path(__file__).resolve().parent / "calibration" / "body_direction_holes.json"
+    calibration_min_frames: int = 3  # A hole must be covered in this many frames to count (noise)
+    calibration_poll_s: float = 0.001
+
 
 CFG = BodyDemoConfig()
+
+
+class DirectionCalibration:
+    """Hole -> direction mapping from touches: each hole goes to the direction it was covered most during."""
+
+    def __init__(self, min_frames: int = CFG.calibration_min_frames):
+        self.min_frames = min_frames
+        self.counts: dict[str, Counter] = {}
+
+    def add(self, direction: str, frame: TouchFrame) -> None:
+        self.counts.setdefault(direction, Counter()).update(frame.covered)
+
+    def direction_holes(self) -> dict[str, tuple[int, ...]]:
+        best: dict[int, tuple[int, str]] = {}  # hole -> (count, direction)
+        for direction, counts in self.counts.items():
+            for hole, n in counts.items():
+                if n >= self.min_frames and n > best.get(hole, (0, ""))[0]:
+                    best[hole] = (n, direction)
+        return {d: tuple(sorted(h for h, (_, hd) in best.items() if hd == d)) for d in self.counts}
+
+    def conflicts(self) -> dict[int, list[str]]:
+        """Holes counted in more than one direction (each was assigned to its most frequent one)."""
+        seen: dict[int, list[str]] = {}
+        for direction, counts in self.counts.items():
+            for hole, n in counts.items():
+                if n >= self.min_frames:
+                    seen.setdefault(hole, []).append(direction)
+        return {h: ds for h, ds in sorted(seen.items()) if len(ds) > 1}
+
+
+def _wait_enter(prompt: str, done: threading.Event) -> None:
+    input(prompt)
+    done.set()
+
+
+def calibrate(touch: TouchSource, cfg: BodyDemoConfig = CFG) -> dict[str, tuple[int, ...]]:
+    """Ask to touch the holes of each direction in turn; returns (and saves) the hole -> direction mapping."""
+    calibration = DirectionCalibration(cfg.calibration_min_frames)
+    print("Calibration of the hole -> direction mapping, with the arm at home.")
+    for direction in DIRECTIONS:
+        input(f"\nPress Enter, then touch all the holes moving the arm along {direction} (one by one or a swipe)...")
+        done = threading.Event()
+        threading.Thread(target=_wait_enter, args=("Recording, press Enter when done: ", done), daemon=True).start()
+        calibration.add(direction, TouchFrame())  # The direction exists even if nothing is touched
+        last_t = None
+        while not done.is_set():
+            frame = touch.latest()
+            if frame is not None and frame.t != last_t:  # Count each frame once
+                last_t = frame.t
+                calibration.add(direction, frame)
+            time.sleep(cfg.calibration_poll_s)
+        print(f"{direction}: holes {sorted(h for h, n in calibration.counts[direction].items() if n >= cfg.calibration_min_frames)}")
+
+    direction_holes = calibration.direction_holes()
+    for hole, directions in calibration.conflicts().items():
+        print(f"Warning: hole {hole} was touched for {directions}, assigned to the most frequent")
+    for direction, holes in direction_holes.items():
+        if not holes:
+            print(f"Warning: no hole for {direction}")
+    save_direction_holes(direction_holes, cfg.calibration_path)
+    print(f"Saved to {cfg.calibration_path}")
+    return direction_holes
+
+
+def save_direction_holes(direction_holes: dict[str, tuple[int, ...]], path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({d: list(h) for d, h in direction_holes.items()}, indent=2) + "\n")
+
+
+def load_direction_holes(path: Path) -> dict[str, tuple[int, ...]] | None:
+    """The saved mapping, or None if there is no calibration yet."""
+    if not path.exists():
+        return None
+    return {d: tuple(int(h) for h in holes) for d, holes in json.loads(path.read_text()).items()}
 
 
 class JogLogic:
@@ -241,7 +329,17 @@ def main():
     parser.add_argument("--port", default=DEFAULT_PORT, help=f"Serial port of the Teensy (default: {DEFAULT_PORT})")
     parser.add_argument("--baudrate", type=int, default=DEFAULT_BAUDRATE)
     parser.add_argument("--no-drift", action="store_true", help=f"Do not monitor the {CFG.link_name} orientation")
+    parser.add_argument("--calibrate", action="store_true", help="Calibrate the hole -> direction mapping first")
     args = parser.parse_args()
+    if args.calibrate and args.input != "waveguide":
+        parser.error("--calibrate needs --input waveguide")
+
+    cfg = CFG
+    direction_holes = load_direction_holes(cfg.calibration_path)
+    if direction_holes is not None:
+        cfg = replace(cfg, direction_holes=direction_holes)
+    elif not args.calibrate:
+        print(f"No calibration at {cfg.calibration_path} (--calibrate): using the placeholder mapping")
 
     if args.input == "waveguide":
         try:
@@ -249,7 +347,7 @@ def main():
         except FileNotFoundError as e:
             parser.exit(1, f"Error: {e}\n")
     else:
-        touch = TerminalTouchSource(aliases=CFG.direction_holes)
+        touch = TerminalTouchSource(aliases=cfg.direction_holes)
 
     from arm_client.robot import Robot
 
@@ -260,9 +358,12 @@ def main():
     try:
         print("Going to home position...")
         robot.home()
-        drift = None if args.no_drift else LinkDrift(robot, CFG.link_name)
+        drift = None if args.no_drift else LinkDrift(robot, cfg.link_name)
         touch.start()
-        run(jogger, touch, CFG, drift)
+        if args.calibrate:
+            cfg = replace(cfg, direction_holes=calibrate(touch, cfg))
+        print(f"Hole mapping: {cfg.direction_holes}")
+        run(jogger, touch, cfg, drift)
     except KeyboardInterrupt:
         print()
     except RuntimeError as e:

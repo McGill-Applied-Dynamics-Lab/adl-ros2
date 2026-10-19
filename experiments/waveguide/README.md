@@ -54,7 +54,8 @@ The waveguide is on link 5: holding holes accelerates the arm along their direct
 touching against the motion stops it, and it stays in an absolute bounding box. Streams to `osc_pd_controller`.
 
 ```bash
-    pixi run -e wg python experiments/waveguide/wg_body_demo.py
+    pixi run -e wg python experiments/waveguide/wg_body_demo.py --calibrate        # first: touch the holes of +x, -x, ... in turn (arm at home)
+    pixi run -e wg python experiments/waveguide/wg_body_demo.py                    # then: uses calibration/body_direction_holes.json
     pixi run -e wg python experiments/waveguide/wg_body_demo.py --input terminal   # covered holes typed in the terminal ("+x", "3 4", "t -y")
 ```
 

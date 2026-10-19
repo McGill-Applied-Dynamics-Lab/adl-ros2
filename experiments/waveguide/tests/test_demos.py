@@ -13,7 +13,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from touch import HoleTouch, TerminalTouchSource, TouchFrame  # noqa: E402
-from wg_body_demo import BodyDemoConfig, JogLogic  # noqa: E402
+from wg_body_demo import BodyDemoConfig, DirectionCalibration, JogLogic, load_direction_holes, save_direction_holes  # noqa: E402
 
 CFG = BodyDemoConfig(
     direction_holes={"+x": (1, 2), "-x": (3,), "+y": (4,), "-y": (5,), "+z": (6,), "-z": (7,)},
@@ -76,6 +76,29 @@ def test_unmapped_holes_are_ignored():
 def test_hole_mapped_twice_is_rejected():
     with pytest.raises(ValueError):
         JogLogic(BodyDemoConfig(direction_holes={"+x": (1,), "-x": (1,)}))
+
+
+def frames(*holes: int, n: int = 5) -> list[TouchFrame]:
+    return [TouchFrame(tuple(HoleTouch(h, 0.0, 1.0) for h in holes)) for _ in range(n)]
+
+
+def test_calibration_assigns_each_hole_to_its_most_touched_direction():
+    calibration = DirectionCalibration(min_frames=3)
+    for frame in frames(1, 2) + frames(3, n=2):  # 3: too few frames, noise
+        calibration.add("+x", frame)
+    for frame in frames(4) + frames(2, n=10):  # 2: more often here than in +x
+        calibration.add("-x", frame)
+    calibration.add("+y", TouchFrame())
+    assert calibration.direction_holes() == {"+x": (1,), "-x": (2, 4), "+y": ()}
+    assert calibration.conflicts() == {2: ["+x", "-x"]}
+
+
+def test_calibration_round_trip(tmp_path):
+    path = tmp_path / "calibration" / "holes.json"
+    assert load_direction_holes(path) is None
+    save_direction_holes({"+x": (1, 2), "-x": ()}, path)
+    assert load_direction_holes(path) == {"+x": (1, 2), "-x": ()}
+    JogLogic(BodyDemoConfig(direction_holes=load_direction_holes(path)))
 
 
 def test_terminal_parse():

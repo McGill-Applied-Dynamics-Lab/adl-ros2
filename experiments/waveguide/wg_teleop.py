@@ -1,4 +1,4 @@
-"""Waveguide Teleoperation
+"""Waveguide Demo 1 - Slide Teleoperation
 
 Read the Waveguide outputs and process them to robot commands.
 

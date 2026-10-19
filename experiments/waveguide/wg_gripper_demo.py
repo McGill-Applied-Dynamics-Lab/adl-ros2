@@ -103,12 +103,15 @@ class EggGrasp:
 
     def grasp(self, mode: str, squeeze_mm: float, amplitude_rise: float) -> None:
         cfg = self.cfg
+
         # 2. Fast close, the egg must not be touched yet
+        print(f"\tFast closing to {cfg.fast_close_width * 1e3:.1f} mm at {cfg.fast_speed * 1e3:.1f} mm/s")
         self.gripper.set_target(cfg.fast_close_width, speed=cfg.fast_speed, block=True)
         if self._frame().covered:
             raise RuntimeError(f"Holes {sorted(self._frame().covered)} covered before the contact search")
 
         # 3. Close until contact
+        print(f"\tClosing until contact (holes covered) at {cfg.contact_speed * 1e3:.1f} mm/s")
         contact, frame = self.close_until(cfg.min_width, cfg.contact_speed, lambda f: bool(f.covered))
         if not contact:
             raise RuntimeError(f"No contact down to {cfg.min_width * 1e3:.0f} mm: is the egg there?")
@@ -118,6 +121,7 @@ class EggGrasp:
         )
 
         # 4. Squeeze
+        print(f"\tSqueezing in {mode} mode, amplitude rise {amplitude_rise}, max {cfg.max_squeeze_mm:.1f} mm")
         limit_mm = min(squeeze_mm, cfg.max_squeeze_mm) if mode == "squeeze" else cfg.max_squeeze_mm
         target = max(contact_width - limit_mm * 1e-3, cfg.min_width)
         if mode == "squeeze":
@@ -129,22 +133,36 @@ class EggGrasp:
             )
             squeezed_mm = (contact_width - self.width()) * 1e3
             if rose:
-                print(f"Amplitude {frame.amplitude:.1f} (+{frame.amplitude - contact_amplitude:.1f}): squeezed {squeezed_mm:.1f} mm")
+                print(
+                    f"Amplitude {frame.amplitude:.1f} (+{frame.amplitude - contact_amplitude:.1f}): squeezed {squeezed_mm:.1f} mm"
+                )
             else:
                 print(f"Amplitude rise not reached after {squeezed_mm:.1f} mm (max_squeeze_mm), holding there")
 
     def run(self, mode: str, squeeze_mm: float, amplitude_rise: float) -> None:
         cfg = self.cfg
         print("Going to home position...")
-        self.robot.home()  # joint_trajectory_controller: move_to plans with IK
+        # self.robot.home()  # joint_trajectory_controller: move_to plans with IK
         orientation = self.robot.end_effector_pose.orientation  # Top-down grasp, as at home
         self.gripper.set_target(cfg.open_width, speed=cfg.fast_speed, block=True)
 
+        # Change to fr3_pose_controller
+        # controller_name = "osc_controller"  # osc_controller, gravity_compensation, ....
+        # self.robot.controller_switcher_client.switch_controller(controller_name)
+        # self.robot.osc_controller_parameters_client.load_param_config(
+        #     file_path=CONFIG_DIR / "controllers" / "osc" / "default.yaml"
+        # )
+
         # 1. Move to the egg
+        print(f"Moving to the egg at {EGG_POSITION} m, approach height {cfg.approach_height} m")
         above = Pose(EGG_POSITION + [0.0, 0.0, cfg.approach_height], orientation)
         self.robot.move_to(pose=above, speed=cfg.move_speed)
+        time.sleep(0.5)  # Wait for the robot to settle before going down
+
+        print(f"Going down to the egg")
         self.robot.move_to(pose=Pose(EGG_POSITION, orientation), speed=cfg.move_speed)
 
+        print("Grasping...")
         self.grasp(mode, squeeze_mm, amplitude_rise)
 
         # 5. Lift, hold, put down, release
