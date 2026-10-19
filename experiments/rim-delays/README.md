@@ -1,5 +1,8 @@
 # RIM under communication delay
 
+The plan and what is agreed: [PLAN.md](PLAN.md). The methods' equations: [FORMULATION.md](FORMULATION.md).
+This file: how to run things.
+
 Demonstrate, without the user study, that the RIM inertial proxy renders hard contact
 transparently and stably under space-relevant delays where ZOH and TDPA do not. Real FR3 +
 Inverse3 pipeline (`fr3_teleop`), 3-DoF translation, table contact on z.
