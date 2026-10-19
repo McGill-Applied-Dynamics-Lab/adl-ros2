@@ -13,7 +13,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from touch import HoleTouch, TerminalTouchSource, TouchFrame  # noqa: E402
-from wg_body_demo import BodyDemoConfig, DirectionCalibration, JogLogic, load_direction_holes, save_direction_holes  # noqa: E402
+from wg_body_demo import BodyDemoConfig, DirectionCalibration, HoleMapping, JogLogic, hole_vectors, load_mapping, save_mapping  # noqa: E402
 
 CFG = BodyDemoConfig(
     direction_holes={"+x": (1, 2), "-x": (3,), "+y": (4,), "-y": (5,), "+z": (6,), "-z": (7,)},
@@ -95,10 +95,69 @@ def test_calibration_assigns_each_hole_to_its_most_touched_direction():
 
 def test_calibration_round_trip(tmp_path):
     path = tmp_path / "calibration" / "holes.json"
-    assert load_direction_holes(path) is None
-    save_direction_holes({"+x": (1, 2), "-x": ()}, path)
-    assert load_direction_holes(path) == {"+x": (1, 2), "-x": ()}
-    JogLogic(BodyDemoConfig(direction_holes=load_direction_holes(path)))
+    assert load_mapping(path) is None
+    rotation = np.array([[0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]])
+    save_mapping(HoleMapping({"+x": (1, 2), "-x": ()}, rotation), path)
+    mapping = load_mapping(path)
+    assert mapping.direction_holes == {"+x": (1, 2), "-x": ()}
+    np.testing.assert_allclose(mapping.link_rotation, rotation)
+    JogLogic(BodyDemoConfig(direction_holes=mapping.direction_holes))
+
+
+def test_load_first_format(tmp_path):
+    path = tmp_path / "holes.json"
+    path.write_text('{"+x": [1, 2]}')
+    mapping = load_mapping(path)
+    assert mapping.direction_holes == {"+x": (1, 2)} and mapping.link_rotation is None
+
+
+def angle_deg(a, b):
+    return np.rad2deg(np.arccos(np.clip(np.dot(a, b), -1.0, 1.0)))
+
+
+def test_interpolation_between_axes():
+    vectors = hole_vectors({"+y": (10,), "+z": (14,)})
+    for hole, expected in [(11, 22.5), (12, 45.0), (13, 67.5)]:
+        assert np.linalg.norm(vectors[hole]) == pytest.approx(1.0)
+        assert angle_deg(vectors[hole], [0.0, 1.0, 0.0]) == pytest.approx(expected)
+        assert vectors[hole][0] == pytest.approx(0.0)  # Rotation about x
+    assert 9 not in vectors and 15 not in vectors  # Not outside the mapped holes
+
+
+def test_interpolation_skips_opposite_and_can_be_disabled():
+    assert set(hole_vectors({"+y": (1,), "-y": (5,)})) == {1, 5}
+    assert set(hole_vectors({"+y": (10,), "+z": (14,)}, interpolate=False)) == {10, 14}
+
+
+def test_interpolated_hole_moves_diagonally():
+    logic = JogLogic(BodyDemoConfig(direction_holes={"+y": (10,), "+z": (14,)}, acceleration=1.0))
+    hold(logic, {12}, 10)
+    np.testing.assert_allclose(logic.velocity, [0.0, 0.1 / np.sqrt(2), 0.1 / np.sqrt(2)])
+
+
+def test_follow_link_rotation():
+    logic = JogLogic(CFG)
+    rz90 = np.array([[0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]])  # Link turned 90 deg about z
+    for _ in range(10):
+        logic.update(DT, frozenset({1}), rz90)  # +x hole now faces +y
+    np.testing.assert_allclose(logic.velocity, [0.0, 0.1, 0.0], atol=1e-12)
+    # The -y hole (5) now faces +x: perpendicular, no stop; the -x hole (3) faces -y: opposite, stop
+    assert not logic.update(DT, frozenset({5}), rz90)
+    assert logic.update(DT, frozenset({3}), rz90)
+
+
+def test_stop_angle():
+    cfg = BodyDemoConfig(direction_holes={"+x": (1,), "+y": (5,)}, acceleration=1.0, stop_angle_deg=120.0)
+    logic = JogLogic(cfg)
+    hold(logic, {1}, 10)
+    assert hold(logic, {5}, 1) == [False]  # 90 deg: adds velocity
+    # Holes 6-8 between +y (5) and -x (9): 112.5, 135, 157.5 deg from +x
+    logic = JogLogic(BodyDemoConfig(direction_holes={"+x": (1,), "+y": (5,), "-x": (9,)}, stop_angle_deg=120.0))
+    hold(logic, {1}, 10)
+    assert angle_deg(logic.vectors[6], [1.0, 0.0, 0.0]) == pytest.approx(112.5)
+    assert hold(logic, {6}, 1) == [False]
+    assert angle_deg(logic.vectors[7], [1.0, 0.0, 0.0]) == pytest.approx(135.0)
+    assert hold(logic, {7}, 1) == [True]
 
 
 def test_terminal_parse():

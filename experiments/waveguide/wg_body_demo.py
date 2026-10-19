@@ -1,17 +1,22 @@
 """Waveguide Demo 3 - Robot body: move the arm by touching it
 
-The waveguide is wrapped around link 5. Each group of holes is mapped to a base-frame direction (+x, -x,
-..., `BodyDemoConfig.direction_holes`); the end-effector orientation is kept constant, so the mapping
-stays valid as long as link 5 does not rotate much (its drift is printed, see `link_drift_deg`).
+The waveguide is wrapped around link 5. Each hole has a direction: the axis through it, pointing out of the
+link, along which touching it moves the arm. The end-effector orientation is kept constant.
 
-- Holding holes of a direction accelerates the arm along it; on release, the arm keeps its velocity
-- Touching holes opposite to the velocity stops the arm immediately ("collision detection"). It stays
-  stopped until every hole is released
+- Holding holes accelerates the arm along their direction (their mean, for neighbouring holes covered by one
+  finger); on release, the arm keeps its velocity
+- Touching a hole whose direction is more than `stop_angle_deg` from the velocity stops the arm immediately
+  ("collision detection"). It stays stopped until every hole is released
 - The arm moves within an absolute bounding box (base frame): reaching it stops the arm
 
-The hole -> direction mapping comes from a calibration (`--calibrate`, with the arm at home): the script asks
-to touch all the holes of each direction in turn, and saves the mapping (`BodyDemoConfig.calibration_path`)
-for the next runs. Without one, the placeholder `BodyDemoConfig.direction_holes` is used.
+Hole directions:
+- Calibration (`--calibrate`, with the arm at home): the script asks to touch all the holes of each base axis
+  (+x, -x, ...) in turn, and saves them with the link orientation (`BodyDemoConfig.calibration_path`) for
+  the next runs. Without one, the placeholder `BodyDemoConfig.direction_holes` is used
+- `interpolate_holes`: the holes between two calibrated ones get a direction interpolated between theirs,
+  in proportion to their index (e.g. 10: +y, 14: +z -> 11 is +y rotated 22.5 deg about x, 12 45 deg, 13 67.5 deg)
+- `fixed_mapping`: True, the directions stay as calibrated, in the base frame (valid while link 5 does not
+  rotate much: its drift is printed). False, they follow the rotation of link 5 since the calibration
 
 The arm streams pose + velocity targets to osc_pd_controller (`OscJogger`); fr3_pose_controller's jog
 mode can replace it once available (same `Jogger` interface).
@@ -45,7 +50,7 @@ DIRECTIONS = {
 # --- Update as desired
 @dataclass(frozen=True)
 class BodyDemoConfig:
-    # Holes of each base-frame direction, with the arm at home. Placeholder, used without a calibration
+    # Holes of each base axis, with the arm at home. Placeholder, used without a calibration
     direction_holes: dict[str, tuple[int, ...]] = field(
         default_factory=lambda: {
             "+x": (1, 2, 3, 4, 5),
@@ -56,8 +61,11 @@ class BodyDemoConfig:
             "-z": (26, 27, 28, 29, 30),
         }
     )
-    acceleration: float = 0.05  # m/s^2, along each held direction
+    interpolate_holes: bool = True  # Directions of the holes between two calibrated ones (module docstring)
+    fixed_mapping: bool = True  # True: directions fixed in the base frame; False: they follow the link rotation
+    acceleration: float = 0.05  # m/s^2, along the held direction
     max_speed: float = 0.10  # m/s
+    stop_angle_deg: float = 120.0  # A touch further than this from the velocity stops the arm (in (90, 180))
     # Bounding box of the end-effector position, absolute (base frame) [m]. TODO: set for the setup
     box_lower: tuple[float, float, float] = (0.30, -0.25, 0.20)
     box_upper: tuple[float, float, float] = (0.60, 0.25, 0.60)
@@ -66,7 +74,7 @@ class BodyDemoConfig:
     max_dt_s: float = 0.05  # A stalled loop step integrates at most this, so the target does not jump
     touch_timeout_s: float = 0.5  # No frame from the sensor for this long: stop
     link_name: str = "fr3_link5"  # Link the waveguide is on
-    link_drift_warn_deg: float = 10.0  # Warn once its orientation drifted this much from the start
+    link_drift_warn_deg: float = 10.0  # fixed_mapping: warn once its orientation drifted this much from the start
     drift_print_s: float = 1.0
 
     # Calibration (--calibrate)
@@ -111,10 +119,22 @@ def _wait_enter(prompt: str, done: threading.Event) -> None:
     done.set()
 
 
-def calibrate(touch: TouchSource, cfg: BodyDemoConfig = CFG) -> dict[str, tuple[int, ...]]:
-    """Ask to touch the holes of each direction in turn; returns (and saves) the hole -> direction mapping."""
+@dataclass(frozen=True)
+class HoleMapping:
+    """Holes of each base axis, and the link rotation (base <- link, 3x3) when they were recorded (None: unknown)."""
+
+    direction_holes: dict[str, tuple[int, ...]]
+    link_rotation: np.ndarray | None = None
+
+
+def calibrate(touch: TouchSource, cfg: BodyDemoConfig = CFG, link: "LinkOrientation | None" = None) -> HoleMapping:
+    """Ask to touch the holes of each direction in turn; returns (and saves) the mapping.
+
+    `link` records the link orientation, needed by `fixed_mapping=False`.
+    """
     calibration = DirectionCalibration(cfg.calibration_min_frames)
     print("Calibration of the hole -> direction mapping, with the arm at home.")
+    link_rotation = None if link is None else link.rotation()
     for direction in DIRECTIONS:
         input(f"\nPress Enter, then touch all the holes moving the arm along {direction} (one by one or a swipe)...")
         done = threading.Event()
@@ -135,21 +155,68 @@ def calibrate(touch: TouchSource, cfg: BodyDemoConfig = CFG) -> dict[str, tuple[
     for direction, holes in direction_holes.items():
         if not holes:
             print(f"Warning: no hole for {direction}")
-    save_direction_holes(direction_holes, cfg.calibration_path)
+    mapping = HoleMapping(direction_holes, link_rotation)
+    save_mapping(mapping, cfg.calibration_path)
     print(f"Saved to {cfg.calibration_path}")
-    return direction_holes
+    return mapping
 
 
-def save_direction_holes(direction_holes: dict[str, tuple[int, ...]], path: Path) -> None:
+def save_mapping(mapping: HoleMapping, path: Path) -> None:
+    data = {"direction_holes": {d: list(h) for d, h in mapping.direction_holes.items()}}
+    if mapping.link_rotation is not None:
+        data["link_rotation"] = np.asarray(mapping.link_rotation).tolist()
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps({d: list(h) for d, h in direction_holes.items()}, indent=2) + "\n")
+    path.write_text(json.dumps(data, indent=2) + "\n")
 
 
-def load_direction_holes(path: Path) -> dict[str, tuple[int, ...]] | None:
+def load_mapping(path: Path) -> HoleMapping | None:
     """The saved mapping, or None if there is no calibration yet."""
     if not path.exists():
         return None
-    return {d: tuple(int(h) for h in holes) for d, holes in json.loads(path.read_text()).items()}
+    data = json.loads(path.read_text())
+    if "direction_holes" not in data:  # First format: the holes only
+        data = {"direction_holes": data}
+    direction_holes = {d: tuple(int(h) for h in holes) for d, holes in data["direction_holes"].items()}
+    link_rotation = np.array(data["link_rotation"]) if "link_rotation" in data else None
+    return HoleMapping(direction_holes, link_rotation)
+
+
+def slerp(a: np.ndarray, b: np.ndarray, s: float) -> np.ndarray:
+    """Unit vector at fraction `s` of the rotation from unit vector `a` to `b` (not opposite)."""
+    angle = float(np.arccos(np.clip(np.dot(a, b), -1.0, 1.0)))
+    if angle < 1e-9:
+        return a.copy()
+    return (np.sin((1.0 - s) * angle) * a + np.sin(s * angle) * b) / np.sin(angle)
+
+
+def hole_vectors(direction_holes: dict[str, tuple[int, ...]], interpolate: bool = True) -> dict[int, np.ndarray]:
+    """Unit direction of each hole, in the base frame of the calibration.
+
+    With `interpolate`, the holes between two mapped ones get the direction interpolated (slerp) between
+    theirs, in proportion to their index. Not between opposite directions: the rotation is undefined.
+    """
+    vectors: dict[int, np.ndarray] = {}
+    names: dict[int, str] = {}
+    for name, holes in direction_holes.items():
+        if name not in DIRECTIONS:
+            raise ValueError(f"Unknown direction '{name}', expected one of {list(DIRECTIONS)}")
+        for hole in holes:
+            if hole in vectors:
+                raise ValueError(f"Hole {hole} is mapped to both {names[hole]} and {name}")
+            vectors[hole], names[hole] = DIRECTIONS[name], name
+
+    if interpolate:
+        mapped = sorted(vectors)
+        for lo, hi in zip(mapped, mapped[1:]):
+            if hi - lo < 2:
+                continue
+            a, b = vectors[lo], vectors[hi]
+            if np.dot(a, b) < -1.0 + 1e-6:
+                print(f"Warning: holes {lo + 1}-{hi - 1} are between opposite directions ({names[lo]}, {names[hi]}): left unmapped")
+                continue
+            for hole in range(lo + 1, hi):
+                vectors[hole] = slerp(a, b, (hole - lo) / (hi - lo))
+    return vectors
 
 
 class JogLogic:
@@ -157,36 +224,44 @@ class JogLogic:
 
     def __init__(self, cfg: BodyDemoConfig = CFG):
         self.cfg = cfg
-        self._hole_direction: dict[int, str] = {}
-        for name, holes in cfg.direction_holes.items():
-            if name not in DIRECTIONS:
-                raise ValueError(f"Unknown direction '{name}', expected one of {list(DIRECTIONS)}")
-            for hole in holes:
-                if hole in self._hole_direction:
-                    raise ValueError(f"Hole {hole} is mapped to both {self._hole_direction[hole]} and {name}")
-                self._hole_direction[hole] = name
+        self.vectors = hole_vectors(cfg.direction_holes, cfg.interpolate_holes)
+        self._cos_stop = float(np.cos(np.deg2rad(cfg.stop_angle_deg)))
         self.velocity = np.zeros(3)
         self.stopped = False  # After a stop, until every hole is released
 
-    def directions(self, covered: frozenset[int]) -> set[str]:
-        """Directions of the covered holes (unmapped holes are ignored)."""
-        return {self._hole_direction[h] for h in covered if h in self._hole_direction}
+    def touched(self, covered: frozenset[int]) -> list[int]:
+        """The covered holes that have a direction."""
+        return sorted(h for h in covered if h in self.vectors)
+
+    def directions(self, covered: frozenset[int], rotation: np.ndarray | None = None) -> list[np.ndarray]:
+        """Base-frame directions of the covered holes; `rotation` (3x3) rotates them from the calibration."""
+        vectors = [self.vectors[h] for h in self.touched(covered)]
+        return vectors if rotation is None else [rotation @ v for v in vectors]
 
     def stop(self) -> None:
         self.velocity = np.zeros(3)
         self.stopped = True
 
-    def update(self, dt: float, covered: frozenset[int]) -> bool:
-        """Update `velocity` from the holes covered during the last `dt` [s]. Returns True on a stop."""
-        directions = self.directions(covered)
+    def update(self, dt: float, covered: frozenset[int], rotation: np.ndarray | None = None) -> bool:
+        """Update `velocity` from the holes covered during the last `dt` [s]. Returns True on a stop.
+
+        `rotation` (3x3): rotation of the link since the calibration (`fixed_mapping=False`), None: none.
+        """
+        directions = self.directions(covered, rotation)
         if self.stopped:
             self.stopped = bool(directions)
             return False
-        if any(np.dot(DIRECTIONS[d], self.velocity) < 0.0 for d in directions):
+        if not directions:
+            return False
+        speed = float(np.linalg.norm(self.velocity))
+        if speed > 0.0 and any(np.dot(d, self.velocity) < self._cos_stop * speed for d in directions):
             self.stop()
             return True
-        for d in directions:
-            self.velocity = self.velocity + self.cfg.acceleration * dt * DIRECTIONS[d]
+        push = np.mean(directions, axis=0)
+        norm = float(np.linalg.norm(push))
+        if norm < 1e-6:  # Opposite holes at once: no direction
+            return False
+        self.velocity = self.velocity + self.cfg.acceleration * dt * push / norm
         speed = float(np.linalg.norm(self.velocity))
         if speed > self.cfg.max_speed:
             self.velocity *= self.cfg.max_speed / speed
@@ -241,8 +316,8 @@ class OscJogger(Jogger):
         return position
 
 
-class LinkDrift:
-    """Orientation change of a link since the start [deg], from the joint positions (pyroki FK)."""
+class LinkOrientation:
+    """Orientation of a link, from the joint positions (pyroki FK), and its change since the start."""
 
     def __init__(self, robot, link_name: str):
         import jax
@@ -253,22 +328,42 @@ class LinkDrift:
         self._pk_robot = robot.pyroki_robot
         self._fk = jax.jit(self._pk_robot.forward_kinematics)
         self._link_idx = self._pk_robot.links.names.index(link_name)
-        self._start = self._rotation()  # Also compiles the FK, before the control loop
+        self.start = self._so3()  # Also compiles the FK, before the control loop
 
-    def _rotation(self):
+    def _so3(self):
         q = np.asarray(self.robot.q)[: self._pk_robot.joints.num_actuated_joints]
         if q.shape[0] < self._pk_robot.joints.num_actuated_joints:  # Gripper fingers in the URDF
             q = np.concatenate([q, np.zeros(self._pk_robot.joints.num_actuated_joints - q.shape[0])])
         wxyz_xyz = self._fk(q)[self._link_idx]
         return self._jaxlie.SO3(wxyz_xyz[:4])
 
-    def degrees(self) -> float:
-        delta = self._start.inverse() @ self._rotation()
+    def rotation(self) -> np.ndarray:
+        """Current orientation (base <- link, 3x3)."""
+        return np.asarray(self._so3().as_matrix())
+
+    def start_rotation(self) -> np.ndarray:
+        return np.asarray(self.start.as_matrix())
+
+    def drift_degrees(self) -> float:
+        """Rotation since the start [deg]."""
+        delta = self.start.inverse() @ self._so3()
         return float(np.rad2deg(np.linalg.norm(np.asarray(delta.log()))))
 
 
-def run(jogger: Jogger, touch: TouchSource, cfg: BodyDemoConfig = CFG, drift: LinkDrift | None = None) -> None:
-    """Jog until Ctrl+C (or `q` in the terminal input)."""
+def run(
+    jogger: Jogger,
+    touch: TouchSource,
+    cfg: BodyDemoConfig = CFG,
+    link: LinkOrientation | None = None,
+    calibration_rotation: np.ndarray | None = None,
+) -> None:
+    """Jog until Ctrl+C (or `q` in the terminal input).
+
+    `link`: prints its drift; with `fixed_mapping=False`, needed with its orientation at the calibration,
+    `calibration_rotation` (base <- link, 3x3).
+    """
+    if not cfg.fixed_mapping and (link is None or calibration_rotation is None):
+        raise ValueError("fixed_mapping=False needs the link and its orientation at the calibration")
     lower, upper = np.array(cfg.box_lower), np.array(cfg.box_upper)
     logic = JogLogic(cfg)
     position = jogger.start()
@@ -293,15 +388,19 @@ def run(jogger: Jogger, touch: TouchSource, cfg: BodyDemoConfig = CFG, drift: Li
                 position = jogger.hard_stop()
             continue
 
+        rotation = None
+        if not cfg.fixed_mapping and logic.touched(frame.covered):  # FK only when needed
+            rotation = link.rotation() @ calibration_rotation.T
+
         moving = bool(np.any(logic.velocity))
-        if logic.update(dt, frame.covered):
+        if logic.update(dt, frame.covered, rotation):
             position = jogger.hard_stop()
-            print(f"STOP (touched {sorted(logic.directions(frame.covered))}) at {np.round(position, 3)}")
+            print(f"STOP (touched holes {logic.touched(frame.covered)}) at {np.round(position, 3)}")
             continue
         if not np.any(logic.velocity):
             continue
         if not moving:
-            print(f"Moving: {sorted(logic.directions(frame.covered))}")
+            print(f"Moving: holes {logic.touched(frame.covered)}, v = {np.round(logic.velocity, 3)}")
 
         new_position = position + logic.velocity * dt
         clipped = np.clip(new_position, lower, upper)
@@ -314,10 +413,10 @@ def run(jogger: Jogger, touch: TouchSource, cfg: BodyDemoConfig = CFG, drift: Li
         position = new_position
         jogger.step(position, logic.velocity)
 
-        if drift is not None and now - t_drift > cfg.drift_print_s:
+        if link is not None and now - t_drift > cfg.drift_print_s:
             t_drift = now
-            degrees = drift.degrees()
-            if degrees > cfg.link_drift_warn_deg and not drift_warned:
+            degrees = link.drift_degrees()
+            if cfg.fixed_mapping and degrees > cfg.link_drift_warn_deg and not drift_warned:
                 print(f"Warning: {cfg.link_name} rotated {degrees:.1f} deg, the hole mapping may be off")
                 drift_warned = True
             print(f"v = {np.round(logic.velocity, 3)} m/s, {cfg.link_name} drift {degrees:.1f} deg")
@@ -328,16 +427,22 @@ def main():
     parser.add_argument("--input", choices=["terminal", "waveguide"], default="waveguide")
     parser.add_argument("--port", default=DEFAULT_PORT, help=f"Serial port of the Teensy (default: {DEFAULT_PORT})")
     parser.add_argument("--baudrate", type=int, default=DEFAULT_BAUDRATE)
-    parser.add_argument("--no-drift", action="store_true", help=f"Do not monitor the {CFG.link_name} orientation")
+    parser.add_argument(
+        "--no-drift",
+        action="store_true",
+        help=f"Do not monitor the {CFG.link_name} orientation (needed with BodyDemoConfig.fixed_mapping=False)",
+    )
     parser.add_argument("--calibrate", action="store_true", help="Calibrate the hole -> direction mapping first")
     args = parser.parse_args()
     if args.calibrate and args.input != "waveguide":
         parser.error("--calibrate needs --input waveguide")
+    if args.no_drift and not CFG.fixed_mapping:
+        parser.error("--no-drift: the link orientation is needed with BodyDemoConfig.fixed_mapping=False")
 
     cfg = CFG
-    direction_holes = load_direction_holes(cfg.calibration_path)
-    if direction_holes is not None:
-        cfg = replace(cfg, direction_holes=direction_holes)
+    mapping = load_mapping(cfg.calibration_path)
+    if mapping is not None:
+        cfg = replace(cfg, direction_holes=mapping.direction_holes)
     elif not args.calibrate:
         print(f"No calibration at {cfg.calibration_path} (--calibrate): using the placeholder mapping")
 
@@ -358,12 +463,19 @@ def main():
     try:
         print("Going to home position...")
         robot.home()
-        drift = None if args.no_drift else LinkDrift(robot, cfg.link_name)
+        link = None if args.no_drift else LinkOrientation(robot, cfg.link_name)
         touch.start()
         if args.calibrate:
-            cfg = replace(cfg, direction_holes=calibrate(touch, cfg))
+            mapping = calibrate(touch, cfg, link)
+            cfg = replace(cfg, direction_holes=mapping.direction_holes)
         print(f"Hole mapping: {cfg.direction_holes}")
-        run(jogger, touch, cfg, drift)
+
+        calibration_rotation = None if mapping is None else mapping.link_rotation
+        if not cfg.fixed_mapping and calibration_rotation is None:
+            # Placeholder or calibrated without the link orientation: assume it was at home, as now
+            print(f"No {cfg.link_name} orientation in the calibration: using the current one (at home)")
+            calibration_rotation = link.start_rotation()
+        run(jogger, touch, cfg, link, calibration_rotation)
     except KeyboardInterrupt:
         print()
     except RuntimeError as e:

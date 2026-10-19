@@ -52,6 +52,8 @@ non-blocking action, cancelled (the gripper stops) as soon as the waveguide show
 ### Demo 3 - Robot body (`wg_body_demo.py`)
 The waveguide is on link 5: holding holes accelerates the arm along their direction (`BodyDemoConfig.direction_holes`),
 touching against the motion stops it, and it stays in an absolute bounding box. Streams to `osc_pd_controller`.
+Holes between two calibrated ones get an interpolated direction (`interpolate_holes`); with `fixed_mapping=False`
+the directions follow the rotation of link 5 since the calibration (see the `BodyDemoConfig` options).
 
 ```bash
     pixi run -e wg python experiments/waveguide/wg_body_demo.py --calibrate        # first: touch the holes of +x, -x, ... in turn (arm at home)
