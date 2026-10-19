@@ -69,7 +69,7 @@ def test_one_sample_of_every_stream(boxes):
     assert by_stream["haptic"]["f"] == [-0.9] and by_stream["haptic"]["proxy_x"] == [None]  # NaN → null
     assert by_stream["robot"]["lam"] == [1.5]
     assert by_stream["target"]["robot_x"] == [0.21] and by_stream["target"]["sent_x"] == [0.21]
-    assert by_stream["target"]["robot_f_ff"] is None
+    assert by_stream["target"]["robot_f_ff"] == [None]  # coupling methods: no feedforward
     assert by_stream["safety"]["tdpa_energy_j"] is None
     assert by_stream["rates"]["haptic"] == 1000.0
 
@@ -90,22 +90,44 @@ def test_rates_from_counters(boxes):
     assert rates["live"] == pytest.approx(50.0)
 
 
+def test_streams_keep_their_fields_as_sources_appear(boxes):
+    """The channel schema comes from a stream's first sample: later ones must not add fields."""
+    with ExperimentLogger(LoggingConfig.in_memory()) as logger:
+        commands: list = []
+        plant = fake_plant()
+        plant.last_target = None
+        view = LiveView(logger, 50.0, plant=plant, commands=commands)
+        view.step(now_s=1.0)  # nothing sent or published yet
+        commands.append((0.01, np.array([0.21]), np.array([0.0]), np.zeros(1)))
+        plant.last_target = fake_plant().last_target
+        view.step(now_s=1.02)
+        logger.flush()
+        fields: dict[str, list[set]] = {}
+        for sample in logger.samples:
+            fields.setdefault(sample["stream"], []).append(set(sample["values"]))
+    for stream, per_sample in fields.items():
+        assert len(per_sample) == 2 and per_sample[0] == per_sample[1], stream
+    first_target = logger.samples[[s["stream"] for s in logger.samples].index("target")]["values"]
+    assert first_target["sent_x"] == [None] and first_target["robot_position"] == [None] * 3
+
+
+def _layout_tree_ids(node) -> list[str]:
+    if isinstance(node, str):
+        return [node]
+    return _layout_tree_ids(node["first"]) + _layout_tree_ids(node["second"])
+
+
 def test_layout_references_only_logged_fields(tmp_path, boxes):
     path = write_layout(tmp_path / "layout.json")
     layout = json.loads(path.read_text())
-    series = []
-
-    def walk(node):
-        if isinstance(node, dict):
-            if node.get("panelType") == "Plot":
-                series.extend(p["value"] for p in node["config"]["paths"])
-            for v in node.values():
-                walk(v)
-        elif isinstance(node, list):
-            for v in node:
-                walk(v)
-
-    walk(layout)
+    configs = layout["configById"]
+    assert set(layout) >= {"configById", "layout"} and layout["layout"] in configs
+    tabs = configs[layout["layout"]]["tabs"]
+    assert [t["title"] for t in tabs] == ["Teleop", "Robot", "Timing"]
+    placed = [pid for t in tabs for pid in _layout_tree_ids(t["layout"])]
+    plots = {pid for pid in configs if pid.startswith("Plot!")}
+    assert sorted(placed) == sorted(plots)  # every panel placed once, none missing a config
+    series = [p["value"] for pid in plots for p in configs[pid]["paths"]]
     with ExperimentLogger(LoggingConfig.in_memory()) as logger:
         commands = [(0.01, np.array([0.21]), np.array([0.0]), np.zeros(1))]
         LiveView(logger, 50.0, plant=fake_plant(), commands=commands, **sources(boxes)).step(now_s=1.0)
@@ -123,14 +145,16 @@ def _free_port() -> int:
         return s.getsockname()[1]
 
 
-async def _receive(port: int, want: int) -> dict[str, dict]:
-    """Subscribe to every advertised channel; the first ``want`` topics' messages, strict-JSON parsed."""
+async def _receive(port: int, want: int) -> tuple[dict[str, dict], dict[str, dict]]:
+    """Subscribe to every advertised channel: the first message of ``want`` topics (strict-JSON
+    parsed) and each advertised channel's JSON schema, by topic."""
     import websockets
 
     def strict(s):
         raise ValueError(f"not JSON: {s}")
 
     got: dict[str, dict] = {}
+    schemas: dict[str, dict] = {}
     async with websockets.connect(f"ws://127.0.0.1:{port}", subprotocols=["foxglove.sdk.v1"], close_timeout=0.5) as ws:
         topics: dict[int, str] = {}
         deadline = time.monotonic() + 5.0
@@ -142,12 +166,14 @@ async def _receive(port: int, want: int) -> dict[str, dict]:
                     new = [c for c in op["channels"] if c["id"] not in topics]
                     for c in new:
                         topics[c["id"]] = c["topic"]
+                        assert c["encoding"] == "json" and c["schemaEncoding"] == "jsonschema", c
+                        schemas[c["topic"]] = json.loads(c["schema"])
                     subs = [{"id": c["id"], "channelId": c["id"]} for c in new]
                     await ws.send(json.dumps({"op": "subscribe", "subscriptions": subs}))
             elif msg[0] == 0x01:  # message data: opcode, u32 subscription id, u64 time, payload
                 (sub_id,) = struct.unpack_from("<I", msg, 1)
                 got[topics[sub_id]] = json.loads(msg[13:], parse_constant=strict)
-    return got
+    return got, schemas
 
 
 def test_foxglove_client_receives_valid_json(boxes):
@@ -156,8 +182,15 @@ def test_foxglove_client_receives_valid_json(boxes):
     view = LiveView(live_logger(port, host="127.0.0.1"), 100.0, plant=fake_plant(), commands=commands, **sources(boxes))
     view.start()
     try:
-        got = asyncio.run(_receive(port, want=5))
+        got, schemas = asyncio.run(_receive(port, want=5))
     finally:
         view.stop()
     assert set(got) == {f"/live/{s}" for s in ("haptic", "robot", "target", "safety", "rates")}
     assert got["/live/haptic"]["values"]["proxy_x"] == [None]
+    for topic, message in got.items():  # the app lists every field from the schema
+        fields = schemas[topic]["properties"]["values"]["properties"]
+        assert set(fields) == set(message["values"]), topic
+    assert schemas["/live/robot"]["properties"]["values"]["properties"]["ee_position"] == {
+        "type": "array",
+        "items": {"type": "number"},
+    }

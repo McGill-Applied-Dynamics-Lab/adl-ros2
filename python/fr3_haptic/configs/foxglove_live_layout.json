@@ -1,1 +1,336 @@
-{"version":1,"content":{"type":"tabs","selectedTabIndex":0,"tabs":[{"title":"Teleop","content":{"type":"split","direction":"row","items":[{"proportion":2,"content":{"type":"split","direction":"column","items":[{"proportion":1,"content":{"type":"panel","panelType":"Plot","config":{"paths":[{"value":"/live/haptic.values.x_l[0]","enabled":true,"label":"leader"},{"value":"/live/robot.values.x_i[0]","enabled":true,"label":"robot (measured)"},{"value":"/live/target.values.sent_x[0]","enabled":true,"label":"target sent"},{"value":"/live/target.values.robot_x[0]","enabled":true,"label":"target at robot"},{"value":"/live/haptic.values.proxy_x[0]","enabled":true,"label":"proxy"}],"showLegend":true,"legendDisplay":"top","timeWindowMode":"sliding","yAxisLabel":"m","followingViewWidth":10.0},"title":"Position on z [m]","version":1}},{"proportion":1,"content":{"type":"panel","panelType":"Plot","config":{"paths":[{"value":"/live/haptic.values.force[0]","enabled":true,"label":"rendered"},{"value":"/live/haptic.values.f[0]","enabled":true,"label":"sent to device"},{"value":"/live/robot.values.lam[0]","enabled":true,"label":"robot \u03bb (measured)"},{"value":"/live/target.values.robot_f_ff[0]","enabled":true,"label":"feedforward at robot"}],"showLegend":true,"legendDisplay":"top","timeWindowMode":"sliding","yAxisLabel":"N","followingViewWidth":10.0},"title":"Force on the interface [world N]","version":1}}]}},{"proportion":1,"content":{"type":"split","direction":"column","items":[{"proportion":1,"content":{"type":"panel","panelType":"Plot","config":{"paths":[{"value":"/live/safety.values.energy_j","enabled":true,"label":"observer at handle [J]"},{"value":"/live/safety.values.tdpa_energy_j","enabled":true,"label":"TDPA observer [J]"},{"value":"/live/safety.values.tdpa_damping","enabled":true,"label":"TDPA damping [N\u00b7s/m]"}],"showLegend":true,"legendDisplay":"top","timeWindowMode":"sliding","yAxisLabel":"","followingViewWidth":10.0},"title":"Energy / passivity","version":1}},{"proportion":1,"content":{"type":"panel","panelType":"Plot","config":{"paths":[{"value":"/live/haptic.values.f_handle[0]","enabled":true,"label":"x"},{"value":"/live/haptic.values.f_handle[1]","enabled":true,"label":"y"},{"value":"/live/haptic.values.f_handle[2]","enabled":true,"label":"z"}],"showLegend":true,"legendDisplay":"top","timeWindowMode":"sliding","yAxisLabel":"N","followingViewWidth":10.0},"title":"Handle force [device N]","version":1}}]}}]}},{"title":"Robot","content":{"type":"split","direction":"column","items":[{"proportion":1,"content":{"type":"panel","panelType":"Plot","config":{"paths":[{"value":"/live/robot.values.ee_position[0]","enabled":true,"label":"x"},{"value":"/live/robot.values.ee_position[1]","enabled":true,"label":"y"},{"value":"/live/robot.values.ee_position[2]","enabled":true,"label":"z"}],"showLegend":true,"legendDisplay":"top","timeWindowMode":"sliding","yAxisLabel":"m","followingViewWidth":10.0},"title":"EE position [m]","version":1}},{"proportion":1,"content":{"type":"panel","panelType":"Plot","config":{"paths":[{"value":"/live/robot.values.task_force[0]","enabled":true,"label":"x"},{"value":"/live/robot.values.task_force[1]","enabled":true,"label":"y"},{"value":"/live/robot.values.task_force[2]","enabled":true,"label":"z"}],"showLegend":true,"legendDisplay":"top","timeWindowMode":"sliding","yAxisLabel":"N","followingViewWidth":10.0},"title":"EE task force [N]","version":1}}]}},{"title":"Timing","content":{"type":"split","direction":"column","items":[{"proportion":1,"content":{"type":"panel","panelType":"Plot","config":{"paths":[{"value":"/live/rates.values.haptic","enabled":true,"label":"haptic"},{"value":"/live/rates.values.plant","enabled":true,"label":"robot samples"},{"value":"/live/rates.values.feedback","enabled":true,"label":"feedback delivered"},{"value":"/live/rates.values.command","enabled":true,"label":"commands sent"},{"value":"/live/rates.values.robot_target","enabled":true,"label":"targets at robot"}],"showLegend":true,"legendDisplay":"top","timeWindowMode":"sliding","yAxisLabel":"Hz","followingViewWidth":10.0},"title":"Rates [Hz]","version":1}},{"proportion":1,"content":{"type":"panel","panelType":"Plot","config":{"paths":[{"value":"/live/safety.values.plant_age_ms","enabled":true,"label":"plant sample"},{"value":"/live/safety.values.delivery_age_ms","enabled":true,"label":"since delivery"},{"value":"/live/safety.values.device_age_ms","enabled":true,"label":"device"},{"value":"/live/safety.values.watchdog_gain","enabled":true,"label":"watchdog gain"}],"showLegend":true,"legendDisplay":"top","timeWindowMode":"sliding","yAxisLabel":"ms","followingViewWidth":10.0},"title":"Ages [ms] / watchdog","version":1}}]}}]}}
+{
+  "configById": {
+    "Plot!position": {
+      "paths": [
+        {
+          "value": "/live/haptic.values.x_l[0]",
+          "enabled": true,
+          "timestampMethod": "receiveTime",
+          "label": "leader"
+        },
+        {
+          "value": "/live/robot.values.x_i[0]",
+          "enabled": true,
+          "timestampMethod": "receiveTime",
+          "label": "robot (measured)"
+        },
+        {
+          "value": "/live/target.values.sent_x[0]",
+          "enabled": true,
+          "timestampMethod": "receiveTime",
+          "label": "target sent"
+        },
+        {
+          "value": "/live/target.values.robot_x[0]",
+          "enabled": true,
+          "timestampMethod": "receiveTime",
+          "label": "target at robot"
+        },
+        {
+          "value": "/live/haptic.values.proxy_x[0]",
+          "enabled": true,
+          "timestampMethod": "receiveTime",
+          "label": "proxy"
+        }
+      ],
+      "showLegend": true,
+      "legendDisplay": "top",
+      "showPlotValuesInLegend": true,
+      "showXAxisLabels": true,
+      "showYAxisLabels": true,
+      "isSynced": true,
+      "xAxisVal": "timestamp",
+      "followingViewWidth": 10.0,
+      "foxglovePanelTitle": "Position on z [m]"
+    },
+    "Plot!force": {
+      "paths": [
+        {
+          "value": "/live/haptic.values.force[0]",
+          "enabled": true,
+          "timestampMethod": "receiveTime",
+          "label": "rendered"
+        },
+        {
+          "value": "/live/haptic.values.f[0]",
+          "enabled": true,
+          "timestampMethod": "receiveTime",
+          "label": "sent to device"
+        },
+        {
+          "value": "/live/robot.values.lam[0]",
+          "enabled": true,
+          "timestampMethod": "receiveTime",
+          "label": "robot λ (measured)"
+        },
+        {
+          "value": "/live/target.values.robot_f_ff[0]",
+          "enabled": true,
+          "timestampMethod": "receiveTime",
+          "label": "feedforward at robot"
+        }
+      ],
+      "showLegend": true,
+      "legendDisplay": "top",
+      "showPlotValuesInLegend": true,
+      "showXAxisLabels": true,
+      "showYAxisLabels": true,
+      "isSynced": true,
+      "xAxisVal": "timestamp",
+      "followingViewWidth": 10.0,
+      "foxglovePanelTitle": "Force on the interface [world N]"
+    },
+    "Plot!energy": {
+      "paths": [
+        {
+          "value": "/live/safety.values.energy_j",
+          "enabled": true,
+          "timestampMethod": "receiveTime",
+          "label": "observer at handle [J]"
+        },
+        {
+          "value": "/live/safety.values.tdpa_energy_j",
+          "enabled": true,
+          "timestampMethod": "receiveTime",
+          "label": "TDPA observer [J]"
+        },
+        {
+          "value": "/live/safety.values.tdpa_damping",
+          "enabled": true,
+          "timestampMethod": "receiveTime",
+          "label": "TDPA damping [N·s/m]"
+        }
+      ],
+      "showLegend": true,
+      "legendDisplay": "top",
+      "showPlotValuesInLegend": true,
+      "showXAxisLabels": true,
+      "showYAxisLabels": true,
+      "isSynced": true,
+      "xAxisVal": "timestamp",
+      "followingViewWidth": 10.0,
+      "foxglovePanelTitle": "Energy / passivity"
+    },
+    "Plot!handle": {
+      "paths": [
+        {
+          "value": "/live/haptic.values.f_handle[0]",
+          "enabled": true,
+          "timestampMethod": "receiveTime",
+          "label": "x"
+        },
+        {
+          "value": "/live/haptic.values.f_handle[1]",
+          "enabled": true,
+          "timestampMethod": "receiveTime",
+          "label": "y"
+        },
+        {
+          "value": "/live/haptic.values.f_handle[2]",
+          "enabled": true,
+          "timestampMethod": "receiveTime",
+          "label": "z"
+        }
+      ],
+      "showLegend": true,
+      "legendDisplay": "top",
+      "showPlotValuesInLegend": true,
+      "showXAxisLabels": true,
+      "showYAxisLabels": true,
+      "isSynced": true,
+      "xAxisVal": "timestamp",
+      "followingViewWidth": 10.0,
+      "foxglovePanelTitle": "Handle force [device N]"
+    },
+    "Plot!ee_position": {
+      "paths": [
+        {
+          "value": "/live/robot.values.ee_position[0]",
+          "enabled": true,
+          "timestampMethod": "receiveTime",
+          "label": "x"
+        },
+        {
+          "value": "/live/robot.values.ee_position[1]",
+          "enabled": true,
+          "timestampMethod": "receiveTime",
+          "label": "y"
+        },
+        {
+          "value": "/live/robot.values.ee_position[2]",
+          "enabled": true,
+          "timestampMethod": "receiveTime",
+          "label": "z"
+        }
+      ],
+      "showLegend": true,
+      "legendDisplay": "top",
+      "showPlotValuesInLegend": true,
+      "showXAxisLabels": true,
+      "showYAxisLabels": true,
+      "isSynced": true,
+      "xAxisVal": "timestamp",
+      "followingViewWidth": 10.0,
+      "foxglovePanelTitle": "EE position [m]"
+    },
+    "Plot!ee_force": {
+      "paths": [
+        {
+          "value": "/live/robot.values.task_force[0]",
+          "enabled": true,
+          "timestampMethod": "receiveTime",
+          "label": "x"
+        },
+        {
+          "value": "/live/robot.values.task_force[1]",
+          "enabled": true,
+          "timestampMethod": "receiveTime",
+          "label": "y"
+        },
+        {
+          "value": "/live/robot.values.task_force[2]",
+          "enabled": true,
+          "timestampMethod": "receiveTime",
+          "label": "z"
+        }
+      ],
+      "showLegend": true,
+      "legendDisplay": "top",
+      "showPlotValuesInLegend": true,
+      "showXAxisLabels": true,
+      "showYAxisLabels": true,
+      "isSynced": true,
+      "xAxisVal": "timestamp",
+      "followingViewWidth": 10.0,
+      "foxglovePanelTitle": "EE task force [N]"
+    },
+    "Plot!rates": {
+      "paths": [
+        {
+          "value": "/live/rates.values.haptic",
+          "enabled": true,
+          "timestampMethod": "receiveTime",
+          "label": "haptic"
+        },
+        {
+          "value": "/live/rates.values.plant",
+          "enabled": true,
+          "timestampMethod": "receiveTime",
+          "label": "robot samples"
+        },
+        {
+          "value": "/live/rates.values.feedback",
+          "enabled": true,
+          "timestampMethod": "receiveTime",
+          "label": "feedback delivered"
+        },
+        {
+          "value": "/live/rates.values.command",
+          "enabled": true,
+          "timestampMethod": "receiveTime",
+          "label": "commands sent"
+        },
+        {
+          "value": "/live/rates.values.robot_target",
+          "enabled": true,
+          "timestampMethod": "receiveTime",
+          "label": "targets at robot"
+        }
+      ],
+      "showLegend": true,
+      "legendDisplay": "top",
+      "showPlotValuesInLegend": true,
+      "showXAxisLabels": true,
+      "showYAxisLabels": true,
+      "isSynced": true,
+      "xAxisVal": "timestamp",
+      "followingViewWidth": 10.0,
+      "foxglovePanelTitle": "Rates [Hz]"
+    },
+    "Plot!ages": {
+      "paths": [
+        {
+          "value": "/live/safety.values.plant_age_ms",
+          "enabled": true,
+          "timestampMethod": "receiveTime",
+          "label": "plant sample"
+        },
+        {
+          "value": "/live/safety.values.delivery_age_ms",
+          "enabled": true,
+          "timestampMethod": "receiveTime",
+          "label": "since delivery"
+        },
+        {
+          "value": "/live/safety.values.device_age_ms",
+          "enabled": true,
+          "timestampMethod": "receiveTime",
+          "label": "device"
+        },
+        {
+          "value": "/live/safety.values.watchdog_gain",
+          "enabled": true,
+          "timestampMethod": "receiveTime",
+          "label": "watchdog gain"
+        }
+      ],
+      "showLegend": true,
+      "legendDisplay": "top",
+      "showPlotValuesInLegend": true,
+      "showXAxisLabels": true,
+      "showYAxisLabels": true,
+      "isSynced": true,
+      "xAxisVal": "timestamp",
+      "followingViewWidth": 10.0,
+      "foxglovePanelTitle": "Ages [ms] / watchdog"
+    },
+    "Tab!live": {
+      "activeTabIdx": 0,
+      "tabs": [
+        {
+          "title": "Teleop",
+          "layout": {
+            "first": {
+              "first": "Plot!position",
+              "second": "Plot!force",
+              "direction": "column",
+              "splitPercentage": 50.0
+            },
+            "second": {
+              "first": "Plot!energy",
+              "second": "Plot!handle",
+              "direction": "column",
+              "splitPercentage": 50.0
+            },
+            "direction": "row",
+            "splitPercentage": 65.0
+          }
+        },
+        {
+          "title": "Robot",
+          "layout": {
+            "first": "Plot!ee_position",
+            "second": "Plot!ee_force",
+            "direction": "column",
+            "splitPercentage": 50.0
+          }
+        },
+        {
+          "title": "Timing",
+          "layout": {
+            "first": "Plot!rates",
+            "second": "Plot!ages",
+            "direction": "column",
+            "splitPercentage": 50.0
+          }
+        }
+      ]
+    }
+  },
+  "globalVariables": {},
+  "userNodes": {},
+  "playbackConfig": {
+    "speed": 1
+  },
+  "layout": "Tab!live"
+}

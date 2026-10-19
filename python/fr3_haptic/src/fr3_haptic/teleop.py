@@ -508,6 +508,7 @@ def main(argv: list[str] | None = None) -> None:
         live = LiveView(
             live_logger(args.live_port),
             args.live_hz,
+            dim=dim,
             plant=plant,
             plant_box=plant_box,
             haptic_state=haptic_state,

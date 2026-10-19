@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import threading
+
 import numpy as np
 import pytest
 from arm_client.robot import Pose, Robot, Twist
@@ -311,9 +313,11 @@ def bare_robot():
     robot._streaming = False
     robot._target_publish_timers = [FakeTimer() for _ in range(4)]
     robot._trajectory_mode_active = True
-    robot._target_pose = robot._target_twist = robot._target_wrench = None
+    robot._target_pose = robot._target_twist = robot._target_accel = robot._target_wrench = None
+    robot._target_jog, robot._jog_lock, robot._jog_holds_pose = None, threading.Lock(), False
     robot._target_pose_publisher = FakePublisher()
     robot._target_twist_publisher = FakePublisher()
+    robot._target_accel_publisher = FakePublisher()
     robot._target_wrench_publisher = FakePublisher()
     yield robot
     node.destroy_node()
