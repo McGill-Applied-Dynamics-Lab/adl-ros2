@@ -75,6 +75,7 @@ TAG = "[fr3_teleop]"
 CONTROLLER_HZ = 1000.0  # osc_controller publishes ee_state / task_wrench every tick
 METHODS = ("zoh", "linear", "tdpa-zoh", "tdpa-linear", "proxy-rim", "proxy-fixed-mass")
 AXES = "xyz"
+GAP_SIM_MAX_S = 300.0  # feedback-gap estimate at startup: at most this much run is simulated [s]
 
 
 def parse_axes(spec: str) -> tuple[tuple[int, ...], tuple[float, ...]]:
@@ -483,11 +484,15 @@ def main(argv: list[str] | None = None) -> None:
     ):
         if d.enabled:
             print(f"{TAG} delay {name}: {d.base_ms:g} ms + {d.jitter_dist} jitter {d.jitter_ms:g} ms (seed {d.seed})")
-    gaps_s, superseded = links_cfg.feedback_gaps_s(model_update_hz, args.seconds)
+    # Only jitter makes delivery gaps irregular; without it they are the update period
+    gaps_s, superseded = np.zeros(0), 0.0
+    sim_s = min(args.seconds, GAP_SIM_MAX_S)
+    if links_cfg.feedback.enabled and links_cfg.feedback.jitter_ms > 0:
+        gaps_s, superseded = links_cfg.feedback_gaps_s(model_update_hz, sim_s)
     if len(gaps_s):
         gaps_ms = gaps_s * 1e3
         print(
-            f"{TAG} feedback deliveries (simulated, this seed): gap median {np.median(gaps_ms):.0f} ms, "
+            f"{TAG} feedback deliveries (simulated over {sim_s:g} s, this seed): gap median {np.median(gaps_ms):.0f} ms, "
             f"p99 {np.percentile(gaps_ms, 99):.0f} ms, max {gaps_ms.max():.0f} ms; {superseded:.0%} of samples superseded"
         )
         if gaps_ms.max() > args.plant_max_age_ms:
