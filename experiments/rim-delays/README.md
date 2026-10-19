@@ -24,6 +24,8 @@ a non-passive rendering can go unstable — the effects the abstract claims, mea
 | `sim_teleop.py`, `sim_plant.py` | `fr3_teleop` against a simulated FR3 (point mass with the FR3 task inertia, OSC-like PD, stiff table) — same haptic process, links and command loop |
 | `analyze.py` | Metrics per run, summary table, figures (`<session>/analysis/`) |
 
+Runs are saved under `~/data/franka/rim-delays/<backend>/<session>/` (`output_dir` in `conditions.yaml`).
+
 The device side lives in `fr3_haptic`: `--interface-axis xyz`, `--device scripted`, `--script press|circle`,
 `--hand`, `--run-name` (`python/fr3_haptic/src/fr3_haptic/scripted.py`).
 
@@ -32,7 +34,7 @@ The device side lives in `fr3_haptic`: `--interface-axis xyz`, `--device scripte
 ```bash
 # Simulation (no hardware): the whole design, then the analysis
 pixi run -e humble python experiments/rim-delays/run_conditions.py --backend sim --session sim-v1
-pixi run -e humble python experiments/rim-delays/analyze.py data/rim-delays/sim/sim-v1
+pixi run -e humble python experiments/rim-delays/analyze.py ~/data/franka/rim-delays/sim/sim-v1
 
 # One condition by hand, in sim
 pixi run -e humble python experiments/rim-delays/sim_teleop.py --conf python/fr3_haptic/configs/teleop.yaml \
@@ -41,7 +43,7 @@ pixi run -e humble python experiments/rim-delays/sim_teleop.py --conf python/fr3
 
 # Robot session (asks before every run; --only-* to do a subset)
 pixi run -e humble python experiments/rim-delays/run_conditions.py --backend robot --session day1 --only-rtt 0
-pixi run -e humble python experiments/rim-delays/analyze.py data/rim-delays/robot/day1
+pixi run -e humble python experiments/rim-delays/analyze.py ~/data/franka/rim-delays/robot/day1
 ```
 
 ## Hardware bring-up (in this order; stop at the first surprise)

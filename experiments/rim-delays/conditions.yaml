@@ -4,7 +4,7 @@
 # Each round trip is split evenly between the links (feedback = command = rtt / 2).
 
 conf: python/fr3_haptic/configs/teleop.yaml   # fr3_teleop defaults; `common` and the task flags override it
-output_dir: data/rim-delays                    # runs go to <output_dir>/<backend>/<session>/<run name>
+output_dir: ~/data/franka/rim-delays          # runs go to <output_dir>/<backend>/<session>/<run name>
 seed: 0                                        # run order (shuffled within each repeat)
 repeats: 3
 margin_s: 3.0                                  # run length = script + round trip + this [s]

@@ -1,7 +1,7 @@
 r"""Metrics and figures for a rim-delays session (sim or robot runs, same code).
 
-    pixi run -e humble python experiments/rim-delays/analyze.py data/rim-delays/sim/dev
-    pixi run -e humble python experiments/rim-delays/analyze.py data/rim-delays/robot/day1 --rtt-detail 2600
+    pixi run -e humble python experiments/rim-delays/analyze.py ~/data/franka/rim-delays/sim/dev
+    pixi run -e humble python experiments/rim-delays/analyze.py ~/data/franka/rim-delays/robot/day1 --rtt-detail 2600
 
 Writes, into ``<session>/analysis/``: ``metrics.csv`` (one row per run), ``summary.csv`` and
 ``summary.md`` (mean ± std per task, method, delay), and figures (PNG + PDF).

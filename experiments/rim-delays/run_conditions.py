@@ -2,7 +2,8 @@ r"""Run the delay experiment: every (task, method, round-trip delay) cell, ``rep
 
 Reads ``conditions.yaml`` (next to this script by default). Each run is one ``fr3_teleop``
 (``--backend robot``) or ``sim_teleop.py`` (``--backend sim``) process, saved as
-``<output_dir>/<backend>/<session>/<task>_<method>_rtt<ms>_r<k>``. Within each repeat the
+``<output_dir>/<backend>/<session>/<task>_<method>_rtt<ms>_r<k>`` (``output_dir`` default
+``~/data/franka/rim-delays``). Within each repeat the
 (task, method, delay) order is shuffled (seeded), so drift — a warming motor, a tiring
 operator — does not line up with one condition. Runs already on disk are skipped, so an
 interrupted session resumes where it stopped.
@@ -130,7 +131,7 @@ def main(argv: list[str] | None = None) -> None:
     if args.repeats is not None:
         cfg["repeats"] = args.repeats
     session = args.session or datetime.date.today().isoformat()
-    out_dir = REPO / cfg.get("output_dir", "data/rim-delays") / args.backend / session
+    out_dir = Path(cfg.get("output_dir", "~/data/franka/rim-delays")).expanduser() / args.backend / session
     runs = plan(cfg, args.backend, args.only_task, args.only_method, args.only_rtt)
     todo = [r for r in runs if not (out_dir / r.name).exists()]
     total_s = sum(r.seconds for r in todo)

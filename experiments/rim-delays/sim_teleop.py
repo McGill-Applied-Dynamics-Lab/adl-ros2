@@ -7,7 +7,7 @@ hardware at all; ``--device inverse3`` puts your hand on a simulated arm.
 
     pixi run -e humble python experiments/rim-delays/sim_teleop.py --method proxy-rim \
         --interface-axis xyz --contact-surface 0.1 --script press --feedback-delay-ms 425 \
-        --command-delay-ms 425 --seconds 30 --save --output-dir data/rim-delays/sim
+        --command-delay-ms 425 --seconds 30 --save --run-name try_rim_850
 """
 
 from __future__ import annotations
@@ -54,7 +54,7 @@ from sim_plant import TRUTH_COLS, SimConfig, SimFR3, osc_gains  # noqa: E402
 
 def build_sim_parser():
     p = build_parser()
-    p.set_defaults(device="scripted", live_hz=0.0, robot_log_hz=0.0, output_dir="data/rim-delays/sim")
+    p.set_defaults(device="scripted", live_hz=0.0, robot_log_hz=0.0, output_dir=str(Path("~/data/franka/rim-delays/sim").expanduser()))
     g = p.add_argument_group("simulated plant")
     g.add_argument("--table-z", type=float, default=None, help="table height [m]; default --contact-surface, else 0.1")
     g.add_argument("--table-stiffness", type=float, default=3.0e4, help="[N/m]")
