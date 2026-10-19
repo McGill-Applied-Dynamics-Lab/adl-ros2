@@ -1,0 +1,74 @@
+/* Mermaid diagrams with fullscreen, zoom and pan (see javascripts/mermaid-zoom.js) */
+
+.mermaid-zoom {
+  position: relative;
+  margin: 1em 0;
+}
+
+.mermaid-zoom__inline {
+  cursor: zoom-in;
+  text-align: center;
+}
+
+.mermaid-zoom__inline svg {
+  max-width: 100%;
+  height: auto;
+}
+
+.mermaid-zoom__toolbar {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.4em;
+}
+
+.mermaid-zoom__button {
+  font-size: 0.7rem;
+  padding: 0.2em 0.6em;
+  border: 1px solid var(--md-default-fg-color--lighter);
+  border-radius: 0.2rem;
+  background: var(--md-default-bg-color);
+  color: var(--md-default-fg-color--light);
+  cursor: pointer;
+}
+
+.mermaid-zoom__button:hover {
+  color: var(--md-accent-fg-color);
+  border-color: var(--md-accent-fg-color);
+}
+
+.mermaid-zoom__overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  background: var(--md-default-bg-color);
+  display: flex;
+  flex-direction: column;
+}
+
+.mermaid-zoom__overlay svg {
+  flex: 1;
+  min-height: 0;
+  cursor: grab;
+  touch-action: none;
+}
+
+.mermaid-zoom__overlay svg.is-dragging {
+  cursor: grabbing;
+}
+
+.mermaid-zoom__overlay .mermaid-zoom__toolbar {
+  font-size: 1.2em;
+  position: absolute;
+  top: 0.8em;
+  right: 0.8em;
+}
+
+.mermaid-zoom__hint {
+  position: absolute;
+  bottom: 0.8em;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 0.65rem;
+  color: var(--md-default-fg-color--light);
+  pointer-events: none;
+}

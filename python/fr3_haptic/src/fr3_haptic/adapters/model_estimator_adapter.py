@@ -1,0 +1,222 @@
+"""Local Pinocchio model estimator running outside ROS callbacks."""
+
+from __future__ import annotations
+
+import os
+import threading
+import time
+
+import numpy as np
+import pinocchio as pin
+from ament_index_python.packages import get_package_share_directory
+from arm_client.robot import Robot
+from pyrim import DynModel, InterfaceFrame
+from rclpy.node import Node
+
+from ..config import ModelConfig
+from ..filters import LowPassFilter
+
+
+class RobotModelAdapter:
+    """Compute dynamic model terms of the robot arm from its state."""
+
+    def __init__(
+        self,
+        node: Node,
+        robot: Robot,
+        model_cfg: ModelConfig,
+        frame: InterfaceFrame,
+    ) -> None:
+        self._node = node
+        self._robot = robot
+        self._frame_name = model_cfg.ee_frame_name
+        self._robot_joint_names = list(self._robot.config.joint_names)
+
+        urdf_root = get_package_share_directory(model_cfg.urdf_package)
+        urdf_path = os.path.join(urdf_root, model_cfg.urdf_relative_path)
+        full_model = pin.buildModelFromUrdf(urdf_path)
+        self._model = self._build_model_matching_robot_dof(full_model)
+        self._ee_frame_id = self._model.getFrameId(self._frame_name)
+        self._ee_frame_id = self._add_tool_tip_frame(model_cfg)  # Frame id to `tool_tip`
+        self._data = self._model.createData()
+
+        self._model_joint_names = [
+            self._model.names[jid] for jid in range(1, self._model.njoints) if self._model.joints[jid].nq > 0
+        ]
+        self._model_order_from_robot = [self._robot_joint_names.index(name) for name in self._model_joint_names]
+
+        # Interface selection: rows are the RIM subspace directions in EE-translation
+        # space (k x 6). Projecting the EE Jacobian/position onto these gives the
+        # reduced interface terms. For a single z direction this is [0,0,1,0,0,0].
+        self._frame = frame
+        self._di = np.zeros((frame.dim, 6))
+        self._di[:, :3] = frame.basis.T
+
+        self._f_q = LowPassFilter(model_cfg.filter_alpha_q)
+        self._f_dq = LowPassFilter(model_cfg.filter_alpha_q_dot)
+
+        self._latest: DynModel | None = None
+        self._lock = threading.Lock()
+
+    def _build_model_matching_robot_dof(self, full_model: pin.Model) -> pin.Model:
+        """Build a model whose DOF matches the `Robot` joint state vectors.
+
+        If URDF DOF is higher than the robot state (e.g., gripper/finger joints),
+        build a reduced model by locking non-arm joints.
+        """
+        expected_n = len(self._robot_joint_names)
+        if full_model.nv == expected_n:
+            return full_model
+
+        actuated_joint_ids = [jid for jid in range(1, full_model.njoints) if full_model.joints[jid].nq > 0]
+        lock_joint_ids = [jid for jid in actuated_joint_ids if full_model.names[jid] not in self._robot_joint_names]
+
+        if not lock_joint_ids:
+            self._node.get_logger().warn(
+                f"Model DOF ({full_model.nv}) != robot state DOF ({expected_n}), "
+                "but no lockable non-robot joints were found. Using full model."
+            )
+            return full_model
+
+        q_ref = pin.neutral(full_model)
+        reduced_model = pin.buildReducedModel(full_model, lock_joint_ids, q_ref)
+
+        if reduced_model.nv != expected_n:
+            self._node.get_logger().warn(
+                f"Reduced model DOF ({reduced_model.nv}) still differs from robot state DOF ({expected_n})."
+            )
+
+        locked_joint_names = [full_model.names[jid] for jid in lock_joint_ids]
+        self._node.get_logger().info(
+            f"Built reduced Pinocchio model to match robot state DOF. Locked joints: {locked_joint_names}"
+        )
+        return reduced_model
+
+    def _add_tool_tip_frame(self, model_cfg: ModelConfig) -> int:
+        """Register a 'tool_tip' OP_FRAME offset from the EE frame and return its id.
+
+        If tool_tip_offset is zero, returns the existing EE frame id unchanged.
+        The offset is expressed in the EE frame (e.g. [0, 0, L] for a peg of length L along z).
+        Data must be recreated after calling this — do so after this call returns.
+        """
+        tip_offset = np.array(model_cfg.tool_tip_offset, dtype=float)
+        if np.allclose(tip_offset, 0.0):
+            return self._ee_frame_id
+
+        ee_frame = self._model.frames[self._ee_frame_id]
+        # Placement of tool tip relative to the EE frame's parent joint
+        tool_placement = ee_frame.placement * pin.SE3(np.eye(3), tip_offset)
+        tool_frame = pin.Frame(
+            "tool_tip",
+            ee_frame.parent,
+            self._ee_frame_id,
+            tool_placement,
+            pin.FrameType.OP_FRAME,
+        )
+        tool_frame_id = self._model.addFrame(tool_frame)
+        self._node.get_logger().info(
+            f"Tool tip registered at offset {tip_offset.tolist()} m from '{model_cfg.ee_frame_name}'."
+        )
+        return tool_frame_id
+
+    def compute(self) -> DynModel | None:
+        """Compute dynamics from current robot state and return the model.
+
+        Returns None if robot state is not yet available.
+        Called directly by the control loop — no internal thread.
+        """
+        try:
+            q_robot = self._f_q.update(self._robot.q)
+            dq_robot = self._f_dq.update(self._robot.dq)
+        except RuntimeError:
+            return None
+
+        q = q_robot[self._model_order_from_robot]
+        dq = dq_robot[self._model_order_from_robot]
+
+        try:
+            tau_ext_robot = self._robot.external_joint_torques
+            tau_ext = tau_ext_robot[self._model_order_from_robot]
+
+        except RuntimeError:
+            tau_ext = None  # f_eff = 0 until FrankaRobotState arrives
+
+        pin.computeAllTerms(self._model, self._data, q, dq)
+        pin.updateFramePlacements(self._model, self._data)
+
+        j_ee = pin.computeFrameJacobian(self._model, self._data, q, self._ee_frame_id, pin.LOCAL_WORLD_ALIGNED)
+        j_dot_ee = pin.frameJacobianTimeVariation(
+            self._model, self._data, q, dq, self._ee_frame_id, pin.LOCAL_WORLD_ALIGNED
+        )
+
+        ai = self._di @ j_ee
+        ai_dot = self._di @ j_dot_ee
+        b_i = (ai_dot @ dq).reshape(self._frame.dim)
+
+        x_ee = self._data.oMf[self._ee_frame_id].translation
+        v_ee = j_ee[:3, :] @ dq
+
+        x_i = self._frame.project(x_ee)
+        v_i = self._frame.project(v_ee)
+
+        n = self._model.nv
+        dyn = DynModel(
+            n=n,
+            m=self._frame.dim,
+            q=q.copy(),
+            q_dot=dq.copy(),
+            x_i=x_i,
+            v_i=v_i,
+            M=self._data.M.copy(),
+            c=(self._data.nle - self._data.g).copy(),
+            J_i=ai.copy(),
+            b_i=b_i.copy(),
+            f_ext=None,  # tau_ext.copy() if tau_ext is not None else None,
+            stamp_s=time.time(),
+        )
+
+        with self._lock:
+            self._latest = dyn
+        return dyn
+
+    def compute_at(self, q: np.ndarray, dq: np.ndarray, tau: np.ndarray) -> DynModel:
+        """Compute and return a DynModel for a given joint state without reading from the robot.
+
+        Useful for dry-run mode to seed the RIM with a valid model at a known configuration.
+        """
+        pin.computeAllTerms(self._model, self._data, q, dq)
+        pin.updateFramePlacements(self._model, self._data)
+
+        j_ee = pin.computeFrameJacobian(self._model, self._data, q, self._ee_frame_id, pin.LOCAL_WORLD_ALIGNED)
+        j_dot_ee = pin.frameJacobianTimeVariation(
+            self._model, self._data, q, dq, self._ee_frame_id, pin.LOCAL_WORLD_ALIGNED
+        )
+
+        ai = self._di @ j_ee
+        ai_dot = self._di @ j_dot_ee
+        b_i = (ai_dot @ dq).reshape(self._frame.dim)
+
+        x_ee = self._data.oMf[self._ee_frame_id].translation
+        v_ee = j_ee[:3, :] @ dq
+
+        x_i = self._frame.project(x_ee)
+        v_i = self._frame.project(v_ee)
+
+        return DynModel(
+            n=self._model.nv,
+            m=self._frame.dim,
+            q=q.copy(),
+            q_dot=dq.copy(),
+            x_i=x_i,
+            v_i=v_i,
+            M=self._data.M.copy(),
+            c=(self._data.nle - self._data.g).copy(),
+            J_i=ai.copy(),
+            b_i=b_i.copy(),
+            f_ext=tau.copy(),
+            stamp_s=time.time(),
+        )
+
+    def latest(self) -> DynModel | None:
+        with self._lock:
+            return self._latest

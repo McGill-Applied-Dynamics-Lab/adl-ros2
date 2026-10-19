@@ -21,6 +21,10 @@ class RobotConfig:
         cartesian_impedance_controller_name (str): Name of the Cartesian impedance controller
         target_pose_topic (str): Topic name for publishing target poses
         target_joint_topic (str): Topic name for publishing target joint states
+        target_twist_topic (str): Topic for the feedforward twist of the reference (sent with the pose)
+        target_accel_topic (str): Topic for the feedforward acceleration of the reference
+        target_jog_topic (str): Topic for jog (velocity) commands, exclusive with target poses
+        jog_controllers (tuple): Controllers that accept jog commands on ``target_jog_topic``
         current_pose_topic (str): Topic name for subscribing to current poses
         current_joint_topic (str): Topic name for subscribing to current joint states
         publish_frequency (float): Frequency for publishing control commands
@@ -41,6 +45,11 @@ class RobotConfig:
     target_joint_topic: str = "target_joint"
     target_trajectory_topic: str = "target_trajectory"
     target_wrench_topic: str = "target_wrench"
+    target_twist_topic: str = "target_twist"
+    target_accel_topic: str = "target_accel"
+    target_jog_topic: str = "target_jog"
+
+    jog_controllers: tuple[str, ...] = ("fr3_pose_controller",)
 
     current_pose_topic: str = "current_pose"
     current_joint_topic: str = "joint_states"

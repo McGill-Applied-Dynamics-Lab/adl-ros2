@@ -133,9 +133,6 @@
     "python.testing.unittestEnabled": false,
     "python.testing.pytestEnabled": true,
     "python.testing.autoTestDiscoverOnSaveEnabled": false,
-    "terminal.integrated.env.linux": {
-        "BASH_ENV": "${workspaceFolder}/install_humble/setup.bash"
-    },
     //
     "ros.distro": "humble",
     // Spell Right
@@ -153,20 +150,13 @@
         "**/install/**/*.py": true
     },
     "ROS2.distro": "humble",
-    "python-envs.defaultEnvManager": "renan-r-santos.pixi-code:pixi",
-    "python-envs.defaultPackageManager": "renan-r-santos.pixi-code:pixi",
+    "python-envs.defaultEnvManager": "ms-python.python:system",
+    "python-envs.defaultPackageManager": "ms-python.python:pip",
     "[python]": {
         "editor.defaultFormatter": "charliermarsh.ruff",
         "editor.formatOnSave": true,
         "editor.codeActionsOnSave": {
             "source.organizeImports": "explicit"
         }
-    },
-    "python-envs.pythonProjects": [
-        {
-            "path": ".",
-            "envManager": "renan-r-santos.pixi-code:pixi",
-            "packageManager": "renan-r-santos.pixi-code:pixi"
-        }
-    ]
+    }
 }

@@ -52,6 +52,7 @@ def test_environment():
     tests.append((f"Workspace built (install_{ros_distro}/ exists)", lambda: os.path.isdir(install_base)))
     tests.append(("Workspace sourced (AMENT_PREFIX_PATH set)", lambda: bool(os.environ.get("AMENT_PREFIX_PATH"))))
     tests.append(("arm_client importable (arm_client)", lambda: importlib.import_module("arm_client") is not None))
+    tests.append(("arm_client.robot importable", lambda: importlib.import_module("arm_client.robot") is not None))
 
     # --- Run
     print("Verifying pixi + ROS2 environment...\n")

@@ -1,0 +1,75 @@
+# fr3_teleop defaults. Every key is a CLI flag's dest; the CLI overrides this file.
+#   pixi run -e humble fr3_teleop --conf python/fr3_haptic/configs/teleop.yaml [--force] [--method ...]
+
+method:
+  method: tdpa-zoh               # zoh | linear | tdpa-zoh | tdpa-linear | proxy-rim | proxy-fixed-mass
+  kv: 1000.0                  # coupling stiffness, world [N/m]; = osc_controller interface-axis stiffness
+  dv: 70.0                   # coupling damping, world [N·s/m]; ~0.7 damping ratio with kv 500 on z at home (Lambda_z 5.4 kg)
+  linear_max_extrapolation: 1.0
+  tdpa_max_damping: 10.0
+  proxy_mass: 1.0
+  contact_surface: null      # proxy methods: wall on the interface axis [m], model interface point
+
+rates:
+  haptic_hz: 1000.0
+  # robot -> haptic: the robot's state. The controller measures at 1 kHz; this many per second
+  # reach the haptic loop (0 = every controller tick).
+  model_update_hz: 500.0
+  rim_update_hz: null        # RIM dynamics model (proxy-rim); null = model_update_hz (and at most that)
+  # haptic -> robot: targets sent to osc_controller; null = model_update_hz
+  command_hz: null
+
+delays:                      # simulated, per link; 0 = none (the link is bypassed)
+  feedback_delay_ms: 250.0     # robot -> haptic: base delay [ms]
+  feedback_jitter_ms: 0.0    # robot -> haptic: jitter [ms]
+  command_delay_ms: 250.0      # haptic -> robot: base delay [ms]
+  command_jitter_ms: 0.0     # haptic -> robot: jitter [ms]
+  jitter_dist: uniform       # uniform (base +- jitter) | normal (sigma = jitter); clipped at 0
+  delay_seed: null           # null = drawn and logged in the run metadata
+
+interface:
+  interface_axis: z
+  interface_min: null        # commanded interface position bounds [m], robot base frame
+  interface_max: null
+  interface_range: 0       # commanded position stays within ± this of the start [m]; 0 disables
+  free_axis_stiffness: 0.0   # handle spring keeping the hand on the axis [world N/m]
+  free_axis_damping: 0.0
+
+inverse3:
+  uri: ws://localhost:10001
+  axes: "y,-x,z"             # signed device axis per robot base axis
+  scale: 1.0                 # robot metres per device metre
+  force_gain: 0.1            # handle N per world N: felt stiffness = kv * scale * force_gain
+  max_i3_force: 10.0          # clamp at the handle [N]
+  vel_filter_hz: 8.0
+  force_ramp_s: 1.0
+
+safety:
+  energy_budget_mj: 0.0
+  saturation_abort_ms: 0.0
+  chatter_hz: 25.0
+  chatter_deadband_n: 1.0
+  guard_cooldown_s: 3.0
+  plant_max_age_ms: 50.0     # watchdog: freeze the robot and end the run past this
+  watchdog_ramp_ms: 100.0
+  feedforward_cap: 15.0
+
+robot:
+  namespace: fr3
+  controller: osc_controller
+  start_position: [0.4, 0.0, 0.2]       # [x, y, z]: the end effector moves here first, orientation kept [m, base frame]; null = stay
+  start_speed: 0.05          # speed of that move [m/s]
+  osc_params: python/fr3_haptic/configs/osc_teleop.yaml
+  ee_state_topic: /fr3/osc/ee_state
+  task_wrench_topic: /fr3/osc/task_wrench
+  tool_tip_offset: null      # proxy-rim: model interface point offset from fr3_hand_tcp [m]
+
+live:                        # Foxglove live view: open ws://localhost:<live_port>, layout configs/foxglove_live_layout.json
+  live_hz: 50.0              # 0 disables
+  live_port: 8766
+
+run:
+  seconds: 99999.0
+  output_dir: /home/athena/csirois/data/franka/fr3_haptic
+  notes: ""
+  robot_log_hz: 50.0         # robot state, commanded torques, task error/wrench, EE state [Hz]; 0 disables

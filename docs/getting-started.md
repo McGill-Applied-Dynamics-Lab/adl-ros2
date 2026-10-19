@@ -159,15 +159,12 @@ Follow the steps to install the project:
 
 3. Build the ROS2 packages
     ```bash
-    pixi shell -e humble # (1)!
-    pixi run -e humble build     
+    pixi run -e humble build
     ```
-    1. To start a shell in the pixi environment
-
 
     !!! info "ROS2 Workspace"
     
-        This build the ros2 packages to `install_humble` and `build_humble`
+        This builds the ROS2 packages to `install_humble` and `build_humble`.
 
 4. Verify the installation
     ```bash
@@ -178,6 +175,18 @@ Follow the steps to install the project:
 
     [Pixi](https://pixi.prefix.dev/latest/) is a fast package management tool. 
     To install, follow the [installation instructions](https://pixi.prefix.dev/latest/installation/).
+
+!!! tip "No need to source the workspace"
+
+    The pixi environment automatically sources `install_humble/setup.sh` (see `scripts/activate_overlay.sh`),
+    so the built packages are available in any `pixi run -e humble ...` command or `pixi shell -e humble` session,
+    whether you use bash or zsh. You don't need to `source install_humble/setup.bash` yourself.
+
+    The workspace is sourced when the environment starts. If a build adds a **new** package, start a new
+    `pixi shell` (or `pixi run` command) to pick it up. Rebuilding existing packages needs no extra step.
+
+The python-only packages in `python/` (`pyrim`, `rim_teleop`) are installed in the pixi environment
+during `pixi install`. Edits to them take effect immediately, without a rebuild.
 
 
 ## 5. Control the robot!

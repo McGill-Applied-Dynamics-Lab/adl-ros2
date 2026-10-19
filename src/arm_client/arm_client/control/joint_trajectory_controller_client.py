@@ -34,6 +34,7 @@ from rclpy.node import Node
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 
 from arm_client.planning.types import PlannedJointTrajectory
+from arm_client.utils.futures import wait_for_future
 
 import numpy as np
 
@@ -98,17 +99,12 @@ class JointTrajectoryControllerClient(ActionClient):
         future = self.send_goal_async(self._goal)
 
         if blocking:
-            while not future.done():
-                self.node.get_logger().debug("Waiting for goal answer...", throttle_duration_sec=1.0)
-
-            goal_handle = future.result()
+            goal_handle = wait_for_future(future)
 
             future = goal_handle.get_result_async()
-            while not future.done():
-                self.node.get_logger().debug("Waiting for goal result...", throttle_duration_sec=1.0)
-
-            self.node.get_logger().debug(f"Goal result: {future.result()}")
-            return future.result()
+            result = wait_for_future(future)
+            self.node.get_logger().debug(f"Goal result: {result}")
+            return result
 
     def send_joint_trajectory(
         self,
@@ -157,17 +153,12 @@ class JointTrajectoryControllerClient(ActionClient):
         future = self.send_goal_async(self._goal)
 
         if blocking:
-            while not future.done():
-                self.node.get_logger().debug("Waiting for trajectory goal answer...", throttle_duration_sec=1.0)
-
-            goal_handle = future.result()
+            goal_handle = wait_for_future(future)
 
             future = goal_handle.get_result_async()
-            while not future.done():
-                self.node.get_logger().debug("Waiting for trajectory result...", throttle_duration_sec=1.0)
-
-            self.node.get_logger().debug(f"Trajectory goal result: {future.result()}")
-            return future.result()
+            result = wait_for_future(future)
+            self.node.get_logger().debug(f"Trajectory goal result: {result}")
+            return result
 
     def publish_joint_trajectory(
         self,
