@@ -37,7 +37,16 @@ from runs import COLORS, INK, INK_2, INK_3, LABELS, find  # noqa: E402
 from runs import load_run as _load_run  # noqa: E402
 from runs import save as _save  # noqa: E402
 
-NAME = re.compile(r"(?P<task>[a-z]+)_(?P<method>[a-z-]+)_rtt(?P<rtt>\d+)_r(?P<rep>\d+)$")
+NAME = re.compile(r"(?P<task>[a-z]+)_(?P<method>[a-z-]+)_rtt(?P<rtt>\d+|5g)_r(?P<rep>\d+)$")
+TRACE_RTT = {"5g": 45}  # where a trace condition sits on the delay axis (its median round trip) [ms]
+
+
+def rtt_text(r: float) -> str:
+    """A delay condition as text: ``5G``, ``850 ms``, ``2.6 s``."""
+    names = {v: k.upper() for k, v in TRACE_RTT.items()}
+    if r in names:
+        return names[r]
+    return f"{r:g} ms" if r < 1000 else f"{r / 1000:g} s"
 METHODS = ("proxy-rim", "zoh", "tdpa-zoh")
 FREE_MARGIN = 0.005  # leader this far above the table counts as free motion [m]
 
@@ -107,7 +116,7 @@ def collect(session: Path) -> tuple[pd.DataFrame, dict]:
         if run is None:
             print(f"[analyze] skipping {run_dir.name}: incomplete")
             continue
-        key = (m["task"], m["method"], int(m["rtt"]), int(m["rep"]))
+        key = (m["task"], m["method"], TRACE_RTT.get(m["rtt"], None) or int(m["rtt"]), int(m["rep"]))
         runs[key] = run
         rows.append({"run": run_dir.name, "task": key[0], "method": key[1], "rtt_ms": key[2], "rep": key[3],
                      **run_metrics(run)})
@@ -152,8 +161,8 @@ def fig_metrics(df: pd.DataFrame, task: str, metrics: list[str], out: Path) -> N
             x = [pos[r] for r in g.index]
             ax.errorbar(x, g["mean"], yerr=g["std"].fillna(0), color=COLORS.get(method, INK_3), marker="o",
                         markersize=6, capsize=3, label=LABELS.get(method, method))
-        ax.set_xticks(range(len(rtts)), [f"{r:g}" if r < 1000 else f"{r / 1000:g} s" for r in rtts])
-        ax.set_xlabel("Round-trip delay [ms]")
+        ax.set_xticks(range(len(rtts)), [rtt_text(r) for r in rtts])
+        ax.set_xlabel("Round-trip delay")
         ax.set_title(METRIC_LABELS.get(metric, metric), loc="left")
         ax.set_ylim(bottom=0)
     for ax in list(axes.flat)[len(metrics):]:
@@ -193,7 +202,7 @@ def fig_press_timeseries(runs: dict, rtt: int, out: Path, rep: int = 0) -> None:
     axes[1, 0].set_ylabel("Force along z [N]")
     for ax in axes[:, -1]:
         ax.legend(loc="upper right", fontsize=8)
-    fig.suptitle(f"Press task, round-trip delay {rtt:g} ms", x=0.01, ha="left", color=INK, fontsize=12)
+    fig.suptitle(f"Press task, round-trip delay {rtt_text(rtt)}", x=0.01, ha="left", color=INK, fontsize=12)
     fig.tight_layout()
     save(fig, out, f"press_timeseries_rtt{rtt:04d}")
 
@@ -218,7 +227,7 @@ def fig_circle_paths(runs: dict, rtt: int, out: Path, rep: int = 0) -> None:
     handles, labels = axes[0, 0].get_legend_handles_labels()
     fig.legend(handles, labels,
                loc="lower center", ncol=2, bbox_to_anchor=(0.5, -0.04), fontsize=9)
-    fig.suptitle(f"Circle task, round-trip delay {rtt:g} ms", x=0.01, ha="left", color=INK, fontsize=12)
+    fig.suptitle(f"Circle task, round-trip delay {rtt_text(rtt)}", x=0.01, ha="left", color=INK, fontsize=12)
     fig.tight_layout()
     save(fig, out, f"circle_paths_rtt{rtt:04d}")
 
@@ -240,11 +249,11 @@ def markdown(summary: pd.DataFrame) -> str:
     lines = []
     for task, d in summary.groupby("task"):
         metrics = [m for m in METRIC_LABELS if f"{m}_mean" in d and d[f"{m}_mean"].notna().any()]
-        lines += [f"## {task}", "", "| method | RTT [ms] | " + " | ".join(METRIC_LABELS[m] for m in metrics) + " | stable |",
+        lines += [f"## {task}", "", "| method | round trip | " + " | ".join(METRIC_LABELS[m] for m in metrics) + " | stable |",
                   "|---|---:|" + "---:|" * len(metrics) + "---:|"]
         for _, r in d.sort_values(["rtt_ms", "method"]).iterrows():
             cells = [f"{r[f'{m}_mean']:.2f} ± {0 if np.isnan(r[f'{m}_std']) else r[f'{m}_std']:.2f}" for m in metrics]
-            lines.append(f"| {LABELS.get(r.method, r.method)} | {r.rtt_ms:g} | " + " | ".join(cells)
+            lines.append(f"| {LABELS.get(r.method, r.method)} | {rtt_text(r.rtt_ms)} | " + " | ".join(cells)
                          + f" | {int(r.stable_runs)}/{int(r.runs)} |")
         lines.append("")
     return "\n".join(lines)

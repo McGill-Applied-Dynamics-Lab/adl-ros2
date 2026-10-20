@@ -2,6 +2,7 @@
 #   pixi run -e humble python experiments/rim-delays/run_conditions.py --backend sim
 #   pixi run -e humble python experiments/rim-delays/run_conditions.py --backend robot --session 2026-10-21
 # Each round trip is split evenly between the links (feedback = command = rtt / 2).
+# 5g: the lab's 5G round-trip trace, halved on each link (fr3_teleop --delay-trace 5g).
 
 conf: python/fr3_haptic/configs/teleop.yaml   # fr3_teleop defaults; `common` and the task flags override it
 output_dir: ~/data/franka/rim-delays          # runs go to <output_dir>/<backend>/<session>/<run name>
@@ -10,7 +11,7 @@ repeats: 3
 margin_s: 3.0                                  # run length = script + round trip + this [s]
 
 methods: [zoh, tdpa-zoh, proxy-rim]
-rtt_ms: [0, 50, 850, 2600]                     # none, local surface link, orbit-to-ground relay, Earth-Moon
+rtt_ms: [0, 5g, 850, 2600]                     # none, local surface link (5G trace replay), orbit-to-ground relay, Earth-Moon
 
 # fr3_teleop flags for every run (key = flag without the dashes; true = bare flag)
 common:

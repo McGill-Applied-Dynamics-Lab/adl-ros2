@@ -65,7 +65,7 @@ from utilities import apply_yaml_config
 
 from .adapters import RobotModelAdapter
 from .config import ModelConfig
-from .links import Links, LinksConfig
+from .links import Links, LinksConfig, load_delay_trace
 from .live import LiveView, live_logger
 from .plant import FR3Plant, FR3System
 from .recorder import RobotStateRecorder
@@ -246,6 +246,26 @@ def build_parser() -> argparse.ArgumentParser:
         help="jitter distribution: uniform (base +- jitter) or normal (sigma = jitter), clipped at 0",
     )
     g.add_argument("--delay-seed", type=int, default=None, help="random seed for the delays; default: drawn and logged")
+    g.add_argument(
+        "--delay-trace",
+        default=None,
+        help="add a recorded latency trace on both links: a CSV with a latency column [ms], or 5g (the lab's 5G data)",
+    )
+    g.add_argument(
+        "--delay-trace-filter",
+        nargs="*",
+        default=["condition=5G"],
+        metavar="COLUMN=VALUE",
+        help="keep only these trace rows (5g: condition 5G|5GE, server, location, record_time)",
+    )
+    g.add_argument("--delay-trace-scale", type=float, default=0.5, help="factor on the trace (0.5: round trip -> one link)")
+    g.add_argument(
+        "--delay-trace-mode",
+        choices=("iid", "sequential"),
+        default="iid",
+        help="iid: each item draws a trace sample; sequential: replay in order, one sample per --delay-trace-period-ms",
+    )
+    g.add_argument("--delay-trace-period-ms", type=float, default=10.0, help="sequential: send time per trace sample [ms]")
 
     g = p.add_argument_group("robot")
     g.add_argument("--namespace", default="fr3")
@@ -354,12 +374,28 @@ def links_config(args: argparse.Namespace) -> LinksConfig:
     """Both links' delays from the flags. A missing seed is drawn here, so it can be logged and
     the run reproduced; the command link uses ``seed + 1``."""
     seed = args.delay_seed if args.delay_seed is not None else int(np.random.SeedSequence().entropy % 2**31)
+    trace = {}
+    if args.delay_trace:
+        filters = dict(f.split("=", 1) for f in (args.delay_trace_filter or []))
+        trace = {
+            "trace_ms": load_delay_trace(args.delay_trace, filters, args.delay_trace_scale),
+            "trace_mode": args.delay_trace_mode,
+            "trace_period_ms": args.delay_trace_period_ms,
+        }
     return LinksConfig(
         feedback=DelayConfig(
-            base_ms=args.feedback_delay_ms, jitter_ms=args.feedback_jitter_ms, jitter_dist=args.jitter_dist, seed=seed
+            base_ms=args.feedback_delay_ms,
+            jitter_ms=args.feedback_jitter_ms,
+            jitter_dist=args.jitter_dist,
+            seed=seed,
+            **trace,
         ),
         command=DelayConfig(
-            base_ms=args.command_delay_ms, jitter_ms=args.command_jitter_ms, jitter_dist=args.jitter_dist, seed=seed + 1
+            base_ms=args.command_delay_ms,
+            jitter_ms=args.command_jitter_ms,
+            jitter_dist=args.jitter_dist,
+            seed=seed + 1,
+            **trace,
         ),
     )
 
@@ -610,11 +646,11 @@ def main(argv: list[str] | None = None) -> None:
         ("command (haptic -> robot)", links_cfg.command),
     ):
         if d.enabled:
-            print(f"{TAG} delay {name}: {d.base_ms:g} ms + {d.jitter_dist} jitter {d.jitter_ms:g} ms (seed {d.seed})")
-    # Only jitter makes delivery gaps irregular; without it they are the update period
+            print(f"{TAG} delay {name}: {LinksConfig.label(d)}")
+    # Only a variable delay (jitter, trace) makes delivery gaps irregular; otherwise they are the update period
     gaps_s, superseded = np.zeros(0), 0.0
     sim_s = min(args.seconds, GAP_SIM_MAX_S)
-    if links_cfg.feedback.enabled and links_cfg.feedback.jitter_ms > 0:
+    if links_cfg.variable:
         gaps_s, superseded = links_cfg.feedback_gaps_s(model_update_hz, sim_s)
     if len(gaps_s):
         gaps_ms = gaps_s * 1e3
@@ -719,8 +755,8 @@ def main(argv: list[str] | None = None) -> None:
         "controller_gains": gains,
         "command_loop": {k: (v.tolist() if isinstance(v, np.ndarray) else v) for k, v in asdict(loop.cfg).items()},
         "delays": {
-            "feedback": vars(links_cfg.feedback) if links_cfg.feedback.enabled else None,
-            "command": vars(links_cfg.command) if links_cfg.command.enabled else None,
+            "feedback": LinksConfig.describe(links_cfg.feedback),
+            "command": LinksConfig.describe(links_cfg.command),
         },
         "rates": {
             "haptic_hz": args.haptic_hz,

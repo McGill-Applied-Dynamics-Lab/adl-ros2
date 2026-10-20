@@ -21,7 +21,7 @@ from pathlib import Path
 
 import numpy as np
 from experiment_logger import ExperimentLogger, LoggingConfig
-from fr3_haptic.links import Links
+from fr3_haptic.links import Links, LinksConfig
 from fr3_haptic.session import PROXY_METHODS, CommandLoop, CommandLoopConfig, RimModelLoop
 from fr3_haptic.teleop import (
     TAG,
@@ -172,7 +172,7 @@ def main(argv: list[str] | None = None) -> None:
     )
     print(
         f"{TAG} SIM {args.method} on {args.interface_axis}, table z = {table_z:g} m, "
-        f"delays {links_cfg.feedback.base_ms:g} / {links_cfg.command.base_ms:g} ms (feedback / command)"
+        f"delays: feedback {LinksConfig.label(links_cfg.feedback)}, command {LinksConfig.label(links_cfg.command)}"
     )
 
     haptic = HapticProcess(spec)
@@ -218,8 +218,8 @@ def main(argv: list[str] | None = None) -> None:
         "args": {k: (list(v) if isinstance(v, tuple) else v) for k, v in vars(args).items()},
         "controller_gains": {"K": gains[0].tolist(), "D": gains[1].tolist()},
         "delays": {
-            "feedback": vars(links_cfg.feedback) if links_cfg.feedback.enabled else None,
-            "command": vars(links_cfg.command) if links_cfg.command.enabled else None,
+            "feedback": LinksConfig.describe(links_cfg.feedback),
+            "command": LinksConfig.describe(links_cfg.command),
         },
         "rates": {"haptic_hz": args.haptic_hz, "model_update_hz": model_update_hz,
                   "rim_update_hz": rim_update_hz if rim_loop else None, "command_hz": command_hz},

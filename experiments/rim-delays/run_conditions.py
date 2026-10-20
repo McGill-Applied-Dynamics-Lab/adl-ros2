@@ -39,18 +39,26 @@ SCRIPT_KEYS = {
 }
 
 
+TRACES = {"5g": 400.0}  # round-trip delay conditions replayed from a trace, and a bound on their delay [ms]
+
+
+def rtt_label(rtt) -> str:
+    """``0`` → ``0000``, ``850`` → ``0850``, ``"5g"`` → ``5g``."""
+    return str(rtt).lower() if str(rtt).lower() in TRACES else f"{int(round(float(rtt))):04d}"
+
+
 @dataclass
 class Run:
     task: str
     method: str
-    rtt_ms: float
+    rtt: float | str
     rep: int
     flags: dict
     seconds: float
 
     @property
     def name(self) -> str:
-        return f"{self.task}_{self.method}_rtt{int(round(self.rtt_ms)):04d}_r{self.rep}"
+        return f"{self.task}_{self.method}_rtt{rtt_label(self.rtt)}_r{self.rep}"
 
 
 def to_argv(flags: dict) -> list[str]:
@@ -92,14 +100,21 @@ def plan(cfg: dict, backend: str, only_task=None, only_method=None, only_rtt=Non
                 if only_method and method not in only_method:
                     continue
                 for rtt in cfg["rtt_ms"]:
-                    if only_rtt and rtt not in only_rtt:
+                    if only_rtt and rtt_label(rtt) not in {rtt_label(r) for r in only_rtt}:
                         continue
                     flags = {**cfg.get("common", {}), **(cfg.get(backend) or {}), **task_flags}
-                    flags.update(method=method, feedback_delay_ms=rtt / 2, command_delay_ms=rtt / 2)
+                    flags.update(method=method)
+                    trace = str(rtt).lower()
+                    if trace in TRACES:
+                        flags.update(feedback_delay_ms=0, command_delay_ms=0, delay_trace=trace)
+                        rtt_s = TRACES[trace] * 1e-3
+                    else:
+                        flags.update(feedback_delay_ms=float(rtt) / 2, command_delay_ms=float(rtt) / 2)
+                        rtt_s = float(rtt) * 1e-3
                     seconds = flags.pop("seconds", None)
                     if seconds is None:
-                        seconds = script_seconds(flags) + rtt * 1e-3 + cfg.get("margin_s", 3.0)
-                    block.append(Run(task, method, float(rtt), rep, flags, float(seconds)))
+                        seconds = script_seconds(flags) + rtt_s + cfg.get("margin_s", 3.0)
+                    block.append(Run(task, method, rtt, rep, flags, float(seconds)))
         rng.shuffle(block)
         runs += block
     return runs
@@ -121,7 +136,7 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--session", default=None, help="session directory name; default today's date")
     p.add_argument("--only-task", nargs="+", default=None)
     p.add_argument("--only-method", nargs="+", default=None)
-    p.add_argument("--only-rtt", nargs="+", type=float, default=None)
+    p.add_argument("--only-rtt", nargs="+", default=None, help="round trips [ms], or 5g")
     p.add_argument("--repeats", type=int, default=None, help="override the conditions file")
     p.add_argument("--dry-run", action="store_true", help="print the commands, run nothing")
     p.add_argument("--yes", action="store_true", help="robot: do not wait for Enter before each run")

@@ -136,3 +136,28 @@ def test_feedback_gaps_match_the_delay_line():
     np.testing.assert_allclose(gaps, np.diff(delivered) / 1000.0)
     assert superseded == pytest.approx(1.0 - line.stats.delivered / line.stats.pushed)
     assert gaps.max() > 0.05  # this jitter: gaps well past the 50 ms default watchdog
+
+
+def test_5g_trace_is_loaded_halved_and_filtered():
+    from fr3_haptic.links import load_delay_trace
+
+    all_5g = load_delay_trace("5g", {"condition": "5G"}, scale=0.5)
+    edge = load_delay_trace("5g", {"condition": "5GE"}, scale=1.0)
+    assert len(all_5g) == 21000 and len(edge) == 10000
+    assert 15 < np.median(all_5g) < 30  # one link: half of a ~40 ms round trip
+    with pytest.raises(ValueError):
+        load_delay_trace("5g", {"condition": "6G"})
+
+
+def test_trace_flags_reach_both_links():
+    from fr3_haptic.links import LinksConfig
+    from fr3_haptic.teleop import build_parser, links_config
+
+    args = build_parser().parse_args(["--delay-trace", "5g", "--delay-trace-filter", "condition=5G", "server=Haply",
+                                      "--delay-seed", "4"])
+    cfg = links_config(args)
+    assert cfg.enabled and cfg.variable
+    assert cfg.feedback.trace_ms == cfg.command.trace_ms and len(cfg.feedback.trace_ms) == 10000
+    assert cfg.feedback.seed == 4 and cfg.command.seed == 5
+    meta = LinksConfig.describe(cfg.feedback)
+    assert "trace_ms" not in meta and meta["trace"]["samples"] == 10000

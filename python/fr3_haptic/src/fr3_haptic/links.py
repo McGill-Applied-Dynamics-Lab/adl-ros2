@@ -16,16 +16,40 @@ the haptic process measures sample ages with.
 
 from __future__ import annotations
 
+import csv
 import threading
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import numpy as np
 from haptic_teleop import DelayConfig, DelayLine, ModelMailbox, PlantMailbox, RateTicker
 
-__all__ = ["DelayedModelWriter", "DelayedPlant", "DelayedPlantWriter", "Links", "LinksConfig"]
+__all__ = ["DelayedModelWriter", "DelayedPlant", "DelayedPlantWriter", "Links", "LinksConfig", "load_delay_trace"]
 
 PUMP_HZ = 1000.0
+TRACE_5G = Path(__file__).resolve().parents[4] / "src/teleop/network_sim/data/5G-data.csv"
+
+
+def load_delay_trace(source: str, filters: dict[str, str] | None = None, scale: float = 0.5) -> tuple[float, ...]:
+    """Delays [ms] from a recorded latency trace, times ``scale``.
+
+    Args:
+        source: a CSV with a ``latency`` column [ms], or ``5g`` for the lab's 5G round-trip
+            measurements (``src/teleop/network_sim/data/5G-data.csv``: columns ``condition``
+            (5G, 5GE), ``server``, ``location``, ``record_time``).
+        filters: keep only the rows whose columns equal these values, e.g. ``{"condition": "5G"}``.
+        scale: factor on every latency; 0.5 turns a round trip into one link's delay.
+
+    Raises:
+        ValueError: if no row is left.
+    """
+    path = TRACE_5G if source.lower() == "5g" else Path(source).expanduser()
+    with open(path, newline="") as fh:
+        rows = [r for r in csv.DictReader(fh) if all(r.get(k) == v for k, v in (filters or {}).items())]
+    if not rows:
+        raise ValueError(f"no rows in {path} match {filters}")
+    return tuple(scale * float(r["latency"]) for r in rows)
 
 
 @dataclass(kw_only=True)
@@ -39,6 +63,35 @@ class LinksConfig:
     def enabled(self) -> bool:
         return self.feedback.enabled or self.command.enabled
 
+    @property
+    def variable(self) -> bool:
+        """True when the feedback delay varies (jitter or a trace): delivery gaps are then irregular."""
+        f = self.feedback
+        return f.enabled and (f.jitter_ms > 0 or f.trace_ms is not None)
+
+    @staticmethod
+    def describe(cfg: DelayConfig) -> dict | None:
+        """One link's delay for the run metadata: the config, with a trace summarized instead of listed."""
+        if not cfg.enabled:
+            return None
+        d = dict(vars(cfg))
+        trace = d.pop("trace_ms")
+        if trace is not None:
+            t = np.asarray(trace)
+            d["trace"] = {"samples": len(t), "median_ms": float(np.median(t)), "p95_ms": float(np.percentile(t, 95)),
+                          "max_ms": float(t.max())}
+        return d
+
+    @staticmethod
+    def label(cfg: DelayConfig) -> str:
+        """A one-line description of one link's delay."""
+        text = f"{cfg.base_ms:g} ms + {cfg.jitter_dist} jitter {cfg.jitter_ms:g} ms"
+        if cfg.trace_ms is not None:
+            t = np.asarray(cfg.trace_ms)
+            text += (f" + trace ({cfg.trace_mode}, {len(t)} samples, median {np.median(t):.1f} ms, "
+                     f"p95 {np.percentile(t, 95):.1f} ms, max {t.max():.1f} ms)")
+        return f"{text} (seed {cfg.seed})"
+
     def drain_s(self, margin_s: float = 0.1) -> float:
         """How long to wait after setup before the haptic loop starts [s]: the longest feedback
         delay plus ``margin_s``, so a sample gap left by a setup stall has been delivered (and
@@ -47,7 +100,8 @@ class LinksConfig:
         if not f.enabled:
             return 0.0
         spread = f.jitter_ms if f.jitter_dist == "uniform" else 3 * f.jitter_ms
-        return (f.base_ms + spread) * 1e-3 + margin_s
+        trace = max(f.trace_ms) if f.trace_ms else 0.0
+        return (f.base_ms + spread + trace) * 1e-3 + margin_s
 
     def feedback_gaps_s(self, model_update_hz: float, seconds: float) -> tuple[np.ndarray, float]:
         """Simulated gaps between feedback deliveries [s] over ``seconds``, and the fraction of
@@ -64,7 +118,7 @@ class LinksConfig:
             return np.zeros(0), 0.0
         model = f.build()
         sent = np.arange(0.0, seconds, 1.0 / model_update_hz)
-        delays = np.array([model.sample_s() for _ in sent])
+        delays = np.array([model.sample_s(t) for t in sent])
         tick = np.ceil((sent + delays) * PUMP_HZ - 1e-9)  # the pump tick each sample is due on
         order = np.lexsort((sent, tick))
         newest = np.maximum.accumulate(sent[order])  # newest sample sent, among those due by then
