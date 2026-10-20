@@ -37,7 +37,7 @@ from haptic_teleop import HapticStateMailbox, ModelMailbox, StatusMailbox, clamp
 
 __all__ = ["PROXY_METHODS", "CommandLoop", "CommandLoopConfig", "RimModelLoop"]
 
-PROXY_METHODS = ("proxy-rim", "proxy-fixed-mass")
+PROXY_METHODS = ("proxy-rim", "proxy-fixed-mass", "proxy-god-object")
 
 
 @dataclass(kw_only=True)

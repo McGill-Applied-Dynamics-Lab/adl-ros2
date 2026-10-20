@@ -25,9 +25,11 @@ import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 from experiment_logger import load_streams  # noqa: E402
 
-METHODS = ("proxy-rim", "proxy-fixed-mass", "zoh", "tdpa-zoh")
-LABELS = {"proxy-rim": "RIM (ours)", "zoh": "ZOH", "tdpa-zoh": "TDPA", "proxy-fixed-mass": "Fixed mass"}
-COLORS = {"proxy-rim": "#2a78d6", "zoh": "#eb6834", "tdpa-zoh": "#1baf7a", "proxy-fixed-mass": "#eda100"}
+METHODS = ("proxy-rim", "proxy-fixed-mass", "proxy-god-object", "zoh", "tdpa-zoh")
+LABELS = {"proxy-rim": "RIM (ours)", "zoh": "ZOH", "tdpa-zoh": "TDPA", "proxy-fixed-mass": "Fixed mass",
+          "proxy-god-object": "God-object"}
+COLORS = {"proxy-rim": "#2a78d6", "zoh": "#eb6834", "tdpa-zoh": "#1baf7a", "proxy-fixed-mass": "#eda100",
+          "proxy-god-object": "#e87ba4"}  # categorical slots 1-5
 INK, INK_2, INK_3, GRID, SURFACE = "#0b0b0b", "#52514e", "#8a8984", "#e6e5e0", "#fcfcfb"
 
 plt.rcParams.update({

@@ -1,4 +1,4 @@
-r"""T3 — proxy without the robot's model: fixed mass (and the god-object, once it exists).
+r"""T3 — proxy without the robot's model: fixed mass (default) or god-object (``--method proxy-god-object``).
 
 Free motion, then contact. Reports the felt stiffness, how far the commanded proxy goes into the
 table (should be 0: the proxy stops at the wall), the free-motion force, the buzz at the wall, and
@@ -6,6 +6,7 @@ whether the robot presses the table with the force the operator feels.
 
     pixi run -e humble python experiments/rim-delays/pretests/t3_proxy.py --contact-surface 0.105
     pixi run -e humble python experiments/rim-delays/pretests/t3_proxy.py --sim --proxy-mass 2.0
+    pixi run -e humble python experiments/rim-delays/pretests/t3_proxy.py --method proxy-god-object --contact-surface 0.105
 """
 
 from __future__ import annotations

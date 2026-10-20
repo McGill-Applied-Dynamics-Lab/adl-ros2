@@ -74,7 +74,7 @@ from .session import PROXY_METHODS, CommandLoop, CommandLoopConfig, RimModelLoop
 
 TAG = "[fr3_teleop]"
 CONTROLLER_HZ = 1000.0  # osc_controller publishes ee_state / task_wrench every tick
-METHODS = ("zoh", "linear", "tdpa-zoh", "tdpa-linear", "proxy-rim", "proxy-fixed-mass")
+METHODS = ("zoh", "linear", "tdpa-zoh", "tdpa-linear", "proxy-rim", "proxy-fixed-mass", "proxy-god-object")
 AXES = "xyz"
 GAP_SIM_MAX_S = 300.0  # feedback-gap estimate at startup: at most this much run is simulated [s]
 
@@ -188,7 +188,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     g = p.add_argument_group("scripted operator (--device scripted: the leader follows a script, no hand)")
     g.add_argument("--device", choices=("inverse3", "scripted"), default="inverse3", help="operator input")
-    g.add_argument("--script", choices=PROFILES, default="press", help="press: down and up; circle: circles on the table")
+    g.add_argument(
+        "--script", choices=PROFILES, default="press", help="press: down and up; circle: circles on the table"
+    )
     g.add_argument(
         "--script-surface-z",
         type=float,
@@ -415,7 +417,9 @@ def scripted_device(args: argparse.Namespace, leader_origin: np.ndarray) -> tupl
     duration = Script(script, leader_origin).duration_s  # also checks the origin is above the table
     if args.seconds < duration:
         print(f"{TAG} WARNING: --seconds {args.seconds:g} ends the run before the script ({duration:.1f} s)")
-    hand = HandConfig(mass=args.hand_mass, stiffness=args.hand_stiffness, damping=args.hand_damping) if args.hand else None
+    hand = (
+        HandConfig(mass=args.hand_mass, stiffness=args.hand_stiffness, damping=args.hand_damping) if args.hand else None
+    )
     return ScriptedOperator, {"script": script, "hand": hand}, duration
 
 
@@ -659,7 +663,8 @@ def main(argv: list[str] | None = None) -> None:
         haptic.start()  # the child opens and zeroes the device, then its loop starts
         t0 = time.monotonic()
         running = lambda: not loop.stopped and haptic.running  # noqa: E731
-        if rim_loop is not None:  # robot -> haptic: the RIM model, on its own thread and rate
+        # robot -> haptic: the RIM model, on its own thread and rate
+        if rim_loop is not None:
             rim_thread = threading.Thread(
                 target=run_loop,
                 args=(rim_update_hz, rim_loop.step),
