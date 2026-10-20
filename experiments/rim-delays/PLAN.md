@@ -23,7 +23,7 @@ remote side). No wall-mismatch experiment.
 | | Method | Role | Status |
 |---|---|---|---|
 | M1 | ZOH | model-free reference | exists |
-| M2 | TDPA, two-port (Ryu 2010) | passivity baseline for time-varying delay | **to implement** (today: one-port, inert); architecture to choose |
+| M2 | TDPA, two-port, position–position (Ryu 2010) | passivity baseline for time-varying delay | **to implement** (today: one-port, inert) |
 | M3 | God-object proxy | plain MMT: geometry only | **to implement** (kept) |
 | M4 | Fixed-mass proxy | ablation: generic dynamics | exists |
 | M5 | RIM, arm only | ours, today | exists |
@@ -35,14 +35,22 @@ Every method is validated (stage 3) before its delay results are used.
 
 ### 0. Pre-tests: validate the controllers interactively
 
-One script per test: it starts a preset configuration (robot or sim), you play with it and feel
-it on the Inverse3, and when you stop it prints the test's key metrics and saves its plot. Tests
-to list; they overlap with stage 3.
+One script per test (`pretests/`): it starts a preset configuration (robot or `--sim`), you play
+with it and feel it on the Inverse3, and on Ctrl-C it prints the test's key numbers and saves its
+plot. Flags override the preset.
+
+| Test | You do | It reports |
+|---|---|---|
+| T1 OSC response | nothing: scripted target steps / sines on x, y, z | stiffness, damping vs. the set $K_r, D_r$; bandwidth; friction / stick-slip (M6's parameters) |
+| T2 ZOH, no delay | tap and press the table | rendered vs. formula force; stiffest stable felt wall vs. $2b/T$ |
+| T3 God-object / fixed mass | free motion, then contact | proxy penetration; felt stiffness; robot table force vs. felt force |
+| T4 RIM (arm; closed loop later) | free motion, then contact | prediction error (proxy vs. robot shifted by $T_c$); force matching |
+| T5 TDPA | free motion and contact, with delay | energy per observer; how often and how hard each PC acts |
 
 ### 1. Formulation — agree on FORMULATION.md
 
 - M6: massless target node, coupling $K, D$ independent of the OSC gains $K_r, D_r$ (formulation in progress).
-- M2: two-port TDPA of Ryu et al. 2010; which architecture it wraps (position–force or position–position).
+- M2: two-port TDPA of Ryu et al. 2010, position–position (no accurate force sensor on the robot): FORMULATION.md M2.
 - M3: kept.
 
 ### 2. Implementation
@@ -104,15 +112,15 @@ replay (median ~12–45 ms depending on the site), 850 ms the orbit-to-ground re
 ## Decisions (2026-10-20)
 
 - Pre-tests: interactive per-test scripts (stage 0).
-- M2: two-port TDPA after Ryu et al. 2010.
+- M2: two-port TDPA after Ryu et al. 2010, position–position.
+- Pre-tests T1–T5 accepted.
 - M3 (god-object): kept.
 - Local surface link: 5G trace replay.
 
 ## Open questions
 
 1. M6: formulation (in progress on your side).
-2. M2: architecture the TDPA wraps (position–force or position–position).
-3. Pre-tests: the list of tests.
-4. Jitter level for E3.
+2. M2: check the PO/PC details (robot-side PC as a damping wrench vs. a position correction) against the paper.
+3. Jitter level for E3.
 
 Data: `~/data/franka/rim-delays/<sim|robot>/<session>/`.

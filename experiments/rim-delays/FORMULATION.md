@@ -6,7 +6,7 @@ One notation for every method, then each method as three answers:
 2. **Robot side** — what `osc_controller` receives.
 3. **Links** — what crosses each delayed link.
 
-Status: **M1, M4, M5 exist**; M2 (two-port), M3 and M6 are proposals to agree on before implementing.
+Status: **M1, M4, M5 exist**. M2 (two-port, position–position) and M3 are agreed, to implement. M6's formulation is in progress.
 
 ---
 
@@ -70,28 +70,54 @@ the delayed leader, and the operator is pulled toward the delayed robot.
 
 Under delay, free motion feels like a drag of about $K\,v\,T$, and contact arrives $T$ late.
 
-### M2 — TDPA (two-port) · *to implement; the current `tdpa-zoh` is one-port*
+### M2 — TDPA, two-port, position–position · *to implement; the current `tdpa-zoh` is one-port*
 
-M1's architecture, plus a passivity observer/controller (PO/PC) at **each** port, with energy sent
-over the links (Artigas et al., position–position TDPA). Each port splits its power into input
-and output energy:
+M1 unchanged, plus a passivity observer/controller (PO/PC) at **each** end. The delayed channel,
+together with both couplings, is treated as one two-port that must not generate energy
+(Ryu et al. 2010 for time-varying delay; position–position as in Artigas et al.).
+Position–position is chosen because the robot has no accurate force sensor. The robot-side power
+uses the OSC's **computed** force $F_{osc}$ (the `task_wrench` it publishes), not a measurement.
 
-- Operator port: $P_m = f \cdot v_l$.
-- Robot port: $P_s = F_{osc} \cdot v$.
+**Port powers** (positive = energy flowing into the network):
 
-Each side receives the other side's input energy, delayed. When the energy it has put out
-exceeds what it has received, its PC dissipates the excess:
+- Operator port: $P_m = -f \cdot v_l$. The operator pushes against $f$.
+- Robot port: $P_s = -F_{osc} \cdot v$. The robot is pushed by $F_{osc}$.
 
-- Operator side: an added damping, $f \leftarrow f - \alpha_m v_l$.
-- Robot side: a correction of the commanded position (the impedance-type PC).
+Each is integrated separately into an input energy $E^{in}$ (the integral of $\max(P, 0)$) and an
+output energy $E^{out}$ (the integral of $\max(-P, 0)$). Both are cumulative, never decreasing.
 
-- Links: M1's signals, plus the cumulative input energy in each direction.
-- The exact PO/PC equations will be fixed against the reference before implementing.
+**What crosses the links:** M1's signals, plus each side's cumulative input energy:
+$E^{in}_m$ goes to the robot, $E^{in}_s$ comes back to the operator.
 
-Today's `tdpa-zoh` is a one-port PO/PC at the device only. In the dev sim it never fired and
-equalled ZOH.
+**Passivity observers** compare what a side has put out with what the other side has put in, as received:
 
-### M3 — God-object proxy (MMT, geometry only) · *proposal*
+$$
+W_s(t) = E^{in}_m(t - T_c) - E^{out}_s(t) \ \ge 0,
+\qquad
+W_m(t) = E^{in}_s(t - T_f) - E^{out}_m(t) \ \ge 0 .
+$$
+
+With a time-varying delay, the received cumulative energy is simply the latest value delivered.
+It never decreases, so late or superseded packets are harmless.
+
+**Passivity controllers** dissipate a violation on the tick it happens. Both ports have impedance
+causality (velocity in, force out), so both PCs are series dampers:
+
+- Operator side: $f \leftarrow f - \alpha_m v_l$, with $\alpha_m = -W_m / (\Delta t\, \|v_l\|^2)$ when $W_m < 0$.
+- Robot side: $F_{osc} \leftarrow F_{osc} - \alpha_s v$, with $\alpha_s = -W_s / (\Delta t\, \|v\|^2)$ when $W_s < 0$.
+  It is applied as a feedforward wrench $f_{ff} = -\alpha_s v$. The classic alternative modifies
+  the commanded position, which causes position drift; our OSC takes a wrench, so drift is avoided.
+  To confirm against the reference.
+- Both damping coefficients are capped, as in the current one-port. The unpaid part of a violation is
+  carried to the next tick, and the dissipated energy is booked as output.
+
+**Where it runs:** the operator side in the haptic process (1 kHz). The robot side wraps the robot
+command, *after* the command delay, at the robot sample rate. On hardware that is this client
+process, between the delayed link and `osc_controller`.
+
+Today's `tdpa-zoh` is a one-port PO/PC at the device only. In the dev sim it never fired and equalled ZOH.
+
+### M3 — God-object proxy (MMT, geometry only) · *agreed, to implement*
 
 The local model is the table geometry alone. A massless proxy is the leader projected onto free space.
 
@@ -170,7 +196,7 @@ $v_t = \big[K(x_l - x_t) + D v_l - K_r(x_t - \hat x) + D_r \hat v\big] / (D + D_
 | | Model on the haptic side | Operator feels | Robot receives | ← link (robot → haptic) | OSC gains |
 |---|---|---|---|---|---|
 | M1 ZOH | none | spring to the delayed robot | delayed leader | $x, v$ | $= K, D$ |
-| M2 TDPA | none (+ PO/PC) | M1, passivity-corrected | delayed leader, PC-corrected | $x, v$, energy | $= K, D$ |
+| M2 TDPA | none (+ PO/PC) | M1, passivity-corrected | delayed leader + PC damping wrench | $x, v$, energy | $= K, D$ |
 | M3 God-object | geometry | spring to the projected leader | proxy + push | — | own |
 | M4 Fixed mass | geometry + mass $m$ | spring to the proxy | proxy + coupling force | — | own |
 | M5 RIM arm | geometry + $\Lambda, z, f_{eff}$ | spring to the proxy | proxy + coupling force | model | own (assumed ∞) |
