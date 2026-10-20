@@ -23,8 +23,8 @@ remote side). No wall-mismatch experiment.
 | | Method | Role | Status |
 |---|---|---|---|
 | M1 | ZOH | model-free reference | exists |
-| M2 | TDPA, two-port | passivity baseline for delayed links | **to implement** (today: one-port, inert) |
-| M3 | God-object proxy | plain MMT: geometry only | **to decide** |
+| M2 | TDPA, two-port (Ryu 2010) | passivity baseline for time-varying delay | **to implement** (today: one-port, inert); architecture to choose |
+| M3 | God-object proxy | plain MMT: geometry only | **to implement** (kept) |
 | M4 | Fixed-mass proxy | ablation: generic dynamics | exists |
 | M5 | RIM, arm only | ours, today | exists |
 | M6 | RIM, closed loop (arm + OSC) | ours: the controller in the model | **formulation to agree**, then implement |
@@ -33,15 +33,17 @@ Every method is validated (stage 3) before its delay results are used.
 
 ## Stages
 
-### 0. Your pre-tests
+### 0. Pre-tests: validate the controllers interactively
 
-Things to check on the robot before the full conditions. **To list.**
+One script per test: it starts a preset configuration (robot or sim), you play with it and feel
+it on the Inverse3, and when you stop it prints the test's key metrics and saves its plot. Tests
+to list; they overlap with stage 3.
 
 ### 1. Formulation — agree on FORMULATION.md
 
-- M6: massless target node, coupling $K, D$ independent of the OSC gains $K_r, D_r$.
-- M2: which two-port TDPA (reference, PC types).
-- M3: in or out.
+- M6: massless target node, coupling $K, D$ independent of the OSC gains $K_r, D_r$ (formulation in progress).
+- M2: two-port TDPA of Ryu et al. 2010; which architecture it wraps (position–force or position–position).
+- M3: kept.
 
 ### 2. Implementation
 
@@ -49,8 +51,8 @@ Things to check on the robot before the full conditions. **To list.**
   method in `haptic_teleop`/`fr3_teleop` (sends the target, no feedforward). The model also carries
   $K_r, D_r$, read from the same parameters `fr3_teleop` sets on the controller.
 - M2: two-port PO/PC, with energy carried on both links.
-- M3: if kept, the projection proxy.
-- Delays: 5G trace replay (`src/teleop/network_sim/data/5G-data.csv`, round trip → halved per link).
+- M3: the projection proxy.
+- Delays: 5G trace replay (`src/teleop/network_sim/data/5G-data.csv`, round trip → halved per link). It replaces the constant 50 ms condition.
 
 ### 3. Validation, method by method (sim first, then robot)
 
@@ -66,13 +68,13 @@ Things to check on the robot before the full conditions. **To list.**
 
 | | Task | Operator | Methods | Delays | For |
 |---|---|---|---|---|---|
-| E1 | press: approach, press, hold, retract | scripted (no hand) | all | 0, 50, 850, 2600 ms | C1, C2 |
+| E1 | press: approach, press, hold, retract | scripted (no hand) | all | 0, 5G, 850, 2600 ms | C1, C2 |
 | E2 | circle on the table | scripted (no hand) | all | same | C1, C2 (tangential) |
-| E3 | press | scripted | M1, M2, M6 (+M5) | 5G trace; 850 ms ± jitter | C3 |
+| E3 | press | scripted | M1, M2, M6 (+M5) | 850 ms ± jitter | C3 |
 | E4 | press, circle, free task | you on the Inverse3 | M1, M2, M6 (+M5) | 0, 850, 2600 ms | C3, C4, video |
 
-Delays are round trips, split evenly between the links. 50 ms is the local surface link (5G
-replay is the realistic version), 850 ms the orbit-to-ground relay, 2.6 s the Earth–Moon link.
+Delays are round trips, split evenly between the links. The local surface link is the 5G trace
+replay (median ~12–45 ms depending on the site), 850 ms the orbit-to-ground relay, 2.6 s the Earth–Moon link.
 
 **Operators.**
 
@@ -99,13 +101,18 @@ replay is the realistic version), 850 ms the orbit-to-ground relay, 2.6 s the Ea
 - Dev sim session, one repeat, `~/data/franka/rim-delays/sim/dev`. RIM's rendering does not
   degrade with delay; ZOH's free-motion force reaches 39 N at 2.6 s; one-port TDPA = ZOH.
 
+## Decisions (2026-10-20)
+
+- Pre-tests: interactive per-test scripts (stage 0).
+- M2: two-port TDPA after Ryu et al. 2010.
+- M3 (god-object): kept.
+- Local surface link: 5G trace replay.
+
 ## Open questions
 
-1. Your pre-tests (stage 0).
-2. M6: massless target node, OK? Held controller torques (orientation, null-space) in $\tilde f$ from the start, or measure first?
-3. M2: two-port TDPA variant and reference.
-4. M3 (god-object) in the ladder?
-5. 5G replay for the 50 ms condition, or constant 50 ms plus a separate 5G experiment (E3)?
-6. Jitter level for E3.
+1. M6: formulation (in progress on your side).
+2. M2: architecture the TDPA wraps (position–force or position–position).
+3. Pre-tests: the list of tests.
+4. Jitter level for E3.
 
 Data: `~/data/franka/rim-delays/<sim|robot>/<session>/`.
