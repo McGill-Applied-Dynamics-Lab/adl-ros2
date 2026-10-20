@@ -22,9 +22,11 @@ from pathlib import Path
 import numpy as np
 from experiment_logger import ExperimentLogger, LoggingConfig
 from fr3_haptic.links import Links, LinksConfig
+from fr3_haptic.port import RobotPort
 from fr3_haptic.session import PROXY_METHODS, CommandLoop, CommandLoopConfig, RimModelLoop
 from fr3_haptic.teleop import (
     TAG,
+    TWO_PORT,
     absolute_limits,
     build_parser,
     interface_basis,
@@ -89,7 +91,8 @@ def main(argv: list[str] | None = None) -> None:
     boxes = [plant_box]
     links = Links(links_cfg)
     gains = osc_gains(args.interface_axis, coupling, sim_cfg.mass)
-    sim = SimFR3(sim_cfg, frame, gains, sink=links.plant_sink(plant_box), sample_hz=model_update_hz)
+    port = RobotPort(max_damping=args.tdpa_robot_max_damping) if args.method in TWO_PORT else None
+    sim = SimFR3(sim_cfg, frame, gains, sink=links.plant_sink(plant_box), sample_hz=model_update_hz, port=port)
     # as fr3_teleop: a generation-2 collection stalls every thread here past the watchdog
     gc.collect()
     gc.disable()
@@ -255,6 +258,12 @@ def main(argv: list[str] | None = None) -> None:
                 if delivered_s >= t0:
                     logger.log_sample("command_link", {"delay_ms": delay_s * 1e3, "sent_s": sent_s - t0},
                                       timestamp_s=delivered_s - t0)
+            if port is not None and port.history is not None:
+                for t_s, e_in, e_out, remote_in, alpha in port.history:
+                    if t_s >= t0:
+                        logger.log_sample("robot_port", {"energy_in": e_in, "energy_out": e_out,
+                                                         "remote_energy_in": remote_in, "damping": alpha},
+                                          timestamp_s=t_s - t0)
     finally:
         for box in boxes:
             box.close()

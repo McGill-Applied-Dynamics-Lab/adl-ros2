@@ -68,13 +68,25 @@ from .config import ModelConfig
 from .links import Links, LinksConfig, load_delay_trace
 from .live import LiveView, live_logger
 from .plant import FR3Plant, FR3System
+from .port import RobotPort
 from .recorder import RobotStateRecorder
 from .scripted import PROFILES, HandConfig, Script, ScriptConfig, ScriptedOperator
 from .session import PROXY_METHODS, CommandLoop, CommandLoopConfig, RimModelLoop
 
 TAG = "[fr3_teleop]"
 CONTROLLER_HZ = 1000.0  # osc_controller publishes ee_state / task_wrench every tick
-METHODS = ("zoh", "linear", "tdpa-zoh", "tdpa-linear", "proxy-rim", "proxy-fixed-mass", "proxy-god-object")
+METHODS = (
+    "zoh",
+    "linear",
+    "tdpa-zoh",
+    "tdpa-linear",
+    "tdpa2-zoh",
+    "tdpa2-linear",
+    "proxy-rim",
+    "proxy-fixed-mass",
+    "proxy-god-object",
+)
+TWO_PORT = ("tdpa2-zoh", "tdpa2-linear")  # two-port TDPA: a robot end next to the controller
 AXES = "xyz"
 GAP_SIM_MAX_S = 300.0  # feedback-gap estimate at startup: at most this much run is simulated [s]
 
@@ -119,6 +131,12 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--dv", type=float, default=70.0, help="coupling damping, world [N·s/m]")
     g.add_argument("--linear-max-extrapolation", type=float, default=1.0, help="linear: cap, in plant periods")
     g.add_argument("--tdpa-max-damping", type=float, default=10.0, help="TDPA damping cap [N·s/m]; 0 = unbounded")
+    g.add_argument(
+        "--tdpa-robot-max-damping",
+        type=float,
+        default=50.0,
+        help="two-port TDPA (tdpa2-*): damping cap of the robot end [N·s/m]",
+    )
     g.add_argument("--proxy-mass", type=float, default=1.0, help="proxy-fixed-mass: mass [kg]")
     g.add_argument("--contact-surface", type=float, default=None, help="proxy methods: wall on the interface axis [m]")
 
@@ -405,14 +423,16 @@ def controller_gains(args: argparse.Namespace) -> list[tuple[str, object]]:
 
     Coupling methods: each interface axis becomes the coupling spring (``kv``, ``dv``, in N/m,
     so decoupling off), the twist feedforward carries the leader velocity, no wrench
-    feedforward. Proxy methods: wrench feedforward on; gains are left to ``--osc-params``.
+    feedforward (except the two-port TDPA, whose robot end damps through it). Proxy methods:
+    wrench feedforward on; gains are left to ``--osc-params``.
     """
     if args.method in PROXY_METHODS:
         return [("feedforward.wrench", True), ("feedforward.twist", True)]
     gains: list[tuple[str, object]] = [("control.inertia_decoupling", False)]
     for axis in args.interface_axis:
         gains += [(f"gains.k_pos_{axis}", float(args.kv)), (f"gains.d_pos_{axis}", float(args.dv))]
-    return gains + [("feedforward.twist", True), ("feedforward.accel", False), ("feedforward.wrench", False)]
+    wrench = args.method in TWO_PORT
+    return gains + [("feedforward.twist", True), ("feedforward.accel", False), ("feedforward.wrench", wrench)]
 
 
 def script_config(args: argparse.Namespace) -> ScriptConfig | None:
@@ -520,6 +540,7 @@ def main(argv: list[str] | None = None) -> None:
         interface_limits=limits,
         record=True,
         mailbox=links.plant_sink(plant_box),
+        port=RobotPort(max_damping=args.tdpa_robot_max_damping) if args.method in TWO_PORT else None,
     )
     links.start()  # delivers the delayed samples (and later targets); no thread without a delay
     robot.controller_switcher_client.switch_controller(args.controller)
@@ -822,6 +843,15 @@ def main(argv: list[str] | None = None) -> None:
                     logger.log_sample(
                         "command_link", {"delay_ms": delay_s * 1e3, "sent_s": sent_s - t0}, timestamp_s=delivered_s - t0
                     )
+            # Two-port TDPA, robot end: energies and damping, one row per command
+            if plant.port is not None and plant.port.history is not None:
+                for t_s, e_in, e_out, remote_in, alpha in plant.port.history:
+                    if t_s >= t0:
+                        logger.log_sample(
+                            "robot_port",
+                            {"energy_in": e_in, "energy_out": e_out, "remote_energy_in": remote_in, "damping": alpha},
+                            timestamp_s=t_s - t0,
+                        )
     finally:
         for box in boxes:
             box.close()

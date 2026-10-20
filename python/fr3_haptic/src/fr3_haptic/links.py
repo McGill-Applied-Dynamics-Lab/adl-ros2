@@ -134,9 +134,9 @@ class DelayedPlantWriter:
         self.line = line
         self.mailbox = mailbox
 
-    def write(self, x_i, v_i, lam, t_s: float, rx_s: float | None = None) -> None:
+    def write(self, x_i, v_i, lam, t_s: float, rx_s: float | None = None, energy_in: float = 0.0) -> None:
         rx_s = time.monotonic() if rx_s is None else rx_s
-        self.line.push((np.copy(x_i), np.copy(v_i), np.copy(lam), t_s, rx_s), sent_s=rx_s)
+        self.line.push((np.copy(x_i), np.copy(v_i), np.copy(lam), t_s, rx_s, energy_in), sent_s=rx_s)
 
 
 class DelayedModelWriter:
@@ -163,9 +163,9 @@ class DelayedPlant:
         self.line = line
         self.frozen = False
 
-    def aim(self, x, v) -> None:
+    def aim(self, x, v, energy_in: float | None = None) -> None:
         if not self.frozen:
-            self.line.push(("aim", np.copy(x), np.copy(v), None), sent_s=time.monotonic())
+            self.line.push(("aim", np.copy(x), np.copy(v), energy_in), sent_s=time.monotonic())
 
     def command(self, x, v=None, f_ff=None) -> None:
         if not self.frozen:
@@ -180,11 +180,14 @@ class DelayedPlant:
     def deliver(self, target) -> None:
         if self.frozen:
             return
-        kind, x, v, f_ff = target
+        kind, x, v, extra = target
         if kind == "aim":
-            self.plant.aim(x, v)
+            if extra is None:
+                self.plant.aim(x, v)
+            else:
+                self.plant.aim(x, v, energy_in=extra)  # the operator end's energy, with the target
         else:
-            self.plant.command(x, v, f_ff)
+            self.plant.command(x, v, extra)
 
 
 @dataclass
@@ -240,8 +243,8 @@ class Links:
         if self.plant_writer is not None:
             got = self.plant_writer.line.poll(now)
             if got is not None:
-                (x_i, v_i, lam, t_s, rx_s), _, delay = got
-                self.plant_writer.mailbox.write(x_i, v_i, lam, t_s, rx_s=rx_s, delivered_s=now)
+                (x_i, v_i, lam, t_s, rx_s, energy_in), _, delay = got
+                self.plant_writer.mailbox.write(x_i, v_i, lam, t_s, rx_s=rx_s, delivered_s=now, energy_in=energy_in)
                 self.records.feedback.append((rx_s, now, delay, t_s))
         if self.model_writer is not None:
             got = self.model_writer.line.poll(now)

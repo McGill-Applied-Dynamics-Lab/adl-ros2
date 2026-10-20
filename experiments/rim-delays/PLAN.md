@@ -23,8 +23,8 @@ remote side). No wall-mismatch experiment.
 | | Method | Role | Status |
 |---|---|---|---|
 | M1 | ZOH | model-free reference | exists |
-| M2 | TDPA, two-port, position–position (Ryu 2010) | passivity baseline for time-varying delay | **to implement** (today: one-port, inert) |
-| M3 | God-object proxy | plain MMT: geometry only | **to implement** (kept) |
+| M2 | TDPA, two-port, position–position (Ryu 2010) | passivity baseline for time-varying delay | implemented (`tdpa2-zoh`), sim-checked |
+| M3 | God-object proxy | plain MMT: geometry only | implemented (`proxy-god-object`), sim-checked |
 | M4 | Fixed-mass proxy | ablation: generic dynamics | exists |
 | M5 | RIM, arm only | ours, today | exists |
 | M6 | RIM, closed loop (arm + OSC) | ours: the controller in the model | **formulation to agree**, then implement |
@@ -120,7 +120,8 @@ replay (median ~12–45 ms depending on the site), 850 ms the orbit-to-ground re
 ## Open questions
 
 1. M6: formulation (in progress on your side).
-2. M2: check the PO/PC details (robot-side PC as a damping wrench vs. a position correction) against the paper.
+2. M2: check the PO/PC details (robot-side PC as a damping wrench vs. a position correction) against the paper;
+   choose the damping caps (T5).
 3. Jitter level for E3.
 
 Data: `~/data/franka/rim-delays/<sim|robot>/<session>/`.

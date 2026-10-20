@@ -129,7 +129,11 @@ class CommandLoop:
             s.commands.append((t_s, target.copy(), v.copy(), f_ff))
         else:
             x_l, v_l = state["x_l"], state["v_l"]
-            self.plant.aim(x_l, v_l)
+            energy = state.get("energy_in", float("nan"))
+            if np.isfinite(energy):  # two-port TDPA: the operator end's energy goes with the target
+                self.plant.aim(x_l, v_l, energy_in=energy)
+            else:
+                self.plant.aim(x_l, v_l)
             s.commands.append((t_s, x_l.copy(), v_l.copy(), np.zeros_like(x_l)))
 
     def shutdown_robot(self) -> None:

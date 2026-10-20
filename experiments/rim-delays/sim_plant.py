@@ -91,13 +91,15 @@ class SimFR3:
         gains: ``(K, D)`` per base axis (`osc_gains`).
         sink: ``PlantMailbox`` or a delayed stand-in (``write(x_i, v_i, lam, t_s, rx_s=...)``).
         sample_hz: plant samples per second to ``sink``.
+        port: the robot end of a two-port TDPA (`fr3_haptic.port.RobotPort`), as in `FR3Plant`.
     """
 
-    def __init__(self, cfg: SimConfig, frame: InterfaceFrame, gains, *, sink, sample_hz: float) -> None:
+    def __init__(self, cfg: SimConfig, frame: InterfaceFrame, gains, *, sink, sample_hz: float, port=None) -> None:
         self.cfg = cfg
         self.frame = frame
         self.K, self.D = (np.asarray(g, dtype=float) for g in gains)
         self.sink = sink
+        self.port = port
         self.dt = 1.0 / cfg.physics_hz
         self._sample_every = max(1, round(cfg.physics_hz / sample_hz))
         self.m = np.asarray(cfg.mass, dtype=float)
@@ -123,8 +125,13 @@ class SimFR3:
     def dim(self) -> int:
         return self.frame.dim
 
-    def aim(self, x, v) -> None:
-        self._set(x, v, None)
+    def aim(self, x, v, energy_in: float | None = None) -> None:
+        f_ff = None
+        if self.port is not None:
+            if energy_in is not None:
+                self.port.receive(energy_in)
+            f_ff = self.port.wrench(time.monotonic())
+        self._set(x, v, f_ff)
 
     def command(self, x, v=None, f_ff=None) -> None:
         self._set(x, np.zeros(self.dim) if v is None else v, f_ff)
@@ -194,8 +201,11 @@ class SimFR3:
         while not self._stop.is_set():
             x, v, pose, f_task, f_contact = self.step()
             now = time.monotonic()
+            if self.port is not None:
+                self.port.observe(B.T @ f_task, B.T @ v, now)
             if k % self._sample_every == 0:
-                self.sink.write(B.T @ x, B.T @ v, -(B.T @ f_task), now, rx_s=now)
+                energy = self.port.energy_in if self.port is not None else 0.0
+                self.sink.write(B.T @ x, B.T @ v, -(B.T @ f_task), now, rx_s=now, energy_in=energy)
                 self.samples += 1
             if k % self.cfg.record_every == 0 and self._n_truth < len(self._truth):
                 self._truth[self._n_truth] = (now, *x, *v, *pose, *f_task, *f_contact)

@@ -128,7 +128,8 @@ class Run:
 
 def felt_stiffness(run: Run) -> tuple[float, int]:
     """Slope of the rendered force along z on the leader's penetration below the table, while it is
-    below [N/m, world], and the number of samples used."""
+    below [N/m, world], and the number of samples used. Meaningful without delay only: under delay
+    the force at a given penetration mixes in the drag of the delayed robot."""
     if run.surface is None:
         return np.nan, 0
     pen = run.surface - run.zl

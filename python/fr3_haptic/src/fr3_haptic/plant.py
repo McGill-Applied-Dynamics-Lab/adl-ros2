@@ -110,6 +110,9 @@ class FR3Plant:
         record: keep every sample (after decimation) in [history][FR3Plant.history], for logging.
         node: subscribe on this node, which the caller spins. ``None`` (the default) creates
             the plant's own node and a single-threaded executor thread for it.
+        port: the robot end of a two-port TDPA (`fr3_haptic.port.RobotPort`): observes every
+            controller tick, its input energy goes out with the samples, and [aim][FR3Plant.aim]
+            adds its damping wrench. ``None``: no two-port TDPA.
         mailbox: also publish every kept sample here (a ``haptic_teleop.PlantMailbox``), for a
             haptic loop in another process.
     """
@@ -128,8 +131,10 @@ class FR3Plant:
         record: bool = False,
         node=None,
         mailbox=None,
+        port=None,
     ) -> None:
         self._robot = robot
+        self.port = port
         self._frame = frame
         self._hold_pose = None if hold_pose is None else hold_pose.copy()
         self._sample_period_ns = round(float(sample_period_s) * 1e9)
@@ -252,6 +257,11 @@ class FR3Plant:
             for pending in (self._pending_ee, self._pending_wrench):
                 for k in [k for k in pending if k < key]:
                     del pending[k]
+            if self.port is not None:  # every controller tick, before decimation
+                f, v = wrench.wrench.force, ee.twist.twist.linear
+                self.port.observe(
+                    self._frame.project(np.array([f.x, f.y, f.z])), self._frame.project(np.array([v.x, v.y, v.z])), key * 1e-9
+                )
 
             if not self._keep(key):
                 return
@@ -261,7 +271,8 @@ class FR3Plant:
             if self._record:
                 self.history.append(sample)
             if self._mailbox is not None:
-                self._mailbox.write(sample.x_i, sample.v_i, sample.lam, sample.t_s, sample.rx_s)
+                energy = self.port.energy_in if self.port is not None else 0.0
+                self._mailbox.write(sample.x_i, sample.v_i, sample.lam, sample.t_s, sample.rx_s, energy_in=energy)
 
     _KEEP_TOLERANCE_NS = 500_000  # half a 1 kHz controller tick
 
@@ -312,14 +323,21 @@ class FR3Plant:
 
     # ---------------------------------------------------------------- command side
 
-    def aim(self, x: np.ndarray, v: np.ndarray) -> None:
+    def aim(self, x: np.ndarray, v: np.ndarray, energy_in: float | None = None) -> None:
         """Stream the leader state as the coupling target (ZOH, linear, TDPA).
 
         Args:
             x: ``(dim,)`` leader interface position [m].
             v: ``(dim,)`` leader interface velocity [m/s].
+            energy_in: the operator end's input energy, sent with the target (two-port TDPA);
+                with a [port][FR3Plant.port], the target carries its damping wrench.
         """
-        self._publish(x, v, None)
+        f_ff = None
+        if self.port is not None:
+            if energy_in is not None:
+                self.port.receive(energy_in)
+            f_ff = self.port.wrench(time.monotonic())
+        self._publish(x, v, f_ff)
 
     def command(self, x: np.ndarray, v: np.ndarray | None = None, f_ff: np.ndarray | None = None) -> None:
         """Stream a proxy state and a feedforward force (RIM, fixed-mass).

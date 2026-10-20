@@ -6,7 +6,7 @@ One notation for every method, then each method as three answers:
 2. **Robot side** — what `osc_controller` receives.
 3. **Links** — what crosses each delayed link.
 
-Status: **M1, M4, M5 exist**. M2 (two-port, position–position) and M3 are agreed, to implement. M6's formulation is in progress.
+Status: **M1–M5 implemented** (M2: `tdpa2-zoh`, M3: `proxy-god-object`). M6's formulation is in progress.
 
 ---
 
@@ -70,7 +70,7 @@ the delayed leader, and the operator is pulled toward the delayed robot.
 
 Under delay, free motion feels like a drag of about $K\,v\,T$, and contact arrives $T$ late.
 
-### M2 — TDPA, two-port, position–position · *to implement; the current `tdpa-zoh` is one-port*
+### M2 — TDPA, two-port, position–position · *implemented: `tdpa2-zoh` (the one-port `tdpa-zoh` remains)*
 
 M1 unchanged, plus a passivity observer/controller (PO/PC) at **each** end. The delayed channel,
 together with both couplings, is treated as one two-port that must not generate energy
@@ -111,13 +111,20 @@ causality (velocity in, force out), so both PCs are series dampers:
 - Both damping coefficients are capped, as in the current one-port. The unpaid part of a violation is
   carried to the next tick, and the dissipated energy is booked as output.
 
-**Where it runs:** the operator side in the haptic process (1 kHz). The robot side wraps the robot
-command, *after* the command delay, at the robot sample rate. On hardware that is this client
-process, between the delayed link and `osc_controller`.
+**Where it runs:** the operator end in the haptic process (1 kHz, `haptic_teleop.TDPA2Rendering`).
+The robot end (`fr3_haptic.port.RobotPort`) observes every controller tick, *after* the command
+delay, and its damping wrench goes out with the next target (command rate). On hardware that is this
+client process, between the delayed link and `osc_controller`. `osc_controller`'s `task_wrench`
+includes the feedforward wrench, so the robot end's own damping is booked by its observer.
+
+**Damping caps:** `--tdpa-max-damping` (operator end, world N·s/m; the handle feels it × `force_gain`)
+and `--tdpa-robot-max-damping` (robot end). First sim run (850 ms, scripted hand): the operator end
+fires on most ticks at its cap (10 N·s/m), the robot end never (it receives far more than it puts
+out). The caps decide how conservative M2 is: to choose in T5 on the device.
 
 Today's `tdpa-zoh` is a one-port PO/PC at the device only. In the dev sim it never fired and equalled ZOH.
 
-### M3 — God-object proxy (MMT, geometry only) · *agreed, to implement*
+### M3 — God-object proxy (MMT, geometry only) · *implemented: `proxy-god-object`*
 
 The local model is the table geometry alone. A massless proxy is the leader projected onto free space.
 
