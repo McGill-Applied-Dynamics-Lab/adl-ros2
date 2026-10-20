@@ -28,7 +28,7 @@ import numpy as np
 from haptic_teleop import RateTicker
 from pyrim import DynModel, InterfaceFrame
 
-__all__ = ["TRUTH_COLS", "SimConfig", "SimFR3", "osc_gains"]
+__all__ = ["PRESET_K", "TRUTH_COLS", "SimConfig", "SimFR3", "osc_gains"]
 
 TASK_INERTIA = (11.4, 4.6, 5.4)  # FR3 Lambda_ii at home [kg], experiments/benchmarks/osc_controller/FINDINGS.md
 PRESET_K = (1500.0, 1500.0, 3500.0)  # configs/osc_teleop.yaml held-axis stiffness [N/m]

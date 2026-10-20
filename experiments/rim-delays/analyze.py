@@ -24,65 +24,35 @@ Metrics, per run (z is the contact axis, ``s`` the table height, ``K`` the coupl
 from __future__ import annotations
 
 import argparse
-import json
 import re
+import sys
 from pathlib import Path
 
-import matplotlib
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
 
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt  # noqa: E402
-import numpy as np  # noqa: E402
-import pandas as pd  # noqa: E402
-from experiment_logger import load_streams  # noqa: E402
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from runs import COLORS, INK, INK_2, INK_3, LABELS, find  # noqa: E402
+from runs import load_run as _load_run  # noqa: E402
+from runs import save as _save  # noqa: E402
 
 NAME = re.compile(r"(?P<task>[a-z]+)_(?P<method>[a-z-]+)_rtt(?P<rtt>\d+)_r(?P<rep>\d+)$")
 METHODS = ("proxy-rim", "zoh", "tdpa-zoh")
-LABELS = {"proxy-rim": "RIM (ours)", "zoh": "ZOH", "tdpa-zoh": "TDPA"}
-COLORS = {"proxy-rim": "#2a78d6", "zoh": "#eb6834", "tdpa-zoh": "#1baf7a"}  # categorical slots 1-3
-INK, INK_2, INK_3, GRID, SURFACE = "#0b0b0b", "#52514e", "#8a8984", "#e6e5e0", "#fcfcfb"
 FREE_MARGIN = 0.005  # leader this far above the table counts as free motion [m]
-
-plt.rcParams.update({
-    "figure.facecolor": SURFACE, "axes.facecolor": SURFACE, "savefig.facecolor": SURFACE,
-    "axes.edgecolor": GRID, "axes.labelcolor": INK_2, "xtick.color": INK_2, "ytick.color": INK_2,
-    "axes.grid": True, "grid.color": GRID, "grid.linewidth": 0.8, "axes.spines.top": False,
-    "axes.spines.right": False, "font.size": 10, "axes.titlesize": 11, "axes.titlecolor": INK,
-    "legend.frameon": False, "lines.linewidth": 2.0,
-})
 
 
 # ------------------------------------------------------------------ loading
 
 
 def load_run(run_dir: Path) -> dict | None:
-    """Streams and metadata of one run, with the robot side normalized to ``robot`` columns
-    ``ts, x, y, z, fz`` (table force on the robot, up = positive)."""
-    meta_path = run_dir / "metadata.json"
-    if not meta_path.exists() or not (run_dir / "samples.mcap").exists():
+    """`runs.load_run`, with the robot table's ``fz`` column being the table force (up)."""
+    run = _load_run(run_dir)
+    if run is None or run["haptic"] is None:
         return None
-    meta = json.loads(meta_path.read_text())
-    meta = meta.get("metadata", meta)
-    streams = load_streams(run_dir, ["haptic", "plant", "sim", "command"])
-    if "haptic" not in streams:
-        return None
-    if "sim" in streams:
-        s = streams["sim"]
-        robot = pd.DataFrame({"ts": s.ts, "x": s.x_x, "y": s.x_y, "z": s.x_z, "fz": s.f_contact_z})
-    elif "plant" in streams and "ee_position_0" in streams["plant"]:
-        s = streams["plant"]
-        robot = pd.DataFrame({"ts": s.ts, "x": s.ee_position_0, "y": s.ee_position_1, "z": s.ee_position_2,
-                              "fz": (-s.task_force_2).clip(lower=0.0)})
-    else:
-        robot = None
-    return {"meta": meta, "haptic": streams["haptic"], "robot": robot}
-
-
-def find(meta: dict, key: str, default=None):
-    """``key`` from the metadata, wherever it sits (top level or under ``args``)."""
-    if key in meta and meta[key] is not None:
-        return meta[key]
-    return meta.get("args", {}).get(key, default)
+    if run["robot"] is not None:
+        run["robot"] = run["robot"].assign(fz=run["robot"].f_table)
+    return run
 
 
 # ------------------------------------------------------------------ metrics
@@ -162,9 +132,7 @@ def methods_in(df: pd.DataFrame) -> list[str]:
 
 
 def save(fig, out: Path, name: str) -> None:
-    for ext in ("png", "pdf"):
-        fig.savefig(out / f"{name}.{ext}", dpi=200, bbox_inches="tight")
-    plt.close(fig)
+    _save(fig, out, name)
 
 
 def fig_metrics(df: pd.DataFrame, task: str, metrics: list[str], out: Path) -> None:
