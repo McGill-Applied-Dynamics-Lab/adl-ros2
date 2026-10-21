@@ -7,14 +7,16 @@ Reads the Teensy over serial and turns the echo frames into teleop commands, in 
 Runs in its own process (`SensorProcess`), so the robot (rclpy, the GIL) never stalls the fast
 loop. Imports no ROS: it can be developed and tested without the robot.
 
-Standalone (the port defaults to /dev/ttyACM0, see --port):
+Standalone (the port defaults to the Teensy sending frames, see --port):
     pixi run -e wg python experiments/waveguide/sensor.py               # frame rate, pressed holes, commands
     pixi run -e wg python experiments/waveguide/sensor.py --live-plot   # raw frames
     pixi run -e wg python experiments/waveguide/sensor.py --calibrate   # guided calibration, see CalibrationConfig
 """
 
 import argparse
+import glob
 import json
+import os
 import multiprocessing as mp
 import queue
 import signal
@@ -96,7 +98,10 @@ GESTURE_CFG = GestureConfig()
 CAL_CFG = CalibrationConfig()
 
 
-DEFAULT_PORT = "/dev/ttyACM0"
+DEFAULT_PORT = "auto"  # The connected Teensy that sends frames (`find_frame_port`)
+TEENSY_PORTS = "/dev/serial/by-id/usb-Teensyduino*"  # By serial number: ttyACM<n> depends on the plug-in order
+PORT_PROBE_S = 0.5  # Listening time per port when looking for the frames (~20 frames/s)
+NO_FRAME_WARN_S = 2.0  # Warn when no frame arrived for this long
 DEFAULT_BAUDRATE = 3_000_000
 SERIAL_TIMEOUT = 0.1  # s, so the loop checks the stop event even without data
 
@@ -106,14 +111,46 @@ HEADER = b"\xaa\x55\x00"
 PACKET_SIZE = len(HEADER) + 2 * FRAME_SIZE
 
 
-def check_port(port: str) -> None:
-    """Raise FileNotFoundError if the serial port does not exist."""
+def teensy_ports() -> list[str]:
+    """Serial ports of the connected Teensys (any /dev/ttyACM* if none is identified as one)."""
+    return sorted(glob.glob(TEENSY_PORTS)) or sorted(glob.glob("/dev/ttyACM*"))
+
+
+def find_frame_port(baudrate: int) -> str:
+    """The port of the Teensy sending frames (TEENSY_FIRMWARE), among the connected ones.
+
+    Another Teensy can be connected too (e.g. the TEENSY_BLUETOOTH one, which sends nothing over USB), and
+    ttyACM0/1 swap with the plug-in order, so each one is listened to for `PORT_PROBE_S`.
+    """
+    ports = teensy_ports()
+    if not ports:
+        raise FileNotFoundError("No Teensy found: is it plugged in? (--port to give the port)")
+    for port in ports:
+        try:
+            with serial.Serial(port, baudrate, timeout=0.05) as ser:
+                ser.reset_input_buffer()
+                data, t_end = bytearray(), time.monotonic() + PORT_PROBE_S
+                while time.monotonic() < t_end and HEADER not in data:
+                    data += ser.read(max(ser.in_waiting, 1))
+        except serial.SerialException:  # Busy (e.g. another script) or gone
+            continue
+        if HEADER in data:
+            return os.path.realpath(port)
+    raise FileNotFoundError(f"No Teensy sending frames among {ports}: is TEENSY_FIRMWARE flashed? (--port)")
+
+
+def check_port(port: str, baudrate: int = DEFAULT_BAUDRATE) -> str:
+    """The port to open: `port`, or the Teensy sending frames if "auto". FileNotFoundError if there is none."""
+    if port == "auto":
+        port = find_frame_port(baudrate)
+        print(f"Teensy sending frames: {port}")
     if not Path(port).exists():
         raise FileNotFoundError(f"Serial port {port} not found: is the Teensy plugged in? (--port to use another one)")
+    return port
 
 
 def open_serial(port: str, baudrate: int) -> serial.Serial:
-    check_port(port)
+    port = check_port(port, baudrate)
 
     print(f"Waveguide sensor loop started on {port} at {baudrate} baud (Ctrl+C to quit)")
 
@@ -375,11 +412,17 @@ def run_sensor_loop(
     with open_serial(port, baudrate) as ser:
         reader = FrameReader(ser)
         reader.flush()  # Drop what accumulated before we started
+        t_last_frame, warned = time.monotonic(), False
         while stop_event is None or not stop_event.is_set():
             frame = reader.read_frame()
             t = time.monotonic()
 
+            if frame is None and not warned and t - t_last_frame > NO_FRAME_WARN_S:
+                print(f"No frame from {ser.port} for {NO_FRAME_WARN_S:g} s: is it the Teensy running TEENSY_FIRMWARE? "
+                      f"Connected: {teensy_ports()}")
+                warned = True
             if frame is not None:
+                t_last_frame, warned = t, False
                 new_pressed = detector.update(frame)
                 if on_frame is not None:
                     on_frame(t, frame, detector)
@@ -415,7 +458,7 @@ class SensorProcess:
 
     def __init__(self, port: str = DEFAULT_PORT, baudrate: int = DEFAULT_BAUDRATE, plot: bool = False):
         # Checked here, not only in the child: there it would just end the process
-        check_port(port)
+        port = check_port(port, baudrate)
         load_calibration()
         # Spawn, not fork: the child must not inherit the parent's rclpy state and threads
         ctx = mp.get_context("spawn")
@@ -566,7 +609,7 @@ def run_with_live_plot(
     sees. The callbacks are passed on to the loop, and called from its thread. Runs until the window is
     closed or `stop_event` (if given) is set.
     """
-    check_port(port)
+    port = check_port(port, baudrate)
     calibration = load_calibration(CAL_CFG.npz_path)
     import pyqtgraph as pg  # Only needed here
     from pyqtgraph.Qt import QtCore

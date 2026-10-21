@@ -12,7 +12,7 @@ Each command `<axis> <distance> <speed>` moves the end-effector by `distance` [m
 `speed` [m/s]. Commands come from the terminal or from the waveguide sensor (see `commands.py` and
 `sensor.py`). Commands created while the robot is moving are ignored.
 
-    pixi run -e wg python experiments/waveguide/wg_teleop.py                     # waveguide, Teensy on /dev/ttyACM0 (--port)
+    pixi run -e wg python experiments/waveguide/wg_teleop.py                     # waveguide, the Teensy sending frames (--port to pick one)
     pixi run -e wg python experiments/waveguide/wg_teleop.py --live-plot         # same, with the sensor live plot
     pixi run -e wg python experiments/waveguide/wg_teleop.py --input terminal    # commands typed in the terminal
 """
