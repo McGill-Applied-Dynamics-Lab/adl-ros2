@@ -246,3 +246,107 @@ def test_close_until_target_first(egg_grasp):
     stopped, _ = grasp.close_until(0.050, 0.005, lambda f: bool(f.covered))
     assert not stopped
     assert gripper.value == pytest.approx(0.050)
+
+
+# --- Teensy source, against a fake TEENSY_BLUETOOTH firmware on a pseudo-terminal (serial link)
+def test_frame_from_result():
+    from touch import frame_from_result
+
+    result = dict(detected=True, hole=5, distance_cm=30.0, amplitude=120.0, hole2=7)
+    frame = frame_from_result(result, t=1.0)
+    assert frame.covered == {5, 7} and frame.amplitude == 120.0 and frame.t == 1.0
+    assert frame.holes[0].distance_cm == 30.0 and np.isnan(frame.holes[1].distance_cm)
+    assert frame_from_result(dict(result, detected=False)).covered == frozenset()
+    assert frame_from_result(dict(result, hole2=None)).covered == {5}
+
+
+class FakeTeensy:
+    """Answers every command with an ACK, get_status with a loaded calibration, and streams results once asked."""
+
+    def __init__(self, master_fd, wg_helpers, has_calibration=True):
+        import struct
+        import threading
+
+        self.fd, self.h, self.struct = master_fd, wg_helpers, struct
+        self.has_calibration = has_calibration
+        self.commands, self.streaming, self.stopped = [], False, False
+        self._lock = threading.Lock()
+        threading.Thread(target=self._read, daemon=True).start()
+        threading.Thread(target=self._stream, daemon=True).start()
+
+    def _send(self, packet_type, payload):
+        import os
+
+        with self._lock:
+            os.write(self.fd, self.h.encode_packet(packet_type, payload))
+
+    def _read(self):
+        import os
+
+        buffer = bytearray()
+        names = {code: name for name, code in self.h.CMD.items()}
+        while not self.stopped:
+            try:
+                buffer += os.read(self.fd, 4096)
+            except OSError:
+                return
+            while (start := buffer.find(self.h.BT_SYNC)) >= 0 and len(buffer) >= start + 5:
+                code, length = buffer[start + 2], int.from_bytes(buffer[start + 3 : start + 5], "little")
+                if len(buffer) < start + 7 + length:
+                    break
+                payload = bytes(buffer[start + 5 : start + 5 + length])
+                del buffer[: start + 7 + length]
+                name = names[code]
+                self.commands.append(name)
+                if name == "get_status":
+                    ok = int(self.has_calibration)
+                    status = (ok, 1, ok, 4, 1, int(self.streaming), 0, 0, 0, 0, 0, 0, 0)
+                    self._send(self.h.PKT_STATUS, self.struct.pack("<BBBBBBHHBHHIH", *status))
+                    continue
+                if name == "stream":
+                    self.streaming = bool(payload[0])
+                self._send(self.h.PKT_ACK, self.struct.pack("<BBI", code, 0, 0))
+
+    def _stream(self):
+        import time as _time
+
+        sequence = 0
+        while not self.stopped:
+            _time.sleep(0.01)
+            if self.streaming:
+                sequence += 1
+                result = (sequence, 0, 4, 1, 5, 30.0, float("nan"), 120.0, 7, 9.0)
+                self._send(self.h.PKT_RESULT, self.struct.pack("<HIBBhfffhf", *result))
+
+
+@pytest.fixture
+def fake_teensy():
+    import os
+    import pty
+
+    pytest.importorskip("serial")
+    wg_helpers = pytest.importorskip("wg_helpers")
+    master, slave = pty.openpty()
+    teensy = FakeTeensy(master, wg_helpers)
+    yield teensy, os.ttyname(slave)
+    teensy.stopped = True
+    os.close(slave)
+    os.close(master)
+
+
+def test_teensy_source_over_serial(fake_teensy):
+    from touch import TeensyConfig, TeensyTouchSource
+
+    teensy, port = fake_teensy
+    source = TeensyTouchSource(TeensyConfig(link="serial", port=port, link_timeout_s=5.0))
+    source.start()
+    try:
+        assert teensy.commands[:2] == ["stream", "get_status"]  # Calibration already there: no upload
+        assert teensy.commands[2:] == ["record_background", "set_method", "set_average", "stream"]
+        t_end = time.monotonic() + 2.0
+        while (frame := source.latest()) is None and time.monotonic() < t_end:
+            time.sleep(0.01)
+        assert frame is not None and frame.covered == {5, 7} and frame.amplitude == 120.0
+    finally:
+        source.close()
+    assert teensy.commands[-1] == "stream" and not teensy.streaming

@@ -35,8 +35,14 @@ To teleop the franka with the sensor, use the `wg_teleop.py` file.
 It's possible to test the teleoperation without the waveguide, inputing the commands via the terminal.
 
 ## Demos with on-board processing
-For these demos the Teensy processes the frames itself and sends the covered holes (index, distance,
-amplitude), read by `touch.py`. **The packet format is not defined yet**: fill in `touch.decode_packet`.
+For these demos the Teensy runs the hole detection itself (TEENSY_BLUETOOTH firmware, one or two holes with the
+"multi" method) and sends a result every cycle (~20/s), read by `touch.py` through `wg_helpers` (Bluetooth section).
+- Link: BLE to the HC-08 by default (`--link ble --ble-name WAVEGUIDE`), or a serial port (`--link serial --port ...`)
+- Sensor calibration (`--sensor-calibration`, a `wg_helpers.calibrate()` .npz): uploaded when the Teensy has none,
+  i.e. after a power cycle (about a minute over BLE); `--upload` replaces it
+- The background is recorded at every start: don't touch the waveguide then
+
+`wg_teleop.py` still reads the raw frames over USB serial (TEENSY_FIRMWARE) and detects the holes on the computer.
 
 ### Demo 2 - Gripper (`wg_gripper_demo.py`)
 The waveguide is on the Franka Hand fingers: grasp an egg at `EGG_POSITION` (hard-coded), close until a hole is

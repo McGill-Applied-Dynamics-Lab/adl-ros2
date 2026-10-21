@@ -145,6 +145,7 @@ websockets = "*"
 [feature.waveguide.dependencies]
 pyqtgraph = ">=0.14.0,<0.15"
 scipy = ">=1.17.1,<2" # wg_helpers
+bleak = ">=3.0.2,<4" # wg_helpers.BLEReceiver (HC-08 Bluetooth)
 
 [feature.waveguide.tasks]
 waveguide-teleop = "python experiments/waveguide/wg_teleop.py"

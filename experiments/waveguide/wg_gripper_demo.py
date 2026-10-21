@@ -11,13 +11,18 @@ The waveguide is mounted on the fingers of the Franka Hand. The demo:
 5. Lifts the egg, holds it, puts it down, releases it and goes back home
 
 Closing never blocks: the gripper moves towards the target width with a non-blocking action, which is
-cancelled (the gripper stops where it is) as soon as the waveguide shows the stop condition. The
-franka_gripper server checks for cancel requests at its `feedback_publish_rate` (30 Hz), so the gripper
-stops within ~35 ms + the stop time: about 0.2 mm at the default contact speed.
+cancelled (the gripper stops where it is) as soon as the waveguide shows the stop condition. The Teensy
+detects the holes on board and sends a result every cycle (~20/s, + the BLE latency), and the
+franka_gripper server checks for cancel requests at its `feedback_publish_rate` (30 Hz): the gripper stops
+within ~100 ms of the contact, about 0.5 mm at the default contact speed.
+
+The Teensy (TEENSY_BLUETOOTH firmware) is reached over BLE by default (`--link serial` for a serial port), see
+`touch.TeensyConfig`. Its calibration is uploaded on the first run after a power cycle (about a minute over BLE).
 
     pixi run -e wg python experiments/waveguide/wg_gripper_demo.py                       # squeeze 1 mm after the contact
     pixi run -e wg python experiments/waveguide/wg_gripper_demo.py --squeeze-mm 2
     pixi run -e wg python experiments/waveguide/wg_gripper_demo.py --mode amplitude --amplitude-rise 50
+    pixi run -e wg python experiments/waveguide/wg_gripper_demo.py --sensor-calibration calibration/gripper.npz --upload
 """
 
 import argparse
@@ -28,7 +33,7 @@ from dataclasses import dataclass
 import numpy as np
 from arm_client.gripper.franka_hand import Gripper
 from arm_client.robot import Pose, Robot
-from touch import DEFAULT_BAUDRATE, DEFAULT_PORT, TeensyTouchSource, TouchFrame, TouchSource
+from touch import TeensyTouchSource, TouchFrame, TouchSource, add_teensy_args, teensy_config
 
 # --- Update as desired
 EGG_POSITION = np.array([0.45, 0.0, 0.05])  # m, base frame: end-effector (TCP) position to grasp the egg. TODO: measure
@@ -180,8 +185,7 @@ def main():
     parser.add_argument("--mode", choices=["squeeze", "amplitude"], default="squeeze")
     parser.add_argument("--squeeze-mm", type=float, default=1.0, help="squeeze mode: closing after the contact [mm]")
     parser.add_argument("--amplitude-rise", type=float, default=None, help="amplitude mode: rise to stop at")
-    parser.add_argument("--port", default=DEFAULT_PORT, help=f"Serial port of the Teensy (default: {DEFAULT_PORT})")
-    parser.add_argument("--baudrate", type=int, default=DEFAULT_BAUDRATE)
+    add_teensy_args(parser)
     args = parser.parse_args()
     if args.mode == "amplitude" and args.amplitude_rise is None:
         parser.error("--mode amplitude needs --amplitude-rise")
@@ -189,8 +193,8 @@ def main():
         parser.error(f"--squeeze-mm is limited to {CFG.max_squeeze_mm} mm (GripperDemoConfig.max_squeeze_mm)")
 
     try:
-        touch = TeensyTouchSource(args.port, args.baudrate)
-    except FileNotFoundError as e:
+        touch = TeensyTouchSource(teensy_config(args))
+    except (FileNotFoundError, ValueError) as e:
         parser.exit(1, f"Error: {e}\n")
 
     robot = Robot(namespace="fr3")

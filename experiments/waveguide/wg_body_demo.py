@@ -18,10 +18,13 @@ Hole directions:
 - `fixed_mapping`: True, the directions stay as calibrated, in the base frame (valid while link 5 does not
   rotate much: its drift is printed). False, they follow the rotation of link 5 since the calibration
 
+The Teensy (TEENSY_BLUETOOTH firmware) detects the holes on board, see `touch.TeensyConfig`; its sensor
+calibration (`--sensor-calibration`) is uploaded on the first run after a power cycle (about a minute over BLE).
+
 The arm streams pose + velocity targets to osc_pd_controller (`OscJogger`); fr3_pose_controller's jog
 mode can replace it once available (same `Jogger` interface).
 
-    pixi run -e wg python experiments/waveguide/wg_body_demo.py                    # waveguide, Teensy on /dev/ttyACM0 (--port)
+    pixi run -e wg python experiments/waveguide/wg_body_demo.py                    # waveguide, Teensy over BLE (--link serial)
     pixi run -e wg python experiments/waveguide/wg_body_demo.py --calibrate        # calibrate the hole -> direction mapping first
     pixi run -e wg python experiments/waveguide/wg_body_demo.py --input terminal   # covered holes typed in the terminal
 """
@@ -35,7 +38,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 import numpy as np
-from touch import DEFAULT_BAUDRATE, DEFAULT_PORT, TeensyTouchSource, TerminalTouchSource, TouchFrame, TouchSource
+from touch import TeensyTouchSource, TerminalTouchSource, TouchFrame, TouchSource, add_teensy_args, teensy_config
 
 DIRECTIONS = {
     "+x": np.array([1.0, 0.0, 0.0]),
@@ -425,8 +428,7 @@ def run(
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--input", choices=["terminal", "waveguide"], default="waveguide")
-    parser.add_argument("--port", default=DEFAULT_PORT, help=f"Serial port of the Teensy (default: {DEFAULT_PORT})")
-    parser.add_argument("--baudrate", type=int, default=DEFAULT_BAUDRATE)
+    add_teensy_args(parser)
     parser.add_argument(
         "--no-drift",
         action="store_true",
@@ -448,8 +450,8 @@ def main():
 
     if args.input == "waveguide":
         try:
-            touch = TeensyTouchSource(args.port, args.baudrate)
-        except FileNotFoundError as e:
+            touch = TeensyTouchSource(teensy_config(args))
+        except (FileNotFoundError, ValueError) as e:
             parser.exit(1, f"Error: {e}\n")
     else:
         touch = TerminalTouchSource(aliases=cfg.direction_holes)
@@ -478,7 +480,7 @@ def main():
         run(jogger, touch, cfg, link, calibration_rotation)
     except KeyboardInterrupt:
         print()
-    except RuntimeError as e:
+    except (RuntimeError, TimeoutError) as e:
         print(f"Stopping: {e}")
     finally:
         if jogger.orientation is not None:
