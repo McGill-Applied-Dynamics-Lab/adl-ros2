@@ -8,7 +8,9 @@ then sines at a few frequencies. Then reports, per axis:
 - **arm**: least squares of the same force on the motion it produces (free space),
   $F \approx \hat\Lambda a + \hat b v + \hat F_c \tanh(v / v_0)$ — inertia, viscous and Coulomb friction;
 - **steps**: rise time (10-90 %), overshoot, steady-state error (friction shows up here, as $F_c / K_r$);
-- **sines**: amplitude ratio and phase lag per frequency (closed-loop bandwidth).
+- **sines**: amplitude ratio and phase lag per frequency (closed-loop bandwidth);
+- **orientation** (robot only): how far the tool turns from the held orientation while the target
+  moves (roll, pitch, yaw), and how far that moves the tip of a ``--tool-length`` tool.
 
 These are the closed-loop parameters RIM's closed-loop variant (M6) models.
 
@@ -36,7 +38,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
 REPO = HERE.parents[2]
 import matplotlib.pyplot as plt  # noqa: E402
-from runs import INK, INK_2, INK_3, save  # noqa: E402
+from runs import INK, INK_2, INK_3, orientation_error, orientation_summary, save, tip_error  # noqa: E402
 
 AXES = "xyz"
 COLS = ("#2a78d6", "#eb6834", "#1baf7a")  # x, y, z
@@ -156,6 +158,7 @@ class RobotBackend:
         reach = args.step + args.amp + 0.02
         self.plant.set_interface_limits((first.x_i - reach, first.x_i + reach))
         self.start = first.x_i.copy()
+        self.hold_q = first.ee_orientation.copy()  # (x, y, z, w): the orientation the OSC holds
 
     def begin(self) -> np.ndarray:
         return self.start.copy()
@@ -170,8 +173,10 @@ class RobotBackend:
             hist = list(self.plant.history)
             self.plant.close()
             self.robot.shutdown()
-        rows = [(s.rx_s, *s.ee_position, *s.ee_velocity, *s.task_force) for s in hist]
-        return pd.DataFrame(rows, columns=["t", *AXES, *(f"v{a}" for a in AXES), *(f"f{a}" for a in AXES)])
+        rows = [(s.rx_s, *s.ee_position, *s.ee_velocity, *s.task_force, *s.ee_orientation) for s in hist]
+        return pd.DataFrame(
+            rows, columns=["t", *AXES, *(f"v{a}" for a in AXES), *(f"f{a}" for a in AXES), "qx", "qy", "qz", "qw"]
+        )
 
 
 # ------------------------------------------------------------------ analysis
@@ -306,6 +311,45 @@ def plot(series: dict, results: dict, segs, start: np.ndarray, out: Path) -> lis
     return save(fig, out, "t1_osc_response")
 
 
+def orientation_report(robot: pd.DataFrame, tgt: pd.DataFrame, hold_q, length: float) -> str:
+    """Orientation error over the whole test and while each axis moves."""
+    q = robot[["qx", "qy", "qz", "qw"]].to_numpy()
+    axis = np.interp(robot.t, tgt.t, tgt.axis, left=-1, right=-1).round().astype(int)
+    lines = [f"orientation (from the held one; tip of a {1e3 * length:g} mm tool):"]
+    for label, on in [("whole test", np.ones(len(q), bool))] + [(f"while {a} moves", axis == i) for i, a in enumerate(AXES)]:
+        if on.sum() < 50:
+            continue
+        summary = orientation_summary(q[on], hold_q, length)
+        lines.append(f"  {label:<13} " + " | ".join(f"{k.split(' error')[0]} {v}" for k, v in summary.items()))
+    lines.append("  (per value: RMS / max; roll, pitch, yaw in mrad, tip in mm)")
+    return "\n".join(lines)
+
+
+def plot_orientation(robot: pd.DataFrame, tgt: pd.DataFrame, hold_q, length: float, out: Path) -> list[Path]:
+    q = robot[["qx", "qy", "qz", "qw"]].to_numpy()
+    e = 1e3 * orientation_error(q, hold_q)
+    tip = 1e3 * tip_error(q, hold_q, length)
+    fig, axs = plt.subplots(2, 1, figsize=(11, 5.4), sharex=True)
+    for k, (name, c) in enumerate(zip(("roll", "pitch", "yaw"), COLS)):
+        axs[0].plot(robot.t, e[:, k], color=c, linewidth=1.4, label=name)
+    axs[0].set_ylabel("orientation error [mrad]")
+    axs[0].legend(loc="upper right", ncol=3, fontsize=8)
+    axs[1].plot(robot.t, tip, color=INK_2, linewidth=1.4)
+    axs[1].set_ylabel(f"tip error, {1e3 * length:g} mm tool [mm]")
+    axs[1].set_xlabel("time [s]")
+    for i, a in enumerate(AXES):  # which axis the target moves along
+        on = tgt.axis.to_numpy() == i
+        if on.any():
+            t = tgt.t.to_numpy()[on]
+            for ax in axs:
+                ax.axvspan(t[0], t[-1], color=COLS[i], alpha=0.06, linewidth=0)
+            axs[0].annotate(f"target moves in {a}", (t[0], 1.0), xycoords=("data", "axes fraction"), xytext=(3, -12),
+                            textcoords="offset points", fontsize=8, color=INK_3)
+    fig.suptitle("T1 — orientation while the target moves", x=0.01, ha="left", color=INK, fontsize=12)
+    fig.tight_layout()
+    return save(fig, out, "t1_orientation")
+
+
 # ------------------------------------------------------------------ main
 
 
@@ -327,6 +371,7 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--namespace", default="fr3")
     p.add_argument("--controller", default="osc_controller")
     p.add_argument("--osc-params", default="python/fr3_haptic/configs/osc_teleop.yaml")
+    p.add_argument("--tool-length", type=float, default=0.1, help="tool beyond the end-effector point, for the tip error [m]")
     p.add_argument("--out", type=Path, default=None, help="run directory; default ~/data/franka/rim-delays/<backend>/pretests/t1_<time>")
     args = p.parse_args(argv)
 
@@ -366,6 +411,8 @@ def main(argv: list[str] | None = None) -> None:
         gains_set = {**{f"k_pos_{a}": args.kv for a in AXES}, **{f"d_pos_{a}": args.dv for a in AXES}}
     results, series = analyse(robot, tgt, segs_rel, start, args.amp, gains_set)
     text = report(results)
+    if "qw" in robot:
+        text += "\n\n" + orientation_report(robot, tgt, backend.hold_q, args.tool_length)
     print(text)
     out.mkdir(parents=True, exist_ok=True)
     robot.to_csv(out / "robot.csv", index=False)
@@ -374,6 +421,8 @@ def main(argv: list[str] | None = None) -> None:
                                                   "results": results}, indent=2, default=float))
     (out / "report.txt").write_text(text + "\n")
     paths = plot(series, results, segs_rel, start, out)
+    if "qw" in robot:
+        paths += plot_orientation(robot, tgt, backend.hold_q, args.tool_length, out)
     print(f"[T1] -> {out} ({paths[0].name})")
 
 

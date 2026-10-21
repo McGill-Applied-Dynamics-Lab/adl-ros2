@@ -33,7 +33,7 @@ def extra(run) -> dict:
 def main(argv=None) -> None:
     args, rest = parse(__doc__.split("\n")[0], argv)
     run_dir = run_test(NAME, PRESET, args, rest)
-    finish(NAME, "T4 — RIM (arm only)", run_dir, extra=extra)
+    finish(NAME, "T4 — RIM (arm only)", run_dir, extra=extra, tool_length=args.tool_length)
 
 
 if __name__ == "__main__":

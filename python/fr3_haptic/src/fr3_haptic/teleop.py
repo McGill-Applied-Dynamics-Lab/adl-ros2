@@ -698,6 +698,7 @@ def main(argv: list[str] | None = None) -> None:
             live_logger(args.live_port),
             args.live_hz,
             dim=dim,
+            basis=frame.basis,
             plant=plant,
             plant_box=plant_box,
             haptic_state=haptic_state,
@@ -821,6 +822,7 @@ def main(argv: list[str] | None = None) -> None:
                         "lam": s.lam,
                         "t_s": s.t_s,
                         "ee_position": s.ee_position,
+                        "ee_orientation": s.ee_orientation,  # (x, y, z, w), base frame
                         "task_force": s.task_force,
                     },
                     timestamp_s=s.rx_s - t0,

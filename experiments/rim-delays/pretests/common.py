@@ -24,7 +24,18 @@ sys.path.insert(0, str(HERE.parent))
 REPO = HERE.parents[2]
 
 import matplotlib.pyplot as plt  # noqa: E402
-from runs import COLORS, INK, INK_2, INK_3, find, load_run, save, surface_of  # noqa: E402
+from runs import (  # noqa: E402
+    COLORS,
+    INK,
+    INK_2,
+    INK_3,
+    find,
+    load_run,
+    orientation_error,
+    orientation_summary,
+    save,
+    surface_of,
+)
 
 OUT = Path("~/data/franka/rim-delays").expanduser()
 CONTACT_BAND = 0.002  # robot within this of the table counts as in contact [m]
@@ -55,6 +66,7 @@ def parse(description: str, argv: list[str] | None) -> tuple[argparse.Namespace,
     p = argparse.ArgumentParser(description=description, epilog="Other flags go to fr3_teleop / sim_teleop.py.")
     p.add_argument("--sim", action="store_true", help="simulated FR3 (sim_teleop.py) instead of the robot")
     p.add_argument("--analyse", type=Path, default=None, help="analyse this saved run instead of starting one")
+    p.add_argument("--tool-length", type=float, default=0.1, help="tool beyond the end-effector point, for the tip error [m]")
     return p.parse_known_args(argv)
 
 
@@ -106,6 +118,10 @@ class Run:
         if c is not None and len(c):
             cols = [f"x_{k}" for k in range(self.dim)] if f"x_0" in c else ["x"]
             self.cmd_t, self.cmd_x = c.ts.to_numpy(), c[cols].to_numpy()
+        self.hold_q = self.meta.get("hold_orientation_xyzw")
+        self.q = None
+        if self.robot is not None and "qw" in self.robot and self.hold_q is not None:
+            self.q = self.robot[["qx", "qy", "qz", "qw"]].to_numpy()
         delays = self.meta.get("delays") or {}
         self.T_c = 1e-3 * float((delays.get("command") or {}).get("base_ms", 0.0) or 0.0)
         self.T_f = 1e-3 * float((delays.get("feedback") or {}).get("base_ms", 0.0) or 0.0)
@@ -218,7 +234,7 @@ def prediction_error(run: Run) -> dict:
     return out
 
 
-def common_metrics(run: Run) -> dict:
+def common_metrics(run: Run, tool_length: float = 0.1) -> dict:
     k, n = felt_stiffness(run)
     hz, rms = contact_oscillation(run)
     m = {
@@ -234,6 +250,8 @@ def common_metrics(run: Run) -> dict:
     }
     for key, v in force_matching(run).items():
         m[f"force matching: {key}"] = v
+    if run.q is not None:
+        m.update({f"orientation: {k}": v for k, v in orientation_summary(run.q, run.hold_q, tool_length).items()})
     return m
 
 
@@ -255,7 +273,8 @@ def print_metrics(name: str, metrics: dict) -> str:
 def plot_run(run: Run, name: str, title: str) -> list[Path]:
     """Height and force along z over time: operator, commanded target, robot."""
     color = COLORS.get(run.method, "#2a78d6")
-    fig, axs = plt.subplots(2, 1, figsize=(10, 5.6), sharex=True)
+    rows = 3 if run.q is not None else 2
+    fig, axs = plt.subplots(rows, 1, figsize=(10, 2.8 * rows), sharex=True)
     a = axs[0]
     if run.surface is not None:
         a.axhline(run.surface * 1e3, color=INK_3, linewidth=1, linestyle="--")
@@ -272,17 +291,24 @@ def plot_run(run: Run, name: str, title: str) -> list[Path]:
     if run.robot is not None:
         a.plot(run.robot.ts, run.robot.f_table, color=INK_2, linewidth=1.4, label="table force on the robot")
     a.set_ylabel("force along z [N]")
-    a.set_xlabel("time [s]")
     a.legend(loc="upper right", fontsize=8, ncol=2)
+    if run.q is not None:
+        a = axs[2]
+        e = 1e3 * orientation_error(run.q, run.hold_q)
+        for k, (angle, c) in enumerate(zip(("roll", "pitch", "yaw"), ("#2a78d6", "#eb6834", "#1baf7a"))):
+            a.plot(run.robot.ts, e[:, k], color=c, linewidth=1.2, label=angle)
+        a.set_ylabel("orientation error [mrad]")
+        a.legend(loc="upper right", fontsize=8, ncol=3)
+    axs[-1].set_xlabel("time [s]")
     fig.suptitle(title, x=0.01, ha="left", color=INK, fontsize=12)
     fig.tight_layout()
     return save(fig, run.dir, name)
 
 
-def finish(name: str, title: str, run_dir: Path, extra=None) -> None:
+def finish(name: str, title: str, run_dir: Path, extra=None, tool_length: float = 0.1) -> None:
     """Load the run, print the common metrics (plus ``extra(run)``), save the plot and the report."""
     run = Run(run_dir)
-    metrics = common_metrics(run)
+    metrics = common_metrics(run, tool_length)
     if extra is not None:
         metrics.update(extra(run))
     text = print_metrics(name, metrics)

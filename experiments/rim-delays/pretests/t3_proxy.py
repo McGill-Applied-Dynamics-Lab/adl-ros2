@@ -22,6 +22,7 @@ PRESET = {
     "command_delay_ms": 0,
     "force": True,
     "seconds": 600,
+    # "contact_surface": 0.41858,
 }
 
 
@@ -30,14 +31,16 @@ def proxy_penetration(run) -> dict:
         return {}
     k = run.ca if run.cmd_x.shape[1] > 1 else 0
     depth = 1e3 * float(max(0.0, run.surface - run.cmd_x[:, k].min()))
-    return {"proxy below the table, max [mm]": depth,
-            "leader below the table, max [mm]": 1e3 * float(max(0.0, run.surface - np.min(run.zl)))}
+    return {
+        "proxy below the table, max [mm]": depth,
+        "leader below the table, max [mm]": 1e3 * float(max(0.0, run.surface - np.min(run.zl))),
+    }
 
 
 def main(argv=None) -> None:
     args, rest = parse(__doc__.split("\n")[0], argv)
     run_dir = run_test(NAME, PRESET, args, rest)
-    finish(NAME, "T3 — proxy (no robot model), no delay", run_dir, extra=proxy_penetration)
+    finish(NAME, "T3 — proxy (no robot model), no delay", run_dir, extra=proxy_penetration, tool_length=args.tool_length)
 
 
 if __name__ == "__main__":

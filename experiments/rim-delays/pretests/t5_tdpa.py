@@ -54,7 +54,7 @@ def ends(run) -> dict:
 def main(argv=None) -> None:
     args, rest = parse(__doc__.split("\n")[0], argv)
     run_dir = run_test(NAME, PRESET, args, rest)
-    finish(NAME, "T5 — two-port TDPA (position–position)", run_dir, extra=ends)
+    finish(NAME, "T5 — two-port TDPA (position–position)", run_dir, extra=ends, tool_length=args.tool_length)
 
 
 if __name__ == "__main__":

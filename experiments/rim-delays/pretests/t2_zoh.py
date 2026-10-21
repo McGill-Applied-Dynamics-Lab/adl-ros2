@@ -21,13 +21,14 @@ PRESET = {
     "command_delay_ms": 0,
     "force": True,
     "seconds": 600,
+    "contact_surface": 0.41858,
 }
 
 
 def main(argv=None) -> None:
     args, rest = parse(__doc__.split("\n")[0], argv)
     run_dir = run_test(NAME, PRESET, args, rest)
-    finish(NAME, "T2 — ZOH, no delay", run_dir)
+    finish(NAME, "T2 — ZOH, no delay", run_dir, tool_length=args.tool_length)
 
 
 if __name__ == "__main__":
