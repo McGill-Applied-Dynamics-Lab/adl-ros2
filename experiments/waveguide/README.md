@@ -20,6 +20,8 @@ Standalone (the port defaults to the connected Teensy sending frames, see --port
     pixi run -e wg python experiments/waveguide/sensor.py               # frame rate, pressed holes, commands
     pixi run -e wg python experiments/waveguide/sensor.py --live-plot   # raw frames
     pixi run -e wg python experiments/waveguide/sensor.py --calibrate   # guided calibration, see CalibrationConfig
+    pixi run -e wg python experiments/waveguide/sensor.py --live-match  # live trace vs the newest calibration/reference_*.csv
+    pixi run -e wg python experiments/waveguide/sensor.py --live-match calibration/reference_10_14_2026.csv
 ```
 
 

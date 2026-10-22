@@ -10,6 +10,7 @@ loop. Imports no ROS: it can be developed and tested without the robot.
 Standalone (the port defaults to the Teensy sending frames, see --port):
     pixi run -e wg python experiments/waveguide/sensor.py               # frame rate, pressed holes, commands
     pixi run -e wg python experiments/waveguide/sensor.py --live-plot   # raw frames
+    pixi run -e wg python experiments/waveguide/sensor.py --live-match  # live trace vs the newest calibration/reference_*.csv
     pixi run -e wg python experiments/waveguide/sensor.py --calibrate   # guided calibration, see CalibrationConfig
 """
 
@@ -626,6 +627,60 @@ class PlotStyle:
 PLOT_STYLE = PlotStyle()
 
 
+class _PlotTools:
+    """The look shared by the sensor plots (`PlotStyle`): Qt app, colors, fonts, pens, titles and axes."""
+
+    def __init__(self, style: PlotStyle, app_name: str):
+        import pyqtgraph as pg  # Only needed for the plots
+        from pyqtgraph.Qt import QtCore, QtGui
+
+        self.pg, self.QtCore, self.QtGui, self.style = pg, QtCore, QtGui, style
+        self.c = c = style.colors()
+        pg.setConfigOptions(antialias=True, background=c["background"], foreground=c["foreground"])
+        self.app = pg.mkQApp(app_name)
+        self.font = QtGui.QFont(style.font_family, style.font_pt)
+        self.small_font = QtGui.QFont(style.font_family, style.font_pt - 3)
+        self.label_style = {"font-size": f"{style.font_pt}pt", "font-family": style.font_family, "color": c["foreground"]}
+
+    def rgb(self, color: str) -> np.ndarray:
+        return np.array(self.QtGui.QColor(color).getRgb()[:3])
+
+    def tint(self, color: str, alpha: int) -> tuple:
+        return (*self.rgb(color), alpha)
+
+    def pen(self, color, width=None, dashed=False):
+        Qt = self.QtCore.Qt
+        return self.pg.mkPen(
+            color,
+            width=self.style.line_width if width is None else width,
+            style=Qt.PenStyle.DashLine if dashed else Qt.PenStyle.SolidLine,
+        )
+
+    def text_item(self, text, color, anchor, font_=None):
+        item = self.pg.TextItem(text, anchor=anchor, color=color)
+        item.setFont(self.font if font_ is None else font_)
+        return item
+
+    def set_title(self, plot, text, color=None, size=None):
+        size = self.style.title_pt if size is None else size
+        plot.setTitle(text, size=f"{size}pt", color=self.c["foreground"] if color is None else color)
+
+    def style_axes(self, plot, x_label=None, y_label=None):
+        for name in ("left", "bottom"):
+            axis = plot.getAxis(name)
+            axis.setTickFont(self.font)
+            axis.setPen(self.pen(self.c["muted"], width=1))
+            axis.setTextPen(self.c["foreground"])
+        if x_label:
+            plot.setLabel("bottom", x_label, **self.label_style)
+        if y_label:
+            plot.setLabel("left", y_label, **self.label_style)
+        plot.getAxis("left").setWidth(80)  # Same width in every panel, so their x axes line up
+        plot.showGrid(x=True, y=True, alpha=0.15)
+        plot.setMenuEnabled(False)
+        plot.hideButtons()
+
+
 def run_with_live_plot(
     port: str,
     baudrate: int,
@@ -656,7 +711,7 @@ def run_with_live_plot(
     port = check_port(port, baudrate)
     calibration = load_calibration(CAL_CFG.npz_path)
     import pyqtgraph as pg  # Only needed here
-    from pyqtgraph.Qt import QtCore, QtGui
+    from pyqtgraph.Qt import QtCore
 
     # Written by the sensor loop thread, read by the plot
     latest = {"frame": None, "detector": None, "n_frames": 0, "swipe": None}
@@ -704,46 +759,11 @@ def run_with_live_plot(
     time_ms = np.arange(FRAME_SIZE) / samples_per_ms  # x axis of the echo plots
 
     # --- Style
-    c = style.colors()
-    pg.setConfigOptions(antialias=True, background=c["background"], foreground=c["foreground"])
-    app = pg.mkQApp("Waveguide sensor")
-    font = QtGui.QFont(style.font_family, style.font_pt)
-    small_font = QtGui.QFont(style.font_family, style.font_pt - 3)
-    label_style = {"font-size": f"{style.font_pt}pt", "font-family": style.font_family, "color": c["foreground"]}
-
-    def rgb(color: str) -> np.ndarray:
-        return np.array(QtGui.QColor(color).getRgb()[:3])
-
-    def tint(color: str, alpha: int) -> tuple:
-        return (*rgb(color), alpha)
-
-    def pen(color, width=style.line_width, dashed=False):
-        return pg.mkPen(
-            color, width=width, style=QtCore.Qt.PenStyle.DashLine if dashed else QtCore.Qt.PenStyle.SolidLine
-        )
-
-    def text_item(text, color, anchor, font_=font):
-        item = pg.TextItem(text, anchor=anchor, color=color)
-        item.setFont(font_)
-        return item
-
-    def set_title(plot, text, color=c["foreground"], size=style.title_pt):
-        plot.setTitle(text, size=f"{size}pt", color=color)
-
-    def style_axes(plot, x_label=None, y_label=None):
-        for name in ("left", "bottom"):
-            axis = plot.getAxis(name)
-            axis.setTickFont(font)
-            axis.setPen(pen(c["muted"], width=1))
-            axis.setTextPen(c["foreground"])
-        if x_label:
-            plot.setLabel("bottom", x_label, **label_style)
-        if y_label:
-            plot.setLabel("left", y_label, **label_style)
-        plot.getAxis("left").setWidth(80)  # Same width in every panel, so their x axes line up
-        plot.showGrid(x=True, y=True, alpha=0.15)
-        plot.setMenuEnabled(False)
-        plot.hideButtons()
+    tools = _PlotTools(style, "Waveguide sensor")
+    c, app, small_font = tools.c, tools.app, tools.small_font
+    rgb, tint, pen, text_item, set_title, style_axes = (
+        tools.rgb, tools.tint, tools.pen, tools.text_item, tools.set_title, tools.style_axes
+    )
 
     win = pg.GraphicsLayoutWidget(show=True, title="Waveguide sensor")
     win.resize(*style.window_size)
@@ -997,6 +1017,166 @@ def run_with_live_plot(
         raise errors[0]
 
 
+# --- Live match: reproduce the same initial conditions (e.g. sensor position) as a saved target trace
+MATCH_TARGETS = "reference_*.csv"  # In CAL_CFG.directory; --live-match without a file uses the newest
+
+
+def latest_match_target(directory: Path = CAL_CFG.directory) -> Path:
+    """The newest (modification time) reference trace in `directory`."""
+    targets = sorted(directory.glob(MATCH_TARGETS), key=lambda path: path.stat().st_mtime)
+    if not targets:
+        raise FileNotFoundError(f"No {MATCH_TARGETS} in {directory}: give the target CSV (--live-match TARGET_CSV)")
+    return targets[-1]
+
+
+def load_target(path: Path) -> np.ndarray:
+    """Trace values from a CSV: the y column of an x/y export (the first y if there are several curves), or the
+    only column. Rows that are not all numbers (headers) are skipped. Samples missing from an x/y export are nan."""
+    rows = []
+    with open(path) as file:
+        for line in file:
+            cells = line.replace(";", ",").replace("\t", ",").split(",")
+            try:
+                rows.append([float(cell) for cell in cells if cell.strip()])
+            except ValueError:
+                continue
+    rows = [row for row in rows if row]
+    if not rows:
+        raise ValueError(f"No numeric rows in {path}")
+    width = min(len(row) for row in rows)
+    data = np.array([row[:width] for row in rows])
+    if width == 1:
+        return data[:, 0]
+    x, y = data[:, 0], data[:, 1]  # x/y pairs: place the y values at their sample index
+    trace = np.full(int(x.max()) + 1, np.nan)
+    trace[x.astype(int)] = y
+    return trace
+
+
+def save_target(trace: np.ndarray, directory: Path = CAL_CFG.directory) -> Path:
+    """Write a trace in the x/y format of the pyqtgraph CSV export, as target_<date>_<time>.csv."""
+    path = directory / f"target_{time.strftime('%Y%m%d_%H%M%S')}.csv"
+    np.savetxt(path, np.column_stack([np.arange(len(trace)), trace]), delimiter=",", header="x0000,y0000",
+               comments="", fmt=["%d", "%.2f"])
+    return path
+
+
+def run_live_match(port: str, baudrate: int, target_path: Path, n_average: int = 5, style: PlotStyle = PLOT_STYLE) -> None:
+    """Live trace overlaid on a saved target trace (`load_target`), to put the sensor back as it was (e.g. after
+    a reset) before recording.
+
+    Top: the target (orange), the latest frame (faint blue) and the average of the last `n_average` frames (blue).
+    Bottom: averaged live minus target. Drag the shaded region to choose the samples compared; the title shows
+    their RMS difference and correlation. Press S to save the averaged trace as a new target (`save_target`).
+    """
+    target = load_target(target_path)
+    port = check_port(port, baudrate)
+    if len(target) != FRAME_SIZE:
+        print(f"Note: the target has {len(target)} samples, the frames {FRAME_SIZE}: comparing the overlap only")
+    n_compare = min(len(target), FRAME_SIZE)
+
+    tools = _PlotTools(style, "Waveguide match")
+    pg, QtCore, c = tools.pg, tools.QtCore, tools.c
+    latest = {"frame": None, "n_frames": 0}
+    stop_event, errors = threading.Event(), []
+
+    def reader_loop():
+        try:
+            with open_serial(port, baudrate) as ser:
+                reader = FrameReader(ser)
+                reader.flush()
+                while not stop_event.is_set():
+                    frame = reader.read_frame()
+                    if frame is not None:
+                        latest["frame"] = frame.astype(float)
+                        latest["n_frames"] += 1
+        except Exception as e:
+            errors.append(e)
+
+    win = pg.GraphicsLayoutWidget(show=True, title="Waveguide match")
+    win.resize(*style.window_size)
+    win.ci.setContentsMargins(16, 12, 24, 12)
+    win.ci.setSpacing(18)
+    trace = dict(antialias=style.antialias_traces, autoDownsample=True, downsampleMethod="peak", clipToView=True)
+
+    top = win.addPlot()
+    tools.style_axes(top, y_label="ADC counts")
+    tools.set_title(top, f"Live vs target ({target_path.name})")
+    top.setYRange(0, 4096)
+    top.setXRange(0, FRAME_SIZE, padding=0)
+    legend = top.addLegend(offset=(-10, 10), labelTextSize=f"{style.font_pt - 2}pt", labelTextColor=c["foreground"])
+    legend.setBrush(tools.tint(c["background"], 220))
+    top.plot(target, pen=tools.pen(c["reference"]), name="target", **trace)
+    latest_curve = top.plot(pen=tools.pen(tools.tint(c["signal"], 70), width=1), name="latest frame", **trace)
+    average_curve = top.plot(pen=tools.pen(c["signal"]), name=f"live, average of {n_average}", **trace)
+    # Samples compared (draggable); the whole trace by default
+    region = pg.LinearRegionItem(values=(0, n_compare - 1), brush=c["shade"], pen=tools.pen(c["muted"], width=1))
+    top.addItem(region)
+
+    win.nextRow()
+    bottom = win.addPlot()
+    tools.style_axes(bottom, x_label="Sample index", y_label="Difference (ADC)")
+    tools.set_title(bottom, "Live (averaged) minus target")
+    bottom.setXLink(top)
+    bottom.addLine(y=0, pen=tools.pen(c["muted"], width=1))
+    difference_curve = bottom.plot(pen=tools.pen(c["y"]), **trace)
+
+    win.nextRow()
+    status = win.addLabel("Waiting for frames...", size=f"{style.title_pt}pt", color=c["muted"])
+    win.ci.layout.setRowStretchFactor(0, 3)
+    win.ci.layout.setRowStretchFactor(1, 2)
+
+    recent = deque(maxlen=max(1, n_average))
+    shown_frame = None
+
+    def update():
+        nonlocal shown_frame
+        if errors:
+            app.quit()
+            return
+        frame = latest["frame"]
+        if frame is None or frame is shown_frame:
+            return
+        shown_frame = frame
+        recent.append(frame)
+        average = np.mean(recent, axis=0)
+        latest_curve.setData(frame)
+        average_curve.setData(average)
+        difference_curve.setData(average[:n_compare] - target[:n_compare])
+
+        # Match within the selected samples (target samples missing from the CSV are skipped)
+        lo, hi = (int(round(v)) for v in region.getRegion())
+        lo, hi = max(0, lo), min(n_compare, hi + 1)
+        live_part, target_part = average[lo:hi], target[lo:hi]
+        valid = ~np.isnan(target_part)
+        if valid.sum() > 2:
+            rms = np.sqrt(np.mean((live_part[valid] - target_part[valid]) ** 2))
+            corr = np.corrcoef(live_part[valid], target_part[valid])[0, 1]
+            status.setText(
+                f"Samples {lo}-{hi - 1}:  RMS difference {rms:.1f} ADC  ·  correlation {corr:.4f}    (S: save as target)",
+                color=c["foreground"],
+            )
+
+    def key_pressed(event):
+        if event.key() == QtCore.Qt.Key.Key_S and recent:
+            print(f"Saved the averaged live trace to {save_target(np.mean(recent, axis=0))}")
+
+    win.keyPressEvent = key_pressed
+    app = tools.app
+    thread = threading.Thread(target=reader_loop, name="waveguide_match_reader", daemon=True)
+    thread.start()
+    timer = QtCore.QTimer()
+    timer.timeout.connect(update)
+    timer.start(16)
+    try:
+        app.exec()
+    finally:
+        stop_event.set()
+        thread.join(timeout=1.0)
+    if errors:
+        raise errors[0]
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--port", default=DEFAULT_PORT, help=f"Serial port of the Teensy (default: {DEFAULT_PORT})")
@@ -1004,12 +1184,26 @@ def main():
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--calibrate", action="store_true", help="Record a calibration and fit it (CalibrationConfig)")
     mode.add_argument("--live-plot", action="store_true", help="Default mode, also plotting the raw frames")
+    mode.add_argument(
+        "--live-match",
+        nargs="?",
+        const="latest",
+        metavar="TARGET_CSV",
+        help=f"Live trace vs a saved target, to put the sensor back as it was (default: the newest {MATCH_TARGETS} in "
+        f"{CAL_CFG.directory.name}/)",
+    )
+    parser.add_argument("--average", type=int, default=5, help="--live-match: frames averaged (the recordings use 5)")
     args = parser.parse_args()
 
     try:
         if args.calibrate:
             print("---- Calibration mode ----")
             calibrate(args.port, args.baudrate)
+        elif args.live_match is not None:
+            print("---- Live match mode ----")
+            target = latest_match_target() if args.live_match == "latest" else Path(args.live_match)
+            print(f"Target: {target}")
+            run_live_match(args.port, args.baudrate, target, args.average)
         elif args.live_plot:
             print("---- Live plot mode ----")
             print_frames_and_holes(args.port, args.baudrate, plot=True)
@@ -1017,7 +1211,7 @@ def main():
             print("---- Default mode ----")
             print_frames_and_holes(args.port, args.baudrate)
 
-    except (FileNotFoundError, serial.SerialException) as e:
+    except (FileNotFoundError, ValueError, serial.SerialException) as e:
         parser.exit(1, f"Error: {e}\n")
     except KeyboardInterrupt:
         print()

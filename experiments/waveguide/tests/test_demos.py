@@ -3,6 +3,7 @@
     pixi run -e wg pytest experiments/waveguide/tests
 """
 
+import os
 import sys
 import time
 from pathlib import Path
@@ -350,3 +351,21 @@ def test_teensy_source_over_serial(fake_teensy):
     finally:
         source.close()
     assert teensy.commands[-1] == "stream" and not teensy.streaming
+
+
+def test_match_target_round_trip(tmp_path):
+    sensor = pytest.importorskip("sensor")  # Needs pyserial and scipy (wg environment)
+    trace = np.linspace(2000.0, 2600.0, 1500)
+    path = sensor.save_target(trace, tmp_path)
+    np.testing.assert_allclose(sensor.load_target(path), trace, atol=0.01)
+    single = tmp_path / "single.csv"
+    single.write_text("value\n1\n2\n3\n")
+    np.testing.assert_allclose(sensor.load_target(single), [1, 2, 3])
+    (tmp_path / "reference_a.csv").write_text("1\n")
+    newest = tmp_path / "reference_b.csv"
+    newest.write_text("2\n")
+    os.utime(tmp_path / "reference_a.csv", (2e9, 2e9))
+    os.utime(newest, (2e9 + 10, 2e9 + 10))
+    assert sensor.latest_match_target(tmp_path) == newest
+    with pytest.raises(FileNotFoundError):
+        sensor.latest_match_target(tmp_path / "empty")
