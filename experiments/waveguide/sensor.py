@@ -16,8 +16,8 @@ Standalone (the port defaults to the Teensy sending frames, see --port):
 import argparse
 import glob
 import json
-import os
 import multiprocessing as mp
+import os
 import queue
 import signal
 import sqlite3
@@ -37,11 +37,11 @@ from commands import MoveCommand
 # --- Update configs as desired
 @dataclass(frozen=True)
 class CalibrationConfig:
-    """Calibration (`--calibrate`) settings."""
+    """Config for recording the Calibration (`--calibrate`)"""
 
     directory: Path = Path(__file__).resolve().parent / "calibration"
-    filename: str = "calibration_dummy.db"  # Recording (SAVE_TO_SQLITE.py format); the fit is saved next to it (.npz)
-    n_holes: int = 31
+    filename: str = "demo_calibration.db"  # Recording (SAVE_TO_SQLITE.py format); the fit is saved next to it (.npz)
+    n_holes: int = 51
     n_passes: int = 3  # Recordings of every hole, >= 2 for a detection threshold
     first_hole_cm: float = 25.0  # Distance to hole 1
     hole_spacing_cm: float = 1.0  # Distance between holes
@@ -70,7 +70,7 @@ class DetectionConfig:
 class GestureConfig:
     """Gesture processing (layer 2) settings: swipe -> MoveCommand(axis, distance, speed)."""
 
-    hole_idx: int = 15  # Hole where the waveguide bends: swipes starting at holes <= hole_idx are along x, else y
+    hole_idx: int = 25  # Hole where the waveguide bends: swipes starting at holes <= hole_idx are along x, else y
     x_sign: int = -1  # +1: increasing hole index moves +x; -1 to flip
     y_sign: int = -1  # +1: increasing hole index moves +y; -1 to flip
     distance_scale: float = 0.02  # Robot motion [m] per cm of swipe (0.01: 1:1)
@@ -81,8 +81,8 @@ class GestureConfig:
 
     # z: hold a z hole; on release, move z by z_speed * hold time, at z_speed. The holes from the lowest to the
     # highest z hole (the z zone, with the bend) are reserved for z: swipes stop before them
-    z_up_holes: tuple[int, ...] = (13, 14)
-    z_down_holes: tuple[int, ...] = (16, 17)
+    z_up_holes: tuple[int, ...] = (23, 24)
+    z_down_holes: tuple[int, ...] = (26, 27)
     z_speed: float = 0.02  # [m/s] z motion per second of hold, and the speed of that motion
     z_min_hold_s: float = 0.2  # Shorter z touches send nothing
 
@@ -418,8 +418,10 @@ def run_sensor_loop(
             t = time.monotonic()
 
             if frame is None and not warned and t - t_last_frame > NO_FRAME_WARN_S:
-                print(f"No frame from {ser.port} for {NO_FRAME_WARN_S:g} s: is it the Teensy running TEENSY_FIRMWARE? "
-                      f"Connected: {teensy_ports()}")
+                print(
+                    f"No frame from {ser.port} for {NO_FRAME_WARN_S:g} s: is it the Teensy running TEENSY_FIRMWARE? "
+                    f"Connected: {teensy_ports()}"
+                )
                 warned = True
             if frame is not None:
                 t_last_frame, warned = t, False
