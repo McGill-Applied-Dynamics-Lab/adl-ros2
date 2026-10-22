@@ -29,6 +29,7 @@ from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
 
+import live_calibration
 import numpy as np
 import serial
 import wg_helpers
@@ -63,7 +64,7 @@ class DetectionConfig:
     n_background_frames: int = 50  # Frames averaged at startup, with nothing covered
     # Latest frames averaged for each estimate: the threshold comes from 5-frame averages (CYCLES_PER_PRESS),
     # single frames give false detections. More: less noise, more lag
-    n_average_frames: int = 1
+    n_average_frames: int = 2
     method: str = "leading_edge"  # One of wg_helpers.METHODS
 
 
@@ -82,8 +83,8 @@ class GestureConfig:
 
     # z: hold a z hole; on release, move z by z_speed * hold time, at z_speed. The holes from the lowest to the
     # highest z hole (the z zone, with the bend) are reserved for z: swipes stop before them
-    z_up_holes: tuple[int, ...] = (23, 24)
-    z_down_holes: tuple[int, ...] = (26, 27)
+    z_up_holes: tuple[int, ...] = (21, 24)
+    z_down_holes: tuple[int, ...] = (26, 30)
     z_speed: float = 0.02  # [m/s] z motion per second of hold, and the speed of that motion
     z_min_hold_s: float = 0.2  # Shorter z touches send nothing
 
@@ -110,6 +111,8 @@ SERIAL_TIMEOUT = 0.1  # s, so the loop checks the stop event even without data
 FRAME_SIZE = 1500
 HEADER = b"\xaa\x55\x00"
 PACKET_SIZE = len(HEADER) + 2 * FRAME_SIZE
+
+THRESHOLD_SCALE = 1.2
 
 
 def teensy_ports() -> list[str]:
@@ -165,7 +168,7 @@ def load_calibration(path: Path = CAL_CFG.npz_path) -> dict:
 
     calibration_params = wg_helpers.load_calibration(path)
 
-    calibration_params["threshold"] = float(calibration_params["threshold"])  # temp, to avoid false detections
+    calibration_params["threshold"] = float(calibration_params["threshold"]) * THRESHOLD_SCALE
 
     return calibration_params
 
@@ -223,12 +226,18 @@ class HoleDetector:
     Without a calibration (None), nothing is detected.
     """
 
-    def __init__(self, calibration_file_path: Path, detection_cfg: DetectionConfig = DETECTION_CFG):
+    def __init__(
+        self, calibration_file_path: Path, detection_cfg: DetectionConfig = DETECTION_CFG, required: bool = True
+    ):
         if detection_cfg.method not in wg_helpers.METHODS:
             raise ValueError(f"Detection method must be one of {wg_helpers.METHODS}, got {detection_cfg.method}")
 
-        # Load calibration
-        calibration_params = load_calibration(calibration_file_path)
+        # Load calibration; without one (and not `required`), nothing is detected
+        if not required and not calibration_file_path.exists():
+            print(f"No calibration at {calibration_file_path}: detection off")
+            calibration_params = None
+        else:
+            calibration_params = load_calibration(calibration_file_path)
         self.calibration_params = calibration_params
 
         self.detection_cfg = detection_cfg
@@ -397,6 +406,8 @@ def run_sensor_loop(
     on_frame=None,
     require_calibration: bool = True,
     on_swipe=None,
+    paused=None,
+    reload_event=None,
 ) -> None:
     """Read the serial port and run both layers until `stop_event` is set (or forever).
 
@@ -405,10 +416,20 @@ def run_sensor_loop(
     (`detector.last_result`, `detector.background`, ...), and `on_swipe(Swipe)` (if given) for every
     finished swipe, ignored ones included. Without a calibration, raises
     FileNotFoundError if `require_calibration`, else runs with the detection off.
+
+    While `paused` (an Event, if given) is set, both layers are off (no holes, no commands): only `on_frame`
+    is called, e.g. while calibrating. Setting `reload_event` loads the calibration again (and records the
+    background again); the loop clears it.
     """
-    detector = HoleDetector(calibration_file_path=CAL_CFG.npz_path)
-    processor = GestureProcessor(detector.calibration_params)
+
+    def layers():
+        detector = HoleDetector(CAL_CFG.npz_path, required=require_calibration)
+        processor = GestureProcessor(detector.calibration_params) if detector.calibration_params is not None else None
+        return detector, processor
+
+    detector, processor = layers()
     pressed = frozenset()
+    was_paused = False
 
     with open_serial(port, baudrate) as ser:
         reader = FrameReader(ser)
@@ -424,6 +445,23 @@ def run_sensor_loop(
                     f"Connected: {teensy_ports()}"
                 )
                 warned = True
+            if reload_event is not None and reload_event.is_set():
+                reload_event.clear()
+                detector, processor = layers()
+            if paused is not None and paused.is_set():
+                if pressed:
+                    pressed = frozenset()
+                    on_holes(HoleState(t, pressed))
+                was_paused = True
+                if frame is not None:
+                    t_last_frame, warned = t, False
+                    if on_frame is not None:
+                        on_frame(t, frame, detector)
+                continue
+            if was_paused:  # A touch from before the pause must not end as a swipe
+                was_paused = False
+                processor = GestureProcessor(detector.calibration_params) if processor is not None else None
+
             if frame is not None:
                 t_last_frame, warned = t, False
                 new_pressed = detector.update(frame)
@@ -435,7 +473,7 @@ def run_sensor_loop(
                     on_holes(HoleState(t, pressed, detector.last_result["distance_cm"] if pressed else None))
 
             # Every iteration, even without a frame: the swipe ends after a time without holes
-            swipe = processor.update(t, pressed)
+            swipe = processor.update(t, pressed) if processor is not None else None
             if swipe is not None:
                 if on_swipe is not None:
                     on_swipe(swipe)
@@ -462,7 +500,8 @@ class SensorProcess:
     def __init__(self, port: str = DEFAULT_PORT, baudrate: int = DEFAULT_BAUDRATE, plot: bool = False):
         # Checked here, not only in the child: there it would just end the process
         port = check_port(port, baudrate)
-        load_calibration()
+        if not plot:  # With the plot, it can be calibrated from its panel
+            load_calibration()
         # Spawn, not fork: the child must not inherit the parent's rclpy state and threads
         ctx = mp.get_context("spawn")
         self._commands = ctx.Queue()
@@ -502,15 +541,7 @@ def record_calibration(port: str, baudrate: int, config: CalibrationConfig) -> N
     """
     n_frames = wg_helpers.CYCLES_PER_PRESS
     with closing(sqlite3.connect(config.db_path)) as conn, open_serial(port, baudrate) as ser:
-        conn.execute(
-            """CREATE TABLE IF NOT EXISTS signals (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                key_vector TEXT NOT NULL,
-                run_number INTEGER NOT NULL,
-                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-                signal_blob BLOB NOT NULL
-            )"""
-        )
+        live_calibration.create_signals_table(conn)
         reader = FrameReader(ser)
         run_number = 0
         for pass_idx in range(config.n_passes):
@@ -640,7 +671,11 @@ class _PlotTools:
         self.app = pg.mkQApp(app_name)
         self.font = QtGui.QFont(style.font_family, style.font_pt)
         self.small_font = QtGui.QFont(style.font_family, style.font_pt - 3)
-        self.label_style = {"font-size": f"{style.font_pt}pt", "font-family": style.font_family, "color": c["foreground"]}
+        self.label_style = {
+            "font-size": f"{style.font_pt}pt",
+            "font-family": style.font_family,
+            "color": c["foreground"],
+        }
 
     def rgb(self, color: str) -> np.ndarray:
         return np.array(self.QtGui.QColor(color).getRgb()[:3])
@@ -698,23 +733,33 @@ def run_with_live_plot(
        (shaded) and the detected echo (vermillion line)
     2. Echo envelope: envelope of the averaged frame minus the background, as `wg_helpers.estimate` computes it,
        against the detection threshold (dashed)
-    3. Waveguide: the holes at their calibrated distance, with the covered hole and its distance above. The
+    3. Waveguide: the holes (`CalibrationConfig` layout), with the covered hole and its distance above. The
        covered hole is vermillion; released holes fade back over `trail_s` [s], showing the swipe. The last
        touch is an arrow (swipe: along the waveguide, z hold: up or down) with its command (green) or why it
        was ignored (grey), fading out over `swipe_display_s` [s]. The segments are tinted: x (blue), the z zone
        (orange, +z and -z holes) and y (purple); the bend (`GestureConfig.hole_idx`) is the dashed line.
 
+    Calibration panel (the ⚙ tab on the right, or C): number of holes (evenly spaced, plus the z holes) and of
+    passes, then Start. The waveguide shows the hole to press (green) and moves on by itself
+    (`live_calibration.CalibrationRecorder`); Space records the current step now, Esc cancels. Detection and
+    commands are paused meanwhile. The new calibration is saved (`CalibrationConfig.npz_path`, the previous one
+    kept as a backup) and used right away; the background is then recorded again (don't touch).
+
     The loop runs in a background thread (Qt needs the main thread), so the plot shows what the processing
     sees. The callbacks are passed on to the loop, and called from its thread. Runs until the window is
-    closed or `stop_event` (if given) is set.
+    closed or `stop_event` (if given) is set. Without a calibration, it runs with the detection off.
     """
+    lc = live_calibration
     port = check_port(port, baudrate)
-    calibration = load_calibration(CAL_CFG.npz_path)
+    calibration = load_calibration(CAL_CFG.npz_path) if CAL_CFG.npz_path.exists() else None
     import pyqtgraph as pg  # Only needed here
-    from pyqtgraph.Qt import QtCore
+    from pyqtgraph.Qt import QtCore, QtGui, QtWidgets
 
     # Written by the sensor loop thread, read by the plot
     latest = {"frame": None, "detector": None, "n_frames": 0, "swipe": None}
+    # Calibration from the panel: recorder (fed by the sensor thread), then the fit (its own thread)
+    session = {"recorder": None, "fit_thread": None, "result": None, "error": None}
+    paused, reload_event = threading.Event(), threading.Event()
 
     def plot_on_swipe(swipe):
         latest["swipe"] = swipe
@@ -723,16 +768,21 @@ def run_with_live_plot(
     if stop_event is None:
         stop_event = threading.Event()
 
-    hole_ids = np.asarray(calibration["hole_ids"])
+    # Holes drawn from the CalibrationConfig layout: also those not (yet) calibrated
+    hole_ids = np.arange(1, CAL_CFG.n_holes + 1)
+    hole_cm = CAL_CFG.first_hole_cm + CAL_CFG.hole_spacing_cm * (hole_ids - 1)
     hole_index = {int(hole): i for i, hole in enumerate(hole_ids)}
     last_covered = np.full(len(hole_ids), -np.inf)  # Last time each hole was covered (CLOCK_MONOTONIC) [s]
 
     def plot_on_frame(t, frame, detector):
         latest["frame"], latest["detector"] = frame, detector
         latest["n_frames"] += 1
+        recorder = session["recorder"]
+        if recorder is not None:
+            recorder.update(t, frame)
         # Every frame, not every redraw: a fast swipe can cover a hole for less than a redraw period
         result = detector.last_result
-        if result is not None and result["detected"]:
+        if not paused.is_set() and result is not None and result["detected"] and result["hole"] in hole_index:
             last_covered[hole_index[result["hole"]]] = t
         if on_frame is not None:
             on_frame(t, frame, detector)
@@ -748,25 +798,35 @@ def run_with_live_plot(
                 on_frame=plot_on_frame,
                 require_calibration=False,
                 on_swipe=plot_on_swipe,
+                paused=paused,
+                reload_event=reload_event,
             )
         except Exception as e:
             errors.append(e)
 
-    start, stop = int(calibration["search_start"]), int(calibration["search_stop"])
-    hole_cm = np.asarray(calibration["hole_cm"])
-    threshold = float(calibration["threshold"])
-    samples_per_ms = calibration["sampling_rate_hz"] / 1000
-    time_ms = np.arange(FRAME_SIZE) / samples_per_ms  # x axis of the echo plots
+    time_ms = np.arange(FRAME_SIZE) / (wg_helpers.SAMPLING_RATE_HZ / 1000)  # x axis of the echo plots
+    view = {"stop": FRAME_SIZE}  # Calibration-dependent: envelope samples shown (search window stop)
 
     # --- Style
     tools = _PlotTools(style, "Waveguide sensor")
     c, app, small_font = tools.c, tools.app, tools.small_font
     rgb, tint, pen, text_item, set_title, style_axes = (
-        tools.rgb, tools.tint, tools.pen, tools.text_item, tools.set_title, tools.style_axes
+        tools.rgb,
+        tools.tint,
+        tools.pen,
+        tools.text_item,
+        tools.set_title,
+        tools.style_axes,
     )
 
-    win = pg.GraphicsLayoutWidget(show=True, title="Waveguide sensor")
-    win.resize(*style.window_size)
+    window = QtWidgets.QWidget()
+    window.setWindowTitle("Waveguide sensor")
+    window.setStyleSheet(f"background-color: {c['background']}; color: {c['foreground']};")
+    window_layout = QtWidgets.QHBoxLayout(window)
+    window_layout.setContentsMargins(0, 0, 0, 0)
+    window_layout.setSpacing(0)
+    win = pg.GraphicsLayoutWidget()
+    window_layout.addWidget(win, 1)
     win.ci.setContentsMargins(16, 12, 24, 12)
     win.ci.setSpacing(18)
 
@@ -775,14 +835,12 @@ def run_with_live_plot(
         line.hide()
         return line
 
+    search_windows = []
+
     def search_window():
-        region = pg.LinearRegionItem(
-            values=(time_ms[start], time_ms[min(stop, FRAME_SIZE - 1)]),
-            movable=False,
-            brush=c["shade"],
-            pen=pg.mkPen(None),
-        )
+        region = pg.LinearRegionItem(values=(0, 1), movable=False, brush=c["shade"], pen=pg.mkPen(None))
         region.setZValue(-10)
+        search_windows.append(region)
         return region
 
     # 1. Echo (raw frame)
@@ -796,9 +854,7 @@ def run_with_live_plot(
     legend.setBrush(tint(c["background"], 220))
     raw.addItem(search_window())
     trace = dict(antialias=style.antialias_traces, autoDownsample=True, downsampleMethod="peak", clipToView=True)
-    background_curve = raw.plot(
-        pen=pen(c["reference"], width=style.line_width * 0.6), name="background", **trace
-    )
+    background_curve = raw.plot(pen=pen(c["reference"], width=style.line_width * 0.6), name="background", **trace)
     frame_curve = raw.plot(pen=pen(c["signal"], width=style.line_width * 0.75), name="echo", **trace)
     background_curve.setZValue(1)  # On top: the echo hides it otherwise
     raw_echo = echo_line(c["touch"])
@@ -812,13 +868,36 @@ def run_with_live_plot(
     signal.setXLink(raw)
     signal.setMouseEnabled(x=False, y=False)
     signal.addItem(search_window())
-    signal.addLine(y=threshold, pen=pen(c["touch"], width=1.5, dashed=True))
+    threshold_line = signal.addLine(y=0, pen=pen(c["touch"], width=1.5, dashed=True))
     threshold_label = text_item("threshold", c["touch"], anchor=(1.0, 1.0), font_=small_font)
-    threshold_label.setPos(time_ms[-1], threshold)
     signal.addItem(threshold_label)
     envelope_curve = signal.plot(pen=pen(c["signal"]), **trace)
     signal_echo = echo_line(c["touch"])
     signal.addItem(signal_echo)
+
+    def set_threshold(value: float | None) -> None:
+        threshold_line.setVisible(value is not None)
+        threshold_label.setVisible(value is not None)
+        if value is not None:
+            threshold_line.setPos(value)
+            threshold_label.setPos(time_ms[-1], value)
+
+    def apply_calibration(cal: dict | None) -> None:
+        """Search window and threshold of `cal` (None: no calibration, hidden)."""
+        if cal is None:
+            view["stop"] = FRAME_SIZE
+            for region in search_windows:
+                region.hide()
+            set_threshold(None)
+            return
+        start, stop = int(cal["search_start"]), int(cal["search_stop"])
+        view["stop"] = stop
+        for region in search_windows:
+            region.setRegion((time_ms[start], time_ms[min(stop, FRAME_SIZE - 1)]))
+            region.show()
+        set_threshold(float(cal["threshold"]))
+
+    apply_calibration(calibration)
 
     # 3. Waveguide
     win.nextRow()
@@ -851,18 +930,20 @@ def run_with_live_plot(
         label = text_item(str(hole), c["muted"], anchor=(0.5, 0.0), font_=small_font)
         label.setPos(x, -0.22)
         guide.addItem(label)
-    shown_trail = None
+    shown_holes = None  # What the hole spots show now, to skip identical redraws
+
+    def show_holes(colors: np.ndarray, outlined: int | None) -> None:
+        nonlocal shown_holes
+        if shown_holes is not None and outlined == shown_holes[0] and np.array_equal(colors, shown_holes[1]):
+            return  # Nothing visibly changed
+        holes.setBrush([pg.mkBrush(*color) for color in colors])
+        holes.setPen([covered_pen if hole == outlined else idle_pen for hole in hole_ids])
+        shown_holes = (outlined, colors)
 
     def show_trail(covered_hole: int | None) -> None:
         """Covered hole in the touch color; the others from it (just released) back to idle over trail_s."""
-        nonlocal shown_trail
         level = np.clip(1 - (time.monotonic() - last_covered) / trail_s, 0, 1)
-        colors = np.round(idle_color + level[:, None] * (covered_color - idle_color)).astype(int)
-        if shown_trail is not None and covered_hole == shown_trail[0] and np.array_equal(colors, shown_trail[1]):
-            return  # Nothing visibly changed
-        holes.setBrush([pg.mkBrush(*color) for color in colors])
-        holes.setPen([covered_pen if hole == covered_hole else idle_pen for hole in hole_ids])
-        shown_trail = (covered_hole, colors)
+        show_holes(np.round(idle_color + level[:, None] * (covered_color - idle_color)).astype(int), covered_hole)
 
     # Segments (GestureConfig): x (blue) up to the z zone (orange, +z and -z holes), y (purple) after it; the bend
     # (hole_idx) is the dashed line
@@ -906,7 +987,8 @@ def run_with_live_plot(
     swipe_line = pg.PlotCurveItem()
     swipe_head = pg.ArrowItem(headLen=20, tipAngle=40, pen=None)
     swipe_label = text_item("", c["command"], anchor=(0.5, 1.0))
-    for item in (swipe_line, swipe_head, swipe_label):
+    swipe_items = (swipe_line, swipe_head, swipe_label)
+    for item in swipe_items:
         item.hide()
         guide.addItem(item)
     shown_swipe = None
@@ -935,7 +1017,7 @@ def run_with_live_plot(
                 swipe_label.setAnchor((0.0, 0.5))
                 swipe_label.setPos(x + 0.4, 0.55)
             else:  # Arrow along the waveguide, from the start to the end hole
-                x0, x1 = hole_cm_of[swipe.start_hole], hole_cm_of[swipe.end_hole]
+                x0, x1 = hole_cm_of.get(swipe.start_hole, bend_x), hole_cm_of.get(swipe.end_hole, bend_x)
                 swipe_line.setData([x0, x1], [swipe_y, swipe_y], pen=pen(color, width=4))
                 swipe_head.setStyle(angle=180 if x1 > x0 else 0, brush=pg.mkBrush(color))  # angle 0 points left
                 swipe_head.setPos(x1, swipe_y)
@@ -947,12 +1029,181 @@ def run_with_live_plot(
             swipe_label.show()
             shown_swipe = swipe
         opacity = float(np.clip(1 - (time.monotonic() - swipe.t) / swipe_display_s, 0, 1))
-        for item in (swipe_line, swipe_head, swipe_label):
+        for item in swipe_items:
             item.setOpacity(opacity)
 
     win.ci.layout.setRowStretchFactor(0, 3)
     win.ci.layout.setRowStretchFactor(1, 2)
     win.ci.layout.setRowStretchFactor(2, 2)
+
+    # --- Calibration panel: collapsed to the ⚙ tab (out of the recordings), C toggles it
+    panel_width = 270
+    panel = QtWidgets.QWidget()
+    panel_layout = QtWidgets.QHBoxLayout(panel)
+    panel_layout.setContentsMargins(0, 8, 4, 8)
+    panel_layout.setSpacing(4)
+    toggle = QtWidgets.QToolButton()
+    toggle.setText("⚙")
+    toggle.setToolTip("Calibration (C)")
+    toggle.setCheckable(True)
+    toggle.setAutoRaise(True)
+    toggle.setFocusPolicy(QtCore.Qt.FocusPolicy.NoFocus)
+    toggle.setStyleSheet(f"color: {c['muted']}; font-size: {style.font_pt}pt;")
+    toggle_column = QtWidgets.QVBoxLayout()
+    toggle_column.addWidget(toggle)
+    toggle_column.addStretch(1)
+    panel_layout.addLayout(toggle_column)
+
+    content = QtWidgets.QWidget()
+    content.setFixedWidth(panel_width)
+    content.setStyleSheet(
+        f"QWidget {{ font-family: {style.font_family}; font-size: {style.font_pt - 2}pt; }}"
+        f"QPushButton, QSpinBox {{ border: 1px solid {c['muted']}; border-radius: 4px; padding: 4px 8px; }}"
+        f"QPushButton:disabled {{ color: {c['muted']}; }}"
+    )
+    form = QtWidgets.QVBoxLayout(content)
+    title = QtWidgets.QLabel("Calibration")
+    title.setStyleSheet(f"font-size: {style.title_pt}pt; font-weight: bold;")
+    form.addWidget(title)
+    fields = QtWidgets.QFormLayout()
+    holes_spin = QtWidgets.QSpinBox()
+    holes_spin.setRange(2, CAL_CFG.n_holes)
+    holes_spin.setValue(min(11, CAL_CFG.n_holes))
+    passes_spin = QtWidgets.QSpinBox()
+    passes_spin.setRange(2, 5)  # >= 2: the detection threshold comes from the spread of the backgrounds
+    passes_spin.setValue(2)
+    fields.addRow("Holes", holes_spin)
+    fields.addRow("Passes", passes_spin)
+    form.addLayout(fields)
+    plan_label = QtWidgets.QLabel()
+    plan_label.setWordWrap(True)
+    plan_label.setStyleSheet(f"color: {c['muted']};")
+    form.addWidget(plan_label)
+    start_button = QtWidgets.QPushButton("Start")
+    cancel_button = QtWidgets.QPushButton("Cancel (Esc)")
+    for button in (start_button, cancel_button):
+        button.setFocusPolicy(QtCore.Qt.FocusPolicy.NoFocus)  # Space is for recording a step
+        form.addWidget(button)
+    cancel_button.setEnabled(False)
+    info_label = QtWidgets.QLabel(
+        "Each step moves on by itself: hold the green hole until it turns, then release. Space records the "
+        "current step now (e.g. a weak hole)."
+    )
+    info_label.setWordWrap(True)
+    form.addWidget(info_label)
+    form.addStretch(1)
+    content.hide()
+    panel_layout.addWidget(content)
+    window_layout.addWidget(panel)
+
+    def plan() -> tuple[int, ...]:
+        return lc.calibration_holes(CAL_CFG.n_holes, holes_spin.value(), always=cfg.z_up_holes + cfg.z_down_holes)
+
+    def update_plan() -> None:
+        holes_ = plan()
+        steps = passes_spin.value() * (len(holes_) + 1)
+        plan_label.setText(
+            f"{len(holes_)} holes (evenly spaced + the z holes): {', '.join(map(str, holes_))}. {steps} steps."
+        )
+
+    holes_spin.valueChanged.connect(update_plan)
+    passes_spin.valueChanged.connect(update_plan)
+    update_plan()
+
+    def set_panel(visible: bool) -> None:
+        if visible == content.isVisible():
+            return
+        content.setVisible(visible)
+        toggle.setChecked(visible)
+        # The plot keeps its size: the window grows by the panel
+        window.resize(window.width() + (1 if visible else -1) * (panel_width + 4), window.height())
+
+    toggle.toggled.connect(set_panel)
+
+    def start_calibration() -> None:
+        session.update(recorder=lc.CalibrationRecorder(plan(), passes_spin.value()), result=None, error=None)
+        paused.set()
+        start_button.setEnabled(False)
+        cancel_button.setEnabled(True)
+        holes_spin.setEnabled(False)
+        passes_spin.setEnabled(False)
+        info_label.setText("Recording... Space: record the current step now. Esc: cancel.")
+        win.setFocus()
+
+    def end_calibration(message: str) -> None:
+        session["recorder"] = None
+        paused.clear()
+        start_button.setEnabled(True)
+        cancel_button.setEnabled(False)
+        holes_spin.setEnabled(True)
+        passes_spin.setEnabled(True)
+        info_label.setText(message)
+
+    def cancel_calibration() -> None:
+        if session["recorder"] is not None and session["fit_thread"] is None:
+            end_calibration("Cancelled: the previous calibration is still used.")
+
+    def record_now() -> None:
+        if session["recorder"] is not None:
+            session["recorder"].record_now()
+
+    start_button.clicked.connect(start_calibration)
+    cancel_button.clicked.connect(cancel_calibration)
+    shortcuts = []
+    for key, action in (
+        ("C", lambda: set_panel(not content.isVisible())),
+        ("Space", record_now),
+        ("Esc", cancel_calibration),
+    ):
+        shortcut = QtWidgets.QShortcut(QtGui.QKeySequence(key), window)
+        shortcut.activated.connect(action)
+        shortcuts.append(shortcut)
+
+    def fit(presses) -> None:
+        session["had_previous"] = CAL_CFG.npz_path.exists()
+        try:
+            session["result"] = lc.save_and_fit(
+                presses, CAL_CFG.db_path, CAL_CFG.npz_path, CAL_CFG.first_hole_cm, CAL_CFG.hole_spacing_cm
+            )
+        except Exception as e:  # Shown in the panel; the previous calibration is kept
+            session["error"] = e
+
+    def show_calibration(recorder) -> None:
+        """The hole to press (green, outlined), those recorded this pass (light green), the step in the status."""
+        if session["fit_thread"] is not None:
+            set_status("Fitting the calibration...", c["muted"])
+            return
+        plan_holes, recorded = set(recorder.holes), recorder.recorded_holes()
+        green = rgb(c["command"])
+        colors = (
+            np.array(
+                [
+                    green
+                    if h == recorder.key and recorder.phase in ("waiting", "recording")
+                    else idle_color + 0.55 * (green - idle_color)
+                    if h in recorded
+                    else idle_color + 0.2 * (green - idle_color)
+                    if h in plan_holes
+                    else idle_color
+                    for h in hole_ids
+                ]
+            )
+            .round()
+            .astype(int)
+        )
+        show_holes(colors, recorder.key if recorder.key > 0 else None)
+        step = f"pass {recorder.pass_idx + 1}/{recorder.n_passes} · {recorder.step_idx + 1}/{recorder.n_steps}"
+        if recorder.phase == "quiet" or (recorder.key == 0 and recorder.phase == "recording"):
+            set_status(f"Don't touch: background  ({step})", c["reference"])
+        elif recorder.phase == "waiting":
+            set_status(f"Press hole {recorder.key}  ({step})", c["command"])
+        elif recorder.phase == "recording":
+            set_status(f"Hold hole {recorder.key}...", c["command"])
+        elif recorder.phase == "release":
+            set_status("Release", c["muted"])
+
+    window.resize(*style.window_size)
+    window.show()
 
     n_frames_last, t_last = 0, time.monotonic()
     shown_background = shown_frame = None
@@ -964,24 +1215,65 @@ def run_with_live_plot(
             app.quit()
             return
 
-        detector = latest["detector"]
-        result = detector.last_result if detector is not None else None
-        show_trail(result["hole"] if result is not None and result["detected"] else None)
-        show_swipe()
+        # Calibration: recording, fitting, done
+        recorder = session["recorder"]
+        if recorder is not None and recorder.done and session["fit_thread"] is None:
+            session["fit_thread"] = threading.Thread(target=fit, args=(list(recorder.presses),), daemon=True)
+            session["fit_thread"].start()
+        if session["fit_thread"] is not None and not session["fit_thread"].is_alive():
+            session["fit_thread"] = None
+            if session["error"] is not None:
+                end_calibration(f"Fit failed: {session['error']!r}. The previous calibration is still used.")
+            else:
+                new = load_calibration(CAL_CFG.npz_path)
+                apply_calibration(new)
+                reload_event.set()  # The sensor loop loads it and records the background again
+                backup = " (the previous one kept as a backup)" if session.get("had_previous") else ""
+                end_calibration(
+                    f"Calibrated: {len(new['hole_ids'])} holes, threshold {new['threshold']:.0f}. "
+                    f"Saved to {CAL_CFG.npz_path.name}{backup}."
+                )
+            recorder = None
 
+        detector = latest["detector"]
         frame = latest["frame"]
         new_frame = frame is not None and frame is not shown_frame
         if new_frame:
             frame_curve.setData(time_ms, frame)  # Only the latest frame
             shown_frame = frame
+
+        if recorder is not None:  # Calibrating: the change from the pass background, and the hole to press
+            for item in (raw_echo, signal_echo, distance_line, *swipe_items):
+                item.hide()
+            show_calibration(recorder)
+            if recorder.pass_background is not None and recorder.pass_background is not shown_background:
+                background_curve.setData(time_ms, recorder.pass_background)
+                shown_background = recorder.pass_background
+            if new_frame and recorder.pass_background is not None:
+                envelope = wg_helpers.ema(np.abs(np.asarray(frame, dtype=float) - recorder.pass_background))
+                envelope_curve.setData(time_ms, envelope)
+                set_threshold(recorder.threshold)
+                set_title(signal, f"Change from the background  ·  {recorder.last_change:.0f}")
+            return
+
+        result = detector.last_result if detector is not None else None
+        show_trail(result["hole"] if result is not None and result["detected"] else None)
+        show_swipe()
+
         if detector is not None and detector.background is not None and detector.background is not shown_background:
             background_curve.setData(time_ms, detector.background)
             shown_background = detector.background
 
-        if new_frame and result is not None:
+        if detector is None or detector.calibration_params is None:
+            set_status("No calibration: open the ⚙ tab (C)", c["muted"])
+        elif detector.background is None:
+            set_status("Recording the background: don't touch", c["reference"])
+        elif new_frame and result is not None:
+            stop = view["stop"]
             averaged = detector.last_averaged
             envelope = wg_helpers.ema(np.abs(np.asarray(averaged[:stop], dtype=float) - detector.background[:stop]))
             envelope_curve.setData(time_ms[: len(envelope)], envelope)
+            set_threshold(float(detector.calibration_params["threshold"]))
             set_title(signal, f"Echo envelope  ·  amplitude {result['amplitude']:.0f}")
 
             if result["detected"]:
@@ -1000,7 +1292,7 @@ def run_with_live_plot(
         t = time.monotonic()
         if t - t_last >= 1.0:
             rate = (latest["n_frames"] - n_frames_last) / (t - t_last)
-            win.setWindowTitle(f"Waveguide sensor ({rate:.0f} frames/s)")
+            window.setWindowTitle(f"Waveguide sensor ({rate:.0f} frames/s)")
             n_frames_last, t_last = latest["n_frames"], t
 
     thread = threading.Thread(target=sensor_loop, name="waveguide_sensor_loop", daemon=True)
@@ -1057,12 +1349,20 @@ def save_target(trace: np.ndarray, directory: Path = CAL_CFG.directory) -> Path:
     """Write a trace in the x/y format of the pyqtgraph CSV export, as reference_<date>_<time>.csv: the newest
     target for the next --live-match."""
     path = directory / f"reference_{time.strftime('%Y_%m_%d_%H%M%S')}.csv"
-    np.savetxt(path, np.column_stack([np.arange(len(trace)), trace]), delimiter=",", header="x0000,y0000",
-               comments="", fmt=["%d", "%.2f"])
+    np.savetxt(
+        path,
+        np.column_stack([np.arange(len(trace)), trace]),
+        delimiter=",",
+        header="x0000,y0000",
+        comments="",
+        fmt=["%d", "%.2f"],
+    )
     return path
 
 
-def run_live_match(port: str, baudrate: int, target_path: Path, n_average: int = 5, style: PlotStyle = PLOT_STYLE) -> None:
+def run_live_match(
+    port: str, baudrate: int, target_path: Path, n_average: int = 5, style: PlotStyle = PLOT_STYLE
+) -> None:
     """Live trace overlaid on a saved target trace (`load_target`), to put the sensor back as it was (e.g. after
     a reset) before recording.
 

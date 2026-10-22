@@ -25,6 +25,14 @@ Standalone (the port defaults to the connected Teensy sending frames, see --port
 ```
 
 
+### Calibrating from the live plot
+After a restart or reconnection, recalibrate from the `--live-plot` window (also in `wg_teleop.py --live-plot`):
+open the ⚙ tab on the right (or press C), choose the number of holes (evenly spaced, plus the `GestureConfig` z
+holes) and of passes, then Start. The waveguide shows the hole to press in green; each step moves on by itself
+(hold until it changes, then release). Space records the current step now (e.g. a weak hole), Esc cancels.
+Detection and teleop commands are paused meanwhile. The fit is saved to `CalibrationConfig.npz_path` (the previous
+files kept as `*_backup_<date>`) and used right away; the background is then recorded again: don't touch.
+
 ## Teloperation
 To teleop the franka with the sensor, use the `wg_teleop.py` file.
 
