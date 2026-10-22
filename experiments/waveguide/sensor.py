@@ -62,7 +62,7 @@ class DetectionConfig:
     n_background_frames: int = 50  # Frames averaged at startup, with nothing covered
     # Latest frames averaged for each estimate: the threshold comes from 5-frame averages (CYCLES_PER_PRESS),
     # single frames give false detections. More: less noise, more lag
-    n_average_frames: int = 2
+    n_average_frames: int = 1
     method: str = "leading_edge"  # One of wg_helpers.METHODS
 
 
@@ -164,7 +164,7 @@ def load_calibration(path: Path = CAL_CFG.npz_path) -> dict:
 
     calibration_params = wg_helpers.load_calibration(path)
 
-    calibration_params["threshold"] = float(calibration_params["threshold"]) * 1.5  # temp, to avoid false detections
+    calibration_params["threshold"] = float(calibration_params["threshold"])  # temp, to avoid false detections
 
     return calibration_params
 
@@ -600,6 +600,9 @@ class PlotStyle:
     title_pt: int = 15
     status_pt: int = 22  # Covered hole / no touch, above the waveguide
     line_width: float = 2.0
+    # Antialiasing the 1500-sample traces makes each redraw ~35 ms instead of ~6: the plot then cannot keep up, and
+    # (GIL) neither can the sensor loop. The text, holes and arrows are always antialiased
+    antialias_traces: bool = False
     hole_label_every: int = 5  # Hole numbers shown under the waveguide: the first, then every n-th
 
     def colors(self) -> dict:
@@ -715,7 +718,9 @@ def run_with_live_plot(
         return (*rgb(color), alpha)
 
     def pen(color, width=style.line_width, dashed=False):
-        return pg.mkPen(color, width=width, style=QtCore.Qt.PenStyle.DashLine if dashed else QtCore.Qt.PenStyle.SolidLine)
+        return pg.mkPen(
+            color, width=width, style=QtCore.Qt.PenStyle.DashLine if dashed else QtCore.Qt.PenStyle.SolidLine
+        )
 
     def text_item(text, color, anchor, font_=font):
         item = pg.TextItem(text, anchor=anchor, color=color)
@@ -752,7 +757,10 @@ def run_with_live_plot(
 
     def search_window():
         region = pg.LinearRegionItem(
-            values=(time_ms[start], time_ms[min(stop, FRAME_SIZE - 1)]), movable=False, brush=c["shade"], pen=pg.mkPen(None)
+            values=(time_ms[start], time_ms[min(stop, FRAME_SIZE - 1)]),
+            movable=False,
+            brush=c["shade"],
+            pen=pg.mkPen(None),
         )
         region.setZValue(-10)
         return region
@@ -767,8 +775,11 @@ def run_with_live_plot(
     legend = raw.addLegend(offset=(-10, 10), labelTextSize=f"{style.font_pt - 2}pt", labelTextColor=c["foreground"])
     legend.setBrush(tint(c["background"], 220))
     raw.addItem(search_window())
-    background_curve = raw.plot(pen=pen(tint(c["reference"], 190), width=style.line_width * 0.6), name="background")
-    frame_curve = raw.plot(pen=pen(c["signal"], width=style.line_width * 0.75), name="echo")
+    trace = dict(antialias=style.antialias_traces, autoDownsample=True, downsampleMethod="peak", clipToView=True)
+    background_curve = raw.plot(
+        pen=pen(c["reference"], width=style.line_width * 0.6), name="background", **trace
+    )
+    frame_curve = raw.plot(pen=pen(c["signal"], width=style.line_width * 0.75), name="echo", **trace)
     background_curve.setZValue(1)  # On top: the echo hides it otherwise
     raw_echo = echo_line(c["touch"])
     raw.addItem(raw_echo)
@@ -785,7 +796,7 @@ def run_with_live_plot(
     threshold_label = text_item("threshold", c["touch"], anchor=(1.0, 1.0), font_=small_font)
     threshold_label.setPos(time_ms[-1], threshold)
     signal.addItem(threshold_label)
-    envelope_curve = signal.plot(pen=pen(c["signal"]))
+    envelope_curve = signal.plot(pen=pen(c["signal"]), **trace)
     signal_echo = echo_line(c["touch"])
     signal.addItem(signal_echo)
 
@@ -845,7 +856,11 @@ def run_with_live_plot(
 
     bend_x = boundary(cfg.hole_idx, cfg.hole_idx + 1)
     zone_lo, zone_hi = boundary(cfg.z_zone.start - 1, cfg.z_zone.start), boundary(cfg.z_zone.stop - 1, cfg.z_zone.stop)
-    for (lo, hi), color in (((x_min, zone_lo), c["signal"]), ((zone_lo, zone_hi), c["reference"]), ((zone_hi, x_max), c["y"])):
+    for (lo, hi), color in (
+        ((x_min, zone_lo), c["signal"]),
+        ((zone_lo, zone_hi), c["reference"]),
+        ((zone_hi, x_max), c["y"]),
+    ):
         segment = pg.LinearRegionItem(values=(lo, hi), movable=False, brush=tint(color, 30), pen=pg.mkPen(None))
         segment.setZValue(-10)  # Behind the holes
         guide.addItem(segment)
@@ -920,24 +935,30 @@ def run_with_live_plot(
     win.ci.layout.setRowStretchFactor(2, 2)
 
     n_frames_last, t_last = 0, time.monotonic()
-    shown_background = None
+    shown_background = shown_frame = None
 
     def update():
-        nonlocal n_frames_last, t_last, shown_background
+        """Every ~16 ms: the trail and the arrow fade smoothly; the traces and status only change with a new frame."""
+        nonlocal n_frames_last, t_last, shown_background, shown_frame
         if errors or stop_event.is_set():
             app.quit()
             return
 
-        if latest["frame"] is not None:
-            frame_curve.setData(time_ms, latest["frame"])  # Only the latest; the plot cannot keep up with every frame
-
         detector = latest["detector"]
         result = detector.last_result if detector is not None else None
+        show_trail(result["hole"] if result is not None and result["detected"] else None)
+        show_swipe()
+
+        frame = latest["frame"]
+        new_frame = frame is not None and frame is not shown_frame
+        if new_frame:
+            frame_curve.setData(time_ms, frame)  # Only the latest frame
+            shown_frame = frame
         if detector is not None and detector.background is not None and detector.background is not shown_background:
             background_curve.setData(time_ms, detector.background)
             shown_background = detector.background
 
-        if result is not None:
+        if new_frame and result is not None:
             averaged = detector.last_averaged
             envelope = wg_helpers.ema(np.abs(np.asarray(averaged[:stop], dtype=float) - detector.background[:stop]))
             envelope_curve.setData(time_ms[: len(envelope)], envelope)
@@ -955,8 +976,6 @@ def run_with_live_plot(
                 set_status("No touch", c["muted"])
                 for line in (raw_echo, signal_echo, distance_line):
                     line.hide()
-        show_trail(result["hole"] if result is not None and result["detected"] else None)
-        show_swipe()
 
         t = time.monotonic()
         if t - t_last >= 1.0:
