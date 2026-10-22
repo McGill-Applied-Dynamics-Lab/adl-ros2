@@ -1054,8 +1054,9 @@ def load_target(path: Path) -> np.ndarray:
 
 
 def save_target(trace: np.ndarray, directory: Path = CAL_CFG.directory) -> Path:
-    """Write a trace in the x/y format of the pyqtgraph CSV export, as target_<date>_<time>.csv."""
-    path = directory / f"target_{time.strftime('%Y%m%d_%H%M%S')}.csv"
+    """Write a trace in the x/y format of the pyqtgraph CSV export, as reference_<date>_<time>.csv: the newest
+    target for the next --live-match."""
+    path = directory / f"reference_{time.strftime('%Y_%m_%d_%H%M%S')}.csv"
     np.savetxt(path, np.column_stack([np.arange(len(trace)), trace]), delimiter=",", header="x0000,y0000",
                comments="", fmt=["%d", "%.2f"])
     return path
