@@ -40,7 +40,7 @@ class CalibrationConfig:
     """Config for recording the Calibration (`--calibrate`)"""
 
     directory: Path = Path(__file__).resolve().parent / "calibration"
-    filename: str = "demo_calibration.db"  # Recording (SAVE_TO_SQLITE.py format); the fit is saved next to it (.npz)
+    filename: str = "calibration_dummy.db"  # Recording (SAVE_TO_SQLITE.py format); the fit is saved next to it (.npz)
     n_holes: int = 51
     n_passes: int = 3  # Recordings of every hole, >= 2 for a detection threshold
     first_hole_cm: float = 25.0  # Distance to hole 1
@@ -585,6 +585,44 @@ def print_frames_and_holes(port: str, baudrate: int, plot: bool = False) -> None
         )
 
 
+@dataclass(frozen=True)
+class PlotStyle:
+    """Look of the live plot (`run_with_live_plot`), made for recordings (e.g. side by side with the robot video).
+
+    Colors: Okabe-Ito palette (colorblind-safe), used with the same meaning in every panel: blue the signal,
+    orange the background and z, vermillion a touch, green a command, purple y.
+    """
+
+    theme: str = "light"  # "light" (paper) or "dark"
+    window_size: tuple[int, int] = (960, 1080)  # Half of a 1080p side-by-side video
+    font_family: str = "Arial"
+    font_pt: int = 13  # Axes and labels
+    title_pt: int = 15
+    status_pt: int = 22  # Covered hole / no touch, above the waveguide
+    line_width: float = 2.0
+    hole_label_every: int = 5  # Hole numbers shown under the waveguide: the first, then every n-th
+
+    def colors(self) -> dict:
+        light = self.theme == "light"
+        return dict(
+            background="#FFFFFF" if light else "#121212",
+            foreground="#222222" if light else "#E6E6E6",
+            muted="#8C8C8C" if light else "#9E9E9E",
+            signal="#0072B2" if light else "#56B4E9",
+            reference="#E69F00",  # Background frame, z
+            touch="#D55E00",
+            command="#009E73",
+            y="#CC79A7",
+            hole_idle="#E3E3E3" if light else "#3A3A3A",
+            hole_edge="#7F7F7F",
+            hole_covered_edge="#000000" if light else "#FFFFFF",
+            shade=(0, 0, 0, 14) if light else (255, 255, 255, 18),  # Echo search window
+        )
+
+
+PLOT_STYLE = PlotStyle()
+
+
 def run_with_live_plot(
     port: str,
     baudrate: int,
@@ -594,18 +632,19 @@ def run_with_live_plot(
     trail_s: float = 2.0,
     swipe_display_s: float = 3.0,
     stop_event=None,
+    style: PlotStyle = PLOT_STYLE,
 ) -> None:
-    """`run_sensor_loop` with a live view of the processing, refreshed at ~60 Hz:
+    """`run_sensor_loop` with a live view of the processing, refreshed at ~60 Hz (look: `PlotStyle`):
 
-    1. Raw frame: the latest frame (cyan), the background (orange), the echo search window (shaded) and the
-       detected echo (red line)
-    2. Detection signal: envelope of the averaged frame minus the background, as `wg_helpers.estimate` computes
-       it, against the detection threshold (dashed)
-    3. Waveguide: the holes at their calibrated distance and the estimated distance (yellow). The covered hole
-       is bright red (white outline); released holes fade back to grey over `trail_s` [s], showing the swipe.
-       The last touch is an arrow (swipe: along the waveguide, z hold: up or down) with its command (green) or
-       why it was ignored (grey), fading out over `swipe_display_s` [s]. The segments are tinted: x (blue), the
-       z zone (amber, +z and -z holes) and y (purple); the bend (`GestureConfig.hole_idx`) is the dashed line.
+    1. Echo: the latest frame (blue) and the background (orange) against the echo time, the echo search window
+       (shaded) and the detected echo (vermillion line)
+    2. Echo envelope: envelope of the averaged frame minus the background, as `wg_helpers.estimate` computes it,
+       against the detection threshold (dashed)
+    3. Waveguide: the holes at their calibrated distance, with the covered hole and its distance above. The
+       covered hole is vermillion; released holes fade back over `trail_s` [s], showing the swipe. The last
+       touch is an arrow (swipe: along the waveguide, z hold: up or down) with its command (green) or why it
+       was ignored (grey), fading out over `swipe_display_s` [s]. The segments are tinted: x (blue), the z zone
+       (orange, +z and -z holes) and y (purple); the bend (`GestureConfig.hole_idx`) is the dashed line.
 
     The loop runs in a background thread (Qt needs the main thread), so the plot shows what the processing
     sees. The callbacks are passed on to the loop, and called from its thread. Runs until the window is
@@ -614,7 +653,7 @@ def run_with_live_plot(
     port = check_port(port, baudrate)
     calibration = load_calibration(CAL_CFG.npz_path)
     import pyqtgraph as pg  # Only needed here
-    from pyqtgraph.Qt import QtCore
+    from pyqtgraph.Qt import QtCore, QtGui
 
     # Written by the sensor loop thread, read by the plot
     latest = {"frame": None, "detector": None, "n_frames": 0, "swipe": None}
@@ -659,78 +698,132 @@ def run_with_live_plot(
     hole_cm = np.asarray(calibration["hole_cm"])
     threshold = float(calibration["threshold"])
     samples_per_ms = calibration["sampling_rate_hz"] / 1000
+    time_ms = np.arange(FRAME_SIZE) / samples_per_ms  # x axis of the echo plots
 
+    # --- Style
+    c = style.colors()
+    pg.setConfigOptions(antialias=True, background=c["background"], foreground=c["foreground"])
     app = pg.mkQApp("Waveguide sensor")
+    font = QtGui.QFont(style.font_family, style.font_pt)
+    small_font = QtGui.QFont(style.font_family, style.font_pt - 3)
+    label_style = {"font-size": f"{style.font_pt}pt", "font-family": style.font_family, "color": c["foreground"]}
+
+    def rgb(color: str) -> np.ndarray:
+        return np.array(QtGui.QColor(color).getRgb()[:3])
+
+    def tint(color: str, alpha: int) -> tuple:
+        return (*rgb(color), alpha)
+
+    def pen(color, width=style.line_width, dashed=False):
+        return pg.mkPen(color, width=width, style=QtCore.Qt.PenStyle.DashLine if dashed else QtCore.Qt.PenStyle.SolidLine)
+
+    def text_item(text, color, anchor, font_=font):
+        item = pg.TextItem(text, anchor=anchor, color=color)
+        item.setFont(font_)
+        return item
+
+    def set_title(plot, text, color=c["foreground"], size=style.title_pt):
+        plot.setTitle(text, size=f"{size}pt", color=color)
+
+    def style_axes(plot, x_label=None, y_label=None):
+        for name in ("left", "bottom"):
+            axis = plot.getAxis(name)
+            axis.setTickFont(font)
+            axis.setPen(pen(c["muted"], width=1))
+            axis.setTextPen(c["foreground"])
+        if x_label:
+            plot.setLabel("bottom", x_label, **label_style)
+        if y_label:
+            plot.setLabel("left", y_label, **label_style)
+        plot.getAxis("left").setWidth(80)  # Same width in every panel, so their x axes line up
+        plot.showGrid(x=True, y=True, alpha=0.15)
+        plot.setMenuEnabled(False)
+        plot.hideButtons()
+
     win = pg.GraphicsLayoutWidget(show=True, title="Waveguide sensor")
-    win.resize(1200, 850)
+    win.resize(*style.window_size)
+    win.ci.setContentsMargins(16, 12, 24, 12)
+    win.ci.setSpacing(18)
 
     def echo_line(color):
-        line = pg.InfiniteLine(angle=90, pen=pg.mkPen(color, width=2))
+        line = pg.InfiniteLine(angle=90, pen=pen(color))
         line.hide()
         return line
 
     def search_window():
-        return pg.LinearRegionItem(
-            values=(start, stop), movable=False, brush=(255, 255, 255, 20), pen=pg.mkPen((255, 255, 255, 60))
+        region = pg.LinearRegionItem(
+            values=(time_ms[start], time_ms[min(stop, FRAME_SIZE - 1)]), movable=False, brush=c["shade"], pen=pg.mkPen(None)
         )
+        region.setZValue(-10)
+        return region
 
-    def set_status(text, color):
-        guide.setTitle(text, size="16pt", color=color)
-
-    # 1. Raw frame
-    raw = win.addPlot(title="Raw frame")
+    # 1. Echo (raw frame)
+    raw = win.addPlot()
+    set_title(raw, "Echo")
+    style_axes(raw, y_label="ADC counts")
     raw.setYRange(0, 4096)
-    raw.setXRange(0, FRAME_SIZE)
-    raw.setLabel("left", "ADC raw amplitude (12-bit)")
-    raw.showGrid(x=True, y=True, alpha=0.3)
-    raw.addLegend(offset=(-10, 10))
+    raw.setXRange(0, time_ms[-1], padding=0)
+    raw.setMouseEnabled(x=False, y=False)
+    legend = raw.addLegend(offset=(-10, 10), labelTextSize=f"{style.font_pt - 2}pt", labelTextColor=c["foreground"])
+    legend.setBrush(tint(c["background"], 220))
     raw.addItem(search_window())
-    frame_curve = raw.plot(pen=pg.mkPen("c", width=1.5), name="latest frame")
-    background_curve = raw.plot(
-        pen=pg.mkPen((255, 150, 0, 200), width=1.5), name="background"
-    )  # On top: the echo hides it otherwise
-    raw_echo = echo_line("r")
+    background_curve = raw.plot(pen=pen(tint(c["reference"], 190), width=style.line_width * 0.6), name="background")
+    frame_curve = raw.plot(pen=pen(c["signal"], width=style.line_width * 0.75), name="echo")
+    background_curve.setZValue(1)  # On top: the echo hides it otherwise
+    raw_echo = echo_line(c["touch"])
     raw.addItem(raw_echo)
 
-    # 2. Detection signal
+    # 2. Echo envelope (detection signal)
     win.nextRow()
-    signal = win.addPlot(title="Detection signal")
+    signal = win.addPlot()
+    set_title(signal, "Echo envelope")
+    style_axes(signal, x_label="Echo time (ms)", y_label="Envelope (ADC)")
     signal.setXLink(raw)
-    signal.setLabel("bottom", "Sample index (distance = index * c / (2 * fs))")
-    signal.setLabel("left", "Envelope (ADC)")
-    signal.showGrid(x=True, y=True, alpha=0.3)
+    signal.setMouseEnabled(x=False, y=False)
     signal.addItem(search_window())
-    signal.addLine(y=threshold, pen=pg.mkPen((255, 80, 80), width=1, style=QtCore.Qt.PenStyle.DashLine))
-    envelope_curve = signal.plot(pen=pg.mkPen("m", width=1.5))
-    signal_echo = echo_line("r")
+    signal.addLine(y=threshold, pen=pen(c["touch"], width=1.5, dashed=True))
+    threshold_label = text_item("threshold", c["touch"], anchor=(1.0, 1.0), font_=small_font)
+    threshold_label.setPos(time_ms[-1], threshold)
+    signal.addItem(threshold_label)
+    envelope_curve = signal.plot(pen=pen(c["signal"]))
+    signal_echo = echo_line(c["touch"])
     signal.addItem(signal_echo)
 
     # 3. Waveguide
     win.nextRow()
     guide = win.addPlot()
-    guide.setLabel("bottom", "Distance along the waveguide (cm)")
+    style_axes(guide, x_label="Distance along the waveguide (cm)")
     guide.hideAxis("left")
+    guide.showGrid(x=False, y=False)
     guide.setMouseEnabled(x=False, y=False)
-    set_status("Recording the background: don't touch the sensor", "orange")
+
+    def set_status(text, color):
+        set_title(guide, text, color=color, size=style.status_pt)
+
+    set_status("Recording the background: don't touch", c["reference"])
     guide.setYRange(-1.0, 1.0)
     margin = 2 * float(np.min(np.diff(hole_cm))) if len(hole_cm) > 1 else 1.0
-    guide.setXRange(hole_cm.min() - margin, hole_cm.max() + margin)
+    x_min, x_max = hole_cm.min() - margin, hole_cm.max() + margin
+    guide.setXRange(x_min, x_max, padding=0)
     # Holes are shown by recolouring their spots: the spots never move or resize, as removing a spot
     # (ScatterPlotItem.clear/setData) does not repaint where it was and leaves it on screen
-    idle_color, covered_color = np.array([70, 70, 70]), np.array([255, 60, 60])
-    idle_pen, covered_pen = pg.mkPen((160, 160, 160)), pg.mkPen("w", width=2)
+    idle_color, covered_color = rgb(c["hole_idle"]), rgb(c["touch"])
+    idle_pen, covered_pen = pg.mkPen(c["hole_edge"], width=1.2), pg.mkPen(c["hole_covered_edge"], width=2.5)
     holes = pg.ScatterPlotItem(
-        x=hole_cm, y=np.zeros(len(hole_cm)), size=18, brush=pg.mkBrush(*idle_color), pen=idle_pen
+        x=hole_cm, y=np.zeros(len(hole_cm)), size=20, brush=pg.mkBrush(*idle_color), pen=idle_pen
     )
+    holes.setZValue(5)
     guide.addItem(holes)
-    for hole, x in zip(hole_ids, hole_cm):
-        label = pg.TextItem(str(hole), anchor=(0.5, 0.0), color=(170, 170, 170))
-        label.setPos(x, -0.3)
+    for i, (hole, x) in enumerate(zip(hole_ids, hole_cm)):
+        if i > 0 and hole % style.hole_label_every:
+            continue
+        label = text_item(str(hole), c["muted"], anchor=(0.5, 0.0), font_=small_font)
+        label.setPos(x, -0.22)
         guide.addItem(label)
     shown_trail = None
 
     def show_trail(covered_hole: int | None) -> None:
-        """Covered hole bright red; the others from red (just released) back to grey over trail_s."""
+        """Covered hole in the touch color; the others from it (just released) back to idle over trail_s."""
         nonlocal shown_trail
         level = np.clip(1 - (time.monotonic() - last_covered) / trail_s, 0, 1)
         colors = np.round(idle_color + level[:, None] * (covered_color - idle_color)).astype(int)
@@ -740,10 +833,9 @@ def run_with_live_plot(
         holes.setPen([covered_pen if hole == covered_hole else idle_pen for hole in hole_ids])
         shown_trail = (covered_hole, colors)
 
-    # Segments (GestureConfig): x (blue) up to the z zone (amber, +z and -z holes), y (purple) after it; the bend
+    # Segments (GestureConfig): x (blue) up to the z zone (orange, +z and -z holes), y (purple) after it; the bend
     # (hole_idx) is the dashed line
     cfg = GESTURE_CFG
-    x_min, x_max = hole_cm.min() - margin, hole_cm.max() + margin
     hole_cm_of = dict(zip(hole_ids.astype(int).tolist(), hole_cm.tolist()))
 
     def boundary(before, after):
@@ -753,33 +845,24 @@ def run_with_live_plot(
 
     bend_x = boundary(cfg.hole_idx, cfg.hole_idx + 1)
     zone_lo, zone_hi = boundary(cfg.z_zone.start - 1, cfg.z_zone.start), boundary(cfg.z_zone.stop - 1, cfg.z_zone.stop)
-    z_color = (255, 190, 80)
-    for (lo, hi), tint in (
-        ((x_min, zone_lo), (80, 160, 255, 25)),
-        ((zone_lo, zone_hi), (*z_color, 35)),
-        ((zone_hi, x_max), (200, 120, 255, 25)),
-    ):
-        segment = pg.LinearRegionItem(values=(lo, hi), movable=False, brush=tint, pen=pg.mkPen(None))
+    for (lo, hi), color in (((x_min, zone_lo), c["signal"]), ((zone_lo, zone_hi), c["reference"]), ((zone_hi, x_max), c["y"])):
+        segment = pg.LinearRegionItem(values=(lo, hi), movable=False, brush=tint(color, 30), pen=pg.mkPen(None))
         segment.setZValue(-10)  # Behind the holes
         guide.addItem(segment)
-    guide.addItem(
-        pg.InfiniteLine(
-            pos=bend_x, angle=90, pen=pg.mkPen((220, 220, 220), width=1.5, style=QtCore.Qt.PenStyle.DashLine)
-        )
-    )
+    guide.addItem(pg.InfiniteLine(pos=bend_x, angle=90, pen=pen(c["muted"], width=1.5, dashed=True)))
     z_up_x = float(np.mean([hole_cm_of[h] for h in cfg.z_up_holes if h in hole_cm_of] or [bend_x]))
     z_down_x = float(np.mean([hole_cm_of[h] for h in cfg.z_down_holes if h in hole_cm_of] or [bend_x]))
     for text, x, anchor, color in (
-        ("◀ x", zone_lo, (1.0, 0.0), (120, 180, 255)),
-        ("+z", z_up_x, (0.5, 0.0), z_color),
-        ("−z", z_down_x, (0.5, 0.0), z_color),
-        ("y ▶", zone_hi, (0.0, 0.0), (210, 150, 255)),
+        ("◀ x", zone_lo - 0.3, (1.0, 0.0), c["signal"]),
+        ("+z", z_up_x, (0.5, 0.0), c["reference"]),
+        ("−z", z_down_x, (0.5, 0.0), c["reference"]),
+        ("y ▶", zone_hi + 0.3, (0.0, 0.0), c["y"]),
     ):
-        label = pg.TextItem(text, anchor=anchor, color=color)
-        label.setPos(x, -0.62)
+        label = text_item(text, color, anchor=anchor)
+        label.setPos(x, -0.55)
         guide.addItem(label)
 
-    distance_line = echo_line("y")
+    distance_line = echo_line(c["touch"])
     guide.addItem(distance_line)
 
     # Last touch: an arrow over its holes (swipe: along the waveguide, z hold: up or down), with its command
@@ -787,7 +870,7 @@ def run_with_live_plot(
     swipe_y = 0.5
     swipe_line = pg.PlotCurveItem()
     swipe_head = pg.ArrowItem(headLen=20, tipAngle=40, pen=None)
-    swipe_label = pg.TextItem(anchor=(0.5, 1.0))
+    swipe_label = text_item("", c["command"], anchor=(0.5, 1.0))
     for item in (swipe_line, swipe_head, swipe_label):
         item.hide()
         guide.addItem(item)
@@ -800,17 +883,17 @@ def run_with_live_plot(
             return
         if swipe is not shown_swipe:
             command = swipe.command
-            color = (80, 220, 120) if command is not None else (150, 150, 150)
+            color = c["command"] if command is not None else c["muted"]
             if command is not None:
-                text = f"{command.axis} {command.distance * 100:+.1f} cm @ {command.speed * 100:.1f} cm/s"
+                text = f"{command.axis} {command.distance * 100:+.1f} cm  @ {command.speed * 100:.1f} cm/s"
             else:
-                text = f"Ignored: {swipe.ignored_reason}"
+                text = f"ignored: {swipe.ignored_reason}"
 
             if swipe.kind == "z":  # Vertical arrow over the z holes, up or down
                 up = command is None or command.distance > 0
                 x = (z_up_x if up else z_down_x) if command is not None else bend_x
                 y0, y1 = (0.2, 0.85) if up else (0.85, 0.2)
-                swipe_line.setData([x, x], [y0, y1], pen=pg.mkPen(color, width=4))
+                swipe_line.setData([x, x], [y0, y1], pen=pen(color, width=4))
                 swipe_head.setStyle(angle=90 if up else -90, brush=pg.mkBrush(color))
                 swipe_head.setPos(x, y1)
                 swipe_head.setVisible(command is not None)
@@ -818,7 +901,7 @@ def run_with_live_plot(
                 swipe_label.setPos(x + 0.4, 0.55)
             else:  # Arrow along the waveguide, from the start to the end hole
                 x0, x1 = hole_cm_of[swipe.start_hole], hole_cm_of[swipe.end_hole]
-                swipe_line.setData([x0, x1], [swipe_y, swipe_y], pen=pg.mkPen(color, width=4))
+                swipe_line.setData([x0, x1], [swipe_y, swipe_y], pen=pen(color, width=4))
                 swipe_head.setStyle(angle=180 if x1 > x0 else 0, brush=pg.mkBrush(color))  # angle 0 points left
                 swipe_head.setPos(x1, swipe_y)
                 swipe_head.setVisible(x1 != x0)
@@ -834,7 +917,7 @@ def run_with_live_plot(
 
     win.ci.layout.setRowStretchFactor(0, 3)
     win.ci.layout.setRowStretchFactor(1, 2)
-    win.ci.layout.setRowStretchFactor(2, 1)
+    win.ci.layout.setRowStretchFactor(2, 2)
 
     n_frames_last, t_last = 0, time.monotonic()
     shown_background = None
@@ -846,31 +929,30 @@ def run_with_live_plot(
             return
 
         if latest["frame"] is not None:
-            frame_curve.setData(latest["frame"])  # Only the latest; the plot cannot keep up with every frame
+            frame_curve.setData(time_ms, latest["frame"])  # Only the latest; the plot cannot keep up with every frame
 
         detector = latest["detector"]
         result = detector.last_result if detector is not None else None
         if detector is not None and detector.background is not None and detector.background is not shown_background:
-            background_curve.setData(detector.background)
+            background_curve.setData(time_ms, detector.background)
             shown_background = detector.background
 
         if result is not None:
             averaged = detector.last_averaged
             envelope = wg_helpers.ema(np.abs(np.asarray(averaged[:stop], dtype=float) - detector.background[:stop]))
-            envelope_curve.setData(envelope)
-            signal.setTitle(f"Detection signal: amplitude {result['amplitude']:.1f}, threshold {threshold:.1f}")
+            envelope_curve.setData(time_ms[: len(envelope)], envelope)
+            set_title(signal, f"Echo envelope  ·  amplitude {result['amplitude']:.0f}")
 
             if result["detected"]:
-                set_status(f"Hole {result['hole']}  —  {result['distance_cm']:.1f} cm", "r")
+                set_status(f"Hole {result['hole']}  ·  {result['distance_cm']:.1f} cm", c["touch"])
                 distance_line.setPos(result["distance_cm"])
                 distance_line.show()
                 if result["echo_time_ms"] is not None:  # None for template matching
-                    sample = result["echo_time_ms"] * samples_per_ms
                     for line in (raw_echo, signal_echo):
-                        line.setPos(sample)
+                        line.setPos(result["echo_time_ms"])
                         line.show()
             else:
-                set_status("No touch", (200, 200, 200))
+                set_status("No touch", c["muted"])
                 for line in (raw_echo, signal_echo, distance_line):
                     line.hide()
         show_trail(result["hole"] if result is not None and result["detected"] else None)
