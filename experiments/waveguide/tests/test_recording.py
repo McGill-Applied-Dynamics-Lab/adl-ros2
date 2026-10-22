@@ -92,3 +92,38 @@ def test_robot_recorder(logger):
     assert list(commands["status"]) == ["executed", "home"] and commands["axis"].iloc[0] == "y"
     state = streams["robot/state"]
     assert len(state) >= 5 and list(state[["position_0", "position_1", "position_2"]].iloc[0]) == [0.4, 0.0, 0.3]
+
+
+def test_plot_run_reads_a_recorded_run(tmp_path, monkeypatch):
+    """A run written by the logger (MCAP file) is read back and plotted by plot_run, which does not use it."""
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import plot_run
+
+    monkeypatch.setattr(recording, "DATA_DIR", tmp_path)
+    logger = recording.start_logger("teleop", "test", {"gesture": {"debounce_s": 0.3}})
+    t = time.monotonic()
+    log = logger.log_sample
+    log("sensor/background", {"t_mono": t, "frame": np.full(1500, 2000.0)}, 1e9)
+    log("sensor/calibration", {"t_mono": t, "threshold": 20.0, "hole_ids": [1, 2]}, 1e9)
+    for i in range(10):
+        ts = t + 0.05 * (i + 1)
+        log("sensor/frame", {"t_mono": ts, "frame": np.full(1500, 2000.0 + i)}, 1e9 + i)
+        log("sensor/detection", {"t_mono": ts, "detected": i > 5, "hole": 3, "hole2": None, "amplitude": 10.0 * i,
+                                 "echo_time_ms": 1.5, "distance_cm": 27.0, "pressed": [3]}, 1e9 + i)
+        log("robot/state", {"t_mono": ts, "position": [0.4, 0.0, 0.3 + 0.01 * i], "orientation": [1, 0, 0, 0],
+                            "target": [0.4, 0.0, 0.35]}, 1e9 + i)
+    log("sensor/swipe", {"t_mono": t + 0.8, "kind": "swipe", "start_hole": 3, "end_hole": 6, "duration_s": 0.2,
+                         "axis": "x", "distance": -0.03, "speed": 0.1, "ignored_reason": ""}, 1e9 + 20)
+    log("robot/command", {"t_mono": t + 0.85, "status": "executed", "detail": "", "axis": "x", "distance": -0.03,
+                          "speed": 0.1, "t_created": t + 0.8, "target": [0.37, 0.0, 0.35]}, 1e9 + 21)
+    logger.stop()
+
+    run = plot_run.load_run(logger.run_dir)
+    assert plot_run.stack(run["sensor/frame"], "frame").shape == (10, 1500)
+    assert plot_run.stack(run["sensor/detection"], "detected", dtype=bool).sum() == 4
+    assert plot_run.latest_run(tmp_path) == logger.run_dir
+    assert "x -3.0 cm" in plot_run.summary(run)
+    fig = plot_run.plot_run(run, title="test")
+    assert len(fig.axes) == 4

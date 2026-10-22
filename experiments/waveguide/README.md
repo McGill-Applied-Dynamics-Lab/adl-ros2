@@ -60,6 +60,15 @@ per stream), `metadata.json` (configs, args, git commit, notes) and a copy of ea
 `sensor/calibration`, `sensor/swipe` (ignored ones too), and with the robot `robot/command` (executed, ignored while
 moving, invalid) and `robot/state` (end-effector pose and target, 50 Hz). See `recording.py` for the fields.
 
+To read and plot a run, `plot_run.py` is standalone: it only needs numpy, matplotlib and mcap
+(`pip install numpy matplotlib mcap`), so it can be copied anywhere. Its `load_run` / `stack` give the data as plain
+Python and numpy (see its docstring).
+
+```bash
+    python experiments/waveguide/plot_run.py                                  # newest run in ~/data/waveguide/*/
+    python experiments/waveguide/plot_run.py ~/data/waveguide/teleop/20261022-154716 --start 10 --end 40 --save run.png
+```
+
 ## Demos with on-board processing
 For these demos the Teensy runs the hole detection itself (TEENSY_BLUETOOTH firmware, one or two holes with the
 "multi" method) and sends a result every cycle (~20/s), read by `touch.py` through `wg_helpers` (Bluetooth section).
