@@ -83,13 +83,14 @@ class TerminalSource(CommandSource):
 class WaveguideSource(CommandSource):
     """Commands from the waveguide sensor, processed in a separate process (see `sensor.py`).
 
-    With `plot`, that process also shows the sensor live plot.
+    With `plot`, that process also shows the sensor live plot. With `logger` (a started `ExperimentLogger`), it
+    records what it sees into it (`recording.SensorRecorder`).
     """
 
-    def __init__(self, port: str, baudrate: int, plot: bool = False):
+    def __init__(self, port: str, baudrate: int, plot: bool = False, logger=None):
         from sensor import SensorProcess  # Not at the top: sensor.py imports this module
 
-        self._sensor = SensorProcess(port, baudrate, plot=plot)
+        self._sensor = SensorProcess(port, baudrate, plot=plot, logger=logger)
 
     def start(self) -> None:
         self._sensor.start()

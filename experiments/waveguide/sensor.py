@@ -26,11 +26,12 @@ import threading
 import time
 from collections import deque
 from contextlib import closing
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 
 import live_calibration
 import numpy as np
+import recording
 import serial
 import wg_helpers
 from commands import MoveCommand
@@ -239,6 +240,7 @@ class HoleDetector:
         else:
             calibration_params = load_calibration(calibration_file_path)
         self.calibration_params = calibration_params
+        self.calibration_path = calibration_file_path
 
         self.detection_cfg = detection_cfg
         self.background = None
@@ -408,6 +410,7 @@ def run_sensor_loop(
     on_swipe=None,
     paused=None,
     reload_event=None,
+    recorder=None,
 ) -> None:
     """Read the serial port and run both layers until `stop_event` is set (or forever).
 
@@ -419,7 +422,8 @@ def run_sensor_loop(
 
     While `paused` (an Event, if given) is set, both layers are off (no holes, no commands): only `on_frame`
     is called, e.g. while calibrating. Setting `reload_event` loads the calibration again (and records the
-    background again); the loop clears it.
+    background again); the loop clears it. `recorder` (a `recording.SensorRecorder`, if given) records every
+    frame's estimate and every swipe.
     """
 
     def layers():
@@ -465,6 +469,8 @@ def run_sensor_loop(
             if frame is not None:
                 t_last_frame, warned = t, False
                 new_pressed = detector.update(frame)
+                if recorder is not None:
+                    recorder.frame(t, detector, new_pressed)
                 if on_frame is not None:
                     on_frame(t, frame, detector)
 
@@ -475,29 +481,36 @@ def run_sensor_loop(
             # Every iteration, even without a frame: the swipe ends after a time without holes
             swipe = processor.update(t, pressed) if processor is not None else None
             if swipe is not None:
+                if recorder is not None:
+                    recorder.swipe(swipe)
                 if on_swipe is not None:
                     on_swipe(swipe)
                 if swipe.command is not None:
                     on_command(swipe.command)
 
 
-def _process_main(port: str, baudrate: int, commands: mp.Queue, stop_event, plot: bool) -> None:
+def _process_main(
+    port: str, baudrate: int, commands: mp.Queue, stop_event, plot: bool, samples, run_dir
+) -> None:
     # Ctrl+C reaches the whole process group: the parent handles it and stops us with stop_event. (In the
     # plot, a KeyboardInterrupt would also be raised inside a Qt callback, which aborts the process.)
     signal.signal(signal.SIGINT, signal.SIG_IGN)
-    if plot:
-        run_with_live_plot(port, baudrate, on_holes=lambda state: None, on_command=commands.put, stop_event=stop_event)
-    else:
-        run_sensor_loop(port, baudrate, on_holes=lambda state: None, on_command=commands.put, stop_event=stop_event)
+    recorder = recording.SensorRecorder(recording.QueueLog(samples), run_dir) if samples is not None else None
+    run = run_with_live_plot if plot else run_sensor_loop
+    run(port, baudrate, on_holes=lambda state: None, on_command=commands.put, stop_event=stop_event, recorder=recorder)
 
 
 class SensorProcess:
     """Runs `run_sensor_loop` in a separate process and hands its commands over a queue.
 
     With `plot`, the process also shows the live plot (`run_with_live_plot`); closing its window ends the process.
+    With `logger` (a started `ExperimentLogger`), the process records what it sees (`recording.SensorRecorder`)
+    into it, through a queue drained by this process.
     """
 
-    def __init__(self, port: str = DEFAULT_PORT, baudrate: int = DEFAULT_BAUDRATE, plot: bool = False):
+    def __init__(
+        self, port: str = DEFAULT_PORT, baudrate: int = DEFAULT_BAUDRATE, plot: bool = False, logger=None
+    ):
         # Checked here, not only in the child: there it would just end the process
         port = check_port(port, baudrate)
         if not plot:  # With the plot, it can be calibrated from its panel
@@ -506,14 +519,18 @@ class SensorProcess:
         ctx = mp.get_context("spawn")
         self._commands = ctx.Queue()
         self._stop_event = ctx.Event()
+        samples = ctx.Queue() if logger is not None else None
+        self._drain = recording.QueueDrain(samples, logger) if logger is not None else None
         self._process = ctx.Process(
             target=_process_main,
-            args=(port, baudrate, self._commands, self._stop_event, plot),
+            args=(port, baudrate, self._commands, self._stop_event, plot, samples, logger and logger.run_dir),
             name="waveguide_sensor",
             daemon=True,
         )
 
     def start(self) -> None:
+        if self._drain is not None:
+            self._drain.start()
         self._process.start()
 
     def is_alive(self) -> bool:
@@ -530,6 +547,8 @@ class SensorProcess:
         self._process.join(timeout)
         if self._process.is_alive():
             self._process.terminate()
+        if self._drain is not None:
+            self._drain.stop()  # What the process recorded until the end
 
 
 # --- Calibration ---
@@ -589,8 +608,14 @@ def calibrate(port: str, baudrate: int, config: CalibrationConfig = CAL_CFG) -> 
     wg_helpers.calibrate(db_path, config.first_hole_cm, config.hole_spacing_cm, save_path=config.npz_path)
 
 
+def run_metadata() -> dict:
+    """The sensor configs, for the metadata of a recording (`--record`)."""
+    configs = {"detection": DETECTION_CFG, "gesture": GESTURE_CFG, "calibration": CAL_CFG}
+    return {name: json.loads(json.dumps(asdict(cfg), default=str)) for name, cfg in configs.items()}
+
+
 # --- Standalone modes ---
-def print_frames_and_holes(port: str, baudrate: int, plot: bool = False) -> None:
+def print_frames_and_holes(port: str, baudrate: int, plot: bool = False, recorder=None) -> None:
     """Run the sensor loop and print what it detects; with `plot`, also plot the raw frames (`run_with_live_plot`)."""
     n_frames, t_last = 0, time.monotonic()
 
@@ -610,10 +635,16 @@ def print_frames_and_holes(port: str, baudrate: int, plot: bool = False) -> None
         print(f"{command.t_created:.3f}  command: {command}")
 
     if plot:
-        run_with_live_plot(port, baudrate, on_holes=on_holes, on_command=on_command, on_frame=on_frame)
+        run_with_live_plot(port, baudrate, on_holes=on_holes, on_command=on_command, on_frame=on_frame, recorder=recorder)
     else:
         run_sensor_loop(
-            port, baudrate, on_holes=on_holes, on_command=on_command, on_frame=on_frame, require_calibration=False
+            port,
+            baudrate,
+            on_holes=on_holes,
+            on_command=on_command,
+            on_frame=on_frame,
+            require_calibration=False,
+            recorder=recorder,
         )
 
 
@@ -726,6 +757,7 @@ def run_with_live_plot(
     swipe_display_s: float = 3.0,
     stop_event=None,
     style: PlotStyle = PLOT_STYLE,
+    recorder=None,
 ) -> None:
     """`run_sensor_loop` with a live view of the processing, refreshed at ~60 Hz (look: `PlotStyle`):
 
@@ -800,6 +832,7 @@ def run_with_live_plot(
                 on_swipe=plot_on_swipe,
                 paused=paused,
                 reload_event=reload_event,
+                recorder=recorder,
             )
         except Exception as e:
             errors.append(e)
@@ -1494,7 +1527,18 @@ def main():
         f"{CAL_CFG.directory.name}/)",
     )
     parser.add_argument("--average", type=int, default=5, help="--live-match: frames averaged (the recordings use 5)")
+    parser.add_argument(
+        "--record", action="store_true", help=f"Record the run to {recording.DATA_DIR / 'sensor'}/<date-time> (see recording.py)"
+    )
+    parser.add_argument("--notes", default="", help="--record: purpose of the run, saved in its metadata")
     args = parser.parse_args()
+    if args.record and (args.calibrate or args.live_match is not None):
+        parser.error("--record is for the default and --live-plot modes")
+
+    logger = recorder = None
+    if args.record:
+        logger = recording.start_logger("sensor", args.notes, {"args": vars(args), **run_metadata()})
+        recorder = recording.SensorRecorder(logger.log_sample, logger.run_dir)
 
     try:
         if args.calibrate:
@@ -1507,15 +1551,19 @@ def main():
             run_live_match(args.port, args.baudrate, target, args.average)
         elif args.live_plot:
             print("---- Live plot mode ----")
-            print_frames_and_holes(args.port, args.baudrate, plot=True)
+            print_frames_and_holes(args.port, args.baudrate, plot=True, recorder=recorder)
         else:
             print("---- Default mode ----")
-            print_frames_and_holes(args.port, args.baudrate)
+            print_frames_and_holes(args.port, args.baudrate, recorder=recorder)
 
     except (FileNotFoundError, ValueError, serial.SerialException) as e:
         parser.exit(1, f"Error: {e}\n")
     except KeyboardInterrupt:
         print()
+    finally:
+        if logger is not None:
+            logger.stop()
+            print(f"Recorded to {logger.run_dir}")
 
 
 if __name__ == "__main__":

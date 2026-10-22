@@ -15,12 +15,17 @@ Each command `<axis> <distance> <speed>` moves the end-effector by `distance` [m
     pixi run -e wg python experiments/waveguide/wg_teleop.py                     # waveguide, the Teensy sending frames (--port to pick one)
     pixi run -e wg python experiments/waveguide/wg_teleop.py --live-plot         # same, with the sensor live plot
     pixi run -e wg python experiments/waveguide/wg_teleop.py --input terminal    # commands typed in the terminal
+    pixi run -e wg python experiments/waveguide/wg_teleop.py --record --notes "demo 1, take 3"   # records the run
+
+`--record` saves the sensor frames, detections and swipes, the commands and what the robot did with them, and the
+end-effector state, to ~/data/waveguide/teleop/<date-time> (see `recording.py`).
 """
 
 import argparse
 import time
 
 import numpy as np
+import recording
 from arm_client.robot import Pose, Robot
 from commands import CommandSource, Control, MoveCommand, TerminalSource, WaveguideSource
 from sensor import DEFAULT_BAUDRATE, DEFAULT_PORT
@@ -105,9 +110,13 @@ class AxisTeleop:
         self.target_position = self.homing_pose.position.copy()
 
 
-def run(teleop: AxisTeleop, source: CommandSource):
-    """Execute the commands of `source` until it asks to quit."""
+def run(teleop: AxisTeleop, source: CommandSource, recorder: recording.RobotRecorder | None = None):
+    """Execute the commands of `source` until it asks to quit; `recorder` records each one and its outcome."""
     ready_since = time.monotonic()  # Commands created before this arrived while the robot was moving
+
+    def record(command, status, detail=""):
+        if recorder is not None:
+            recorder.command(command, status, detail, target=teleop.target_position)
 
     while True:
         command = source.get_command(POLL_TIMEOUT)
@@ -117,15 +126,23 @@ def run(teleop: AxisTeleop, source: CommandSource):
             return
         if command is Control.HOME:
             teleop.go_home()
+            record(None, "home")
         elif isinstance(command, MoveCommand):
             if command.t_created < ready_since:
                 print(f"Ignored (robot was moving): {command}")
+                record(command, "ignored_moving")
                 continue
+            requested = teleop.target_position.copy()
+            if command.axis in AXES:
+                requested[AXES[command.axis]] += command.distance
             try:
                 teleop.move_along_axis(command.axis, command.distance, command.speed)
             except ValueError as e:
                 print(f"Invalid command: {e}")
+                record(command, "invalid", str(e))
                 continue
+            clipped = not np.allclose(teleop.target_position, requested)
+            record(command, "executed", "clipped to the workspace" if clipped else "")
             print(f"Target: {teleop.target_position}, measured: {teleop.robot.end_effector_pose.position}")
 
         ready_since = time.monotonic()
@@ -139,12 +156,30 @@ def main():
     parser.add_argument(
         "--live-plot", action="store_true", help="Show the sensor live plot (closing it stops the teleop)"
     )
+    parser.add_argument(
+        "--record", action="store_true", help=f"Record the run to {recording.DATA_DIR / 'teleop'}/<date-time>"
+    )
+    parser.add_argument("--notes", default="", help="--record: purpose of the run, saved in its metadata")
     args = parser.parse_args()
+
+    logger = None
+    if args.record:
+        from sensor import run_metadata
+
+        metadata = {
+            "args": vars(args),
+            "teleop": {"max_speed": MAX_SPEED, "max_distance": MAX_DISTANCE},
+            "workspace": {"lower": WORKSPACE_LOWER.tolist(), "upper": WORKSPACE_UPPER.tolist()},
+            **run_metadata(),
+        }
+        logger = recording.start_logger("teleop", args.notes, metadata)
 
     if args.input == "waveguide":
         try:
-            source = WaveguideSource(args.port, args.baudrate, plot=args.live_plot)
+            source = WaveguideSource(args.port, args.baudrate, plot=args.live_plot, logger=logger)
         except FileNotFoundError as e:
+            if logger is not None:
+                logger.stop()
             parser.exit(1, f"Error: {e}\n")
     else:
         if args.live_plot:
@@ -154,17 +189,31 @@ def main():
     robot = Robot(namespace="fr3")
     robot.wait_until_ready()
 
+    robot_recorder = None
     try:
         teleop = AxisTeleop(robot)
+        if logger is not None:
+
+            def state():
+                pose = robot.end_effector_pose
+                return pose.position, pose.orientation.as_quat(), teleop.target_position
+
+            robot_recorder = recording.RobotRecorder(logger, state)
+            robot_recorder.start()
         source.start()
-        run(teleop, source)
+        run(teleop, source, robot_recorder)
     except KeyboardInterrupt:
         print()
     except RuntimeError as e:  # The sensor process ended
         print(f"Stopping: {e}")
     finally:
         # The robot holds the last target
-        source.close()
+        source.close()  # Also ends the sensor recording
+        if robot_recorder is not None:
+            robot_recorder.stop()
+        if logger is not None:
+            logger.stop()
+            print(f"Recorded to {logger.run_dir}")
         robot.shutdown()
 
 

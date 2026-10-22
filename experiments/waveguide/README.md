@@ -44,6 +44,22 @@ To teleop the franka with the sensor, use the `wg_teleop.py` file.
 
 It's possible to test the teleoperation without the waveguide, inputing the commands via the terminal.
 
+## Recording
+`--record` (with an optional `--notes "..."`) saves the run with the lab's `experiment_logger`, in
+`~/data/waveguide/teleop/<date-time>/` for `wg_teleop.py` and `~/data/waveguide/sensor/<date-time>/` for `sensor.py`
+(default and `--live-plot` modes):
+
+```bash
+    pixi run -e wg python experiments/waveguide/wg_teleop.py --live-plot --record --notes "demo 1, take 3"
+    pixi run -e wg python experiments/waveguide/sensor.py --live-plot --record
+```
+
+The folder holds `samples.mcap` (open it in Foxglove, or `experiment_logger.load_streams(run_dir)` for one DataFrame
+per stream), `metadata.json` (configs, args, git commit, notes) and a copy of each calibration used. Streams:
+`sensor/frame` (the averaged frame of every estimate), `sensor/detection` (every frame), `sensor/background`,
+`sensor/calibration`, `sensor/swipe` (ignored ones too), and with the robot `robot/command` (executed, ignored while
+moving, invalid) and `robot/state` (end-effector pose and target, 50 Hz). See `recording.py` for the fields.
+
 ## Demos with on-board processing
 For these demos the Teensy runs the hole detection itself (TEENSY_BLUETOOTH firmware, one or two holes with the
 "multi" method) and sends a result every cycle (~20/s), read by `touch.py` through `wg_helpers` (Bluetooth section).
