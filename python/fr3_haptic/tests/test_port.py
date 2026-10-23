@@ -69,7 +69,7 @@ def test_delayed_link_carries_the_energy_with_the_target():
     class Plant:
         calls = []
 
-        def aim(self, x, v, energy_in=None):
+        def aim(self, x, v, energy_in=None, tick=-1):
             self.calls.append(energy_in)
 
         def freeze(self):

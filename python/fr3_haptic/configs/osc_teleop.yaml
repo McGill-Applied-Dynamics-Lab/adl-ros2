@@ -55,6 +55,11 @@ limits.force_limit: 80.0
 limits.torque_limit: 15.0
 limits.delta_tau_max: 1.0
 
+# Contact limits
+contact_limit.enabled: true # "Enable the contact force limiter"
+contact_limit.max_force: 30.0 # Maximum contact force (N): norm of libfranka's external force estimate (O_F_ext_hat_K)
+      
+
 filter.joint_velocity: 1.0
 filter.target_pose: 1.0
 

@@ -1,33 +1,33 @@
 {
   "configById": {
-    "Plot!position": {
+    "Plot!position_x": {
       "paths": [
         {
-          "value": "/live/haptic.values.x_l[0]",
+          "value": "/live/haptic.values.x_l_world[0]",
           "enabled": true,
           "timestampMethod": "receiveTime",
           "label": "leader"
         },
         {
-          "value": "/live/robot.values.x_i[0]",
+          "value": "/live/robot.values.ee_position[0]",
           "enabled": true,
           "timestampMethod": "receiveTime",
           "label": "robot (measured)"
         },
         {
-          "value": "/live/target.values.sent_x[0]",
+          "value": "/live/target.values.sent_x_world[0]",
           "enabled": true,
           "timestampMethod": "receiveTime",
           "label": "target sent"
         },
         {
-          "value": "/live/target.values.robot_x[0]",
+          "value": "/live/target.values.robot_position[0]",
           "enabled": true,
           "timestampMethod": "receiveTime",
           "label": "target at robot"
         },
         {
-          "value": "/live/haptic.values.proxy_x[0]",
+          "value": "/live/haptic.values.proxy_x_world[0]",
           "enabled": true,
           "timestampMethod": "receiveTime",
           "label": "proxy"
@@ -41,33 +41,39 @@
       "isSynced": true,
       "xAxisVal": "timestamp",
       "followingViewWidth": 10.0,
-      "foxglovePanelTitle": "Position on z [m]"
+      "foxglovePanelTitle": "Position x [m]"
     },
-    "Plot!force": {
+    "Plot!position_y": {
       "paths": [
         {
-          "value": "/live/haptic.values.force[0]",
+          "value": "/live/haptic.values.x_l_world[1]",
           "enabled": true,
           "timestampMethod": "receiveTime",
-          "label": "rendered"
+          "label": "leader"
         },
         {
-          "value": "/live/haptic.values.f[0]",
+          "value": "/live/robot.values.ee_position[1]",
           "enabled": true,
           "timestampMethod": "receiveTime",
-          "label": "sent to device"
+          "label": "robot (measured)"
         },
         {
-          "value": "/live/robot.values.lam[0]",
+          "value": "/live/target.values.sent_x_world[1]",
           "enabled": true,
           "timestampMethod": "receiveTime",
-          "label": "robot λ (measured)"
+          "label": "target sent"
         },
         {
-          "value": "/live/target.values.robot_f_ff[0]",
+          "value": "/live/target.values.robot_position[1]",
           "enabled": true,
           "timestampMethod": "receiveTime",
-          "label": "feedforward at robot"
+          "label": "target at robot"
+        },
+        {
+          "value": "/live/haptic.values.proxy_x_world[1]",
+          "enabled": true,
+          "timestampMethod": "receiveTime",
+          "label": "proxy"
         }
       ],
       "showLegend": true,
@@ -78,7 +84,179 @@
       "isSynced": true,
       "xAxisVal": "timestamp",
       "followingViewWidth": 10.0,
-      "foxglovePanelTitle": "Force on the interface [world N]"
+      "foxglovePanelTitle": "Position y [m]"
+    },
+    "Plot!position_z": {
+      "paths": [
+        {
+          "value": "/live/haptic.values.x_l_world[2]",
+          "enabled": true,
+          "timestampMethod": "receiveTime",
+          "label": "leader"
+        },
+        {
+          "value": "/live/robot.values.ee_position[2]",
+          "enabled": true,
+          "timestampMethod": "receiveTime",
+          "label": "robot (measured)"
+        },
+        {
+          "value": "/live/target.values.sent_x_world[2]",
+          "enabled": true,
+          "timestampMethod": "receiveTime",
+          "label": "target sent"
+        },
+        {
+          "value": "/live/target.values.robot_position[2]",
+          "enabled": true,
+          "timestampMethod": "receiveTime",
+          "label": "target at robot"
+        },
+        {
+          "value": "/live/haptic.values.proxy_x_world[2]",
+          "enabled": true,
+          "timestampMethod": "receiveTime",
+          "label": "proxy"
+        }
+      ],
+      "showLegend": true,
+      "legendDisplay": "top",
+      "showPlotValuesInLegend": true,
+      "showXAxisLabels": true,
+      "showYAxisLabels": true,
+      "isSynced": true,
+      "xAxisVal": "timestamp",
+      "followingViewWidth": 10.0,
+      "foxglovePanelTitle": "Position z [m]"
+    },
+    "Plot!force_x": {
+      "paths": [
+        {
+          "value": "/live/haptic.values.force_world[0]",
+          "enabled": true,
+          "timestampMethod": "receiveTime",
+          "label": "rendered"
+        },
+        {
+          "value": "/live/haptic.values.f_world[0]",
+          "enabled": true,
+          "timestampMethod": "receiveTime",
+          "label": "sent to device"
+        },
+        {
+          "value": "/live/robot.values.lam_world[0]",
+          "enabled": true,
+          "timestampMethod": "receiveTime",
+          "label": "robot λ (measured)"
+        },
+        {
+          "value": "/live/target.values.robot_f_ff_world[0]",
+          "enabled": true,
+          "timestampMethod": "receiveTime",
+          "label": "feedforward at robot"
+        },
+        {
+          "value": "/live/robot.values.task_force[0]",
+          "enabled": true,
+          "timestampMethod": "receiveTime",
+          "label": "robot task force"
+        }
+      ],
+      "showLegend": true,
+      "legendDisplay": "top",
+      "showPlotValuesInLegend": true,
+      "showXAxisLabels": true,
+      "showYAxisLabels": true,
+      "isSynced": true,
+      "xAxisVal": "timestamp",
+      "followingViewWidth": 10.0,
+      "foxglovePanelTitle": "Force x [world N]"
+    },
+    "Plot!force_y": {
+      "paths": [
+        {
+          "value": "/live/haptic.values.force_world[1]",
+          "enabled": true,
+          "timestampMethod": "receiveTime",
+          "label": "rendered"
+        },
+        {
+          "value": "/live/haptic.values.f_world[1]",
+          "enabled": true,
+          "timestampMethod": "receiveTime",
+          "label": "sent to device"
+        },
+        {
+          "value": "/live/robot.values.lam_world[1]",
+          "enabled": true,
+          "timestampMethod": "receiveTime",
+          "label": "robot λ (measured)"
+        },
+        {
+          "value": "/live/target.values.robot_f_ff_world[1]",
+          "enabled": true,
+          "timestampMethod": "receiveTime",
+          "label": "feedforward at robot"
+        },
+        {
+          "value": "/live/robot.values.task_force[1]",
+          "enabled": true,
+          "timestampMethod": "receiveTime",
+          "label": "robot task force"
+        }
+      ],
+      "showLegend": true,
+      "legendDisplay": "top",
+      "showPlotValuesInLegend": true,
+      "showXAxisLabels": true,
+      "showYAxisLabels": true,
+      "isSynced": true,
+      "xAxisVal": "timestamp",
+      "followingViewWidth": 10.0,
+      "foxglovePanelTitle": "Force y [world N]"
+    },
+    "Plot!force_z": {
+      "paths": [
+        {
+          "value": "/live/haptic.values.force_world[2]",
+          "enabled": true,
+          "timestampMethod": "receiveTime",
+          "label": "rendered"
+        },
+        {
+          "value": "/live/haptic.values.f_world[2]",
+          "enabled": true,
+          "timestampMethod": "receiveTime",
+          "label": "sent to device"
+        },
+        {
+          "value": "/live/robot.values.lam_world[2]",
+          "enabled": true,
+          "timestampMethod": "receiveTime",
+          "label": "robot λ (measured)"
+        },
+        {
+          "value": "/live/target.values.robot_f_ff_world[2]",
+          "enabled": true,
+          "timestampMethod": "receiveTime",
+          "label": "feedforward at robot"
+        },
+        {
+          "value": "/live/robot.values.task_force[2]",
+          "enabled": true,
+          "timestampMethod": "receiveTime",
+          "label": "robot task force"
+        }
+      ],
+      "showLegend": true,
+      "legendDisplay": "top",
+      "showPlotValuesInLegend": true,
+      "showXAxisLabels": true,
+      "showYAxisLabels": true,
+      "isSynced": true,
+      "xAxisVal": "timestamp",
+      "followingViewWidth": 10.0,
+      "foxglovePanelTitle": "Force z [world N]"
     },
     "Plot!energy": {
       "paths": [
@@ -291,19 +469,39 @@
           "title": "Teleop",
           "layout": {
             "first": {
-              "first": "Plot!position",
-              "second": "Plot!force",
+              "first": "Plot!position_x",
+              "second": {
+                "first": "Plot!position_y",
+                "second": "Plot!position_z",
+                "direction": "column",
+                "splitPercentage": 50.0
+              },
               "direction": "column",
-              "splitPercentage": 50.0
+              "splitPercentage": 33.333333333333336
             },
             "second": {
-              "first": "Plot!energy",
-              "second": "Plot!handle",
-              "direction": "column",
-              "splitPercentage": 50.0
+              "first": {
+                "first": "Plot!force_x",
+                "second": {
+                  "first": "Plot!force_y",
+                  "second": "Plot!force_z",
+                  "direction": "column",
+                  "splitPercentage": 50.0
+                },
+                "direction": "column",
+                "splitPercentage": 33.333333333333336
+              },
+              "second": {
+                "first": "Plot!energy",
+                "second": "Plot!handle",
+                "direction": "column",
+                "splitPercentage": 50.0
+              },
+              "direction": "row",
+              "splitPercentage": 60.0
             },
             "direction": "row",
-            "splitPercentage": 65.0
+            "splitPercentage": 37.5
           }
         },
         {

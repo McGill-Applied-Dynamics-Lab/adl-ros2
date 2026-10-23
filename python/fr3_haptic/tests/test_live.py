@@ -72,6 +72,30 @@ def test_one_sample_of_every_stream(boxes):
     assert by_stream["target"]["robot_f_ff"] == [None]  # coupling methods: no feedforward
     assert by_stream["safety"]["tdpa_energy_j"] is None
     assert by_stream["rates"]["haptic"] == 1000.0
+    # 1-DoF z interface: the *_world fields carry it on z, null on x and y
+    assert by_stream["haptic"]["x_l_world"] == [None, None, 0.21]
+    assert by_stream["robot"]["lam_world"] == [None, None, 1.5]
+    assert by_stream["target"]["sent_x_world"] == [None, None, 0.21]
+
+
+def test_world_fields_follow_the_interface_basis():
+    basis = np.eye(3)[:, [2, 0]]  # interface (z, x)
+    sample = SimpleNamespace(
+        ee_position=np.array([0.4, 0.0, 0.2]),
+        ee_velocity=np.zeros(3),
+        x_i=np.array([0.2, 0.4]),
+        v_i=np.zeros(2),
+        lam=np.array([1.5, -0.5]),
+        task_force=np.zeros(3),
+    )
+    plant = SimpleNamespace(sample=(1, sample), last_target=None)
+    with ExperimentLogger(LoggingConfig.in_memory()) as logger:
+        LiveView(logger, 50.0, dim=2, basis=basis, plant=plant).step(now_s=1.0)
+        logger.flush()
+        robot = next(s["values"] for s in logger.samples if s["stream"] == "robot")
+    assert robot["lam_world"] == [-0.5, None, 1.5]
+    with pytest.raises(ValueError):
+        LiveView(logger, 50.0, dim=3)  # a multi-DoF interface needs its basis
 
 
 def test_rates_from_counters(boxes):
@@ -124,6 +148,8 @@ def test_layout_references_only_logged_fields(tmp_path, boxes):
     assert set(layout) >= {"configById", "layout"} and layout["layout"] in configs
     tabs = configs[layout["layout"]]["tabs"]
     assert [t["title"] for t in tabs] == ["Teleop", "Robot", "Timing"]
+    titles = [configs[f"Plot!{k}_{a}"]["foxglovePanelTitle"] for k in ("position", "force") for a in "xyz"]
+    assert titles == ["Position x [m]", "Position y [m]", "Position z [m]", *(f"Force {a} [world N]" for a in "xyz")]
     placed = [pid for t in tabs for pid in _layout_tree_ids(t["layout"])]
     plots = {pid for pid in configs if pid.startswith("Plot!")}
     assert sorted(placed) == sorted(plots)  # every panel placed once, none missing a config

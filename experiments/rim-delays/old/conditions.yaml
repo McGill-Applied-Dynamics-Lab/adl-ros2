@@ -20,9 +20,10 @@ common:
   interface_range: 0.15
   model_update_hz: 500
   plant_max_age_ms: 100      # watchdog on delivery gaps (constant delays: the sample period)
-  device: scripted
+  device: scripted           # scripted, inverse3
   hand: true                 # the scripted handle is held by a simulated hand (closed loop)
   start_position: [0.4, 0.0, 0.2]
+  force: true                # to enable force feedback on the I3
 
 tasks:
   press:                     # approach, press 1 cm into the table, hold, retract
@@ -41,4 +42,4 @@ tasks:
 sim: {}
 robot:
   robot_log_hz: 200
-  live_hz: 0
+  live_hz: 50

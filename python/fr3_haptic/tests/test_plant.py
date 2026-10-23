@@ -174,7 +174,25 @@ def test_sample_period_decimates_controller_ticks():
     assert plant.sample[0] == 5
 
 
+def test_record_keeps_every_tick_whatever_the_sample_period():
+    plant, robot = make_plant(sample_period_s=0.02, record=True)
+    for k in range(100):
+        stamp = k * 1_000_000
+        feed(robot, ee=ee_msg(stamp), wrench=wrench_msg(stamp))
+    assert plant.sample[0] == 5 and len(plant.history) == 100
+
+
 # ------------------------------------------------------------------ command side
+
+
+def test_record_keeps_every_target_with_its_haptic_tick():
+    plant, _ = make_plant(record=True)
+    plant.aim(np.array([0.2]), np.array([0.05]), tick=12)
+    plant.command(np.array([0.21]), f_ff=np.array([-4.0]), tick=13)
+    plant.freeze()
+    assert [t[1] for t in plant.targets] == [12, 13, -1]
+    np.testing.assert_allclose(plant.targets[0][2], [0.4, 0.1, 0.2])  # the published position
+    assert plant.targets[0][5] is None and plant.targets[1][5][0] == -4.0
 
 
 def test_aim_holds_free_axes_and_orientation():

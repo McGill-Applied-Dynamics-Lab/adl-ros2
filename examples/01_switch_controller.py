@@ -14,14 +14,14 @@ robot.wait_until_ready(timeout=2.0)
 # robot.controller_switcher_client.switch_controller(controller_name)
 
 
-# controller_name = "osc_controller"  # osc_controller, gravity_compensation, ....
-# robot.controller_switcher_client.switch_controller(controller_name)
-# robot.osc_controller_parameters_client.load_param_config(file_path=CONFIG_DIR / "controllers" / "osc" / "default.yaml")
+controller_name = "osc_controller"  # osc_controller, gravity_compensation, ....
+robot.controller_switcher_client.switch_controller(controller_name)
+robot.osc_controller_parameters_client.load_param_config(file_path=CONFIG_DIR / "controllers" / "osc" / "free.yaml")
 
-robot.controller_switcher_client.switch_controller("fr3_pose_controller")
-robot.fr3_pose_controller_parameters_client.load_param_config(
-    file_path=CONFIG_DIR / "controllers" / "fr3_pose" / "default.yaml"
-)
+# robot.controller_switcher_client.switch_controller("fr3_pose_controller")
+# robot.fr3_pose_controller_parameters_client.load_param_config(
+#     file_path=CONFIG_DIR / "controllers" / "fr3_pose" / "default.yaml"
+# )
 
 
 print("Done")

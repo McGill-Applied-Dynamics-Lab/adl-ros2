@@ -107,7 +107,9 @@ class FR3Plant:
             to emulate a slower plant. 0 keeps every controller tick.
         interface_limits: ``(low, high)`` bounds on the commanded interface coordinate [m],
             a scalar for every component or ``(dim,)`` per component. ``None`` disables them.
-        record: keep every sample (after decimation) in [history][FR3Plant.history], for logging.
+        record: keep every controller tick in [history][FR3Plant.history] (before the decimation
+            to ``sample_period_s``, so the log does not depend on the feedback rate), and every
+            published target in [targets][FR3Plant.targets], for logging.
         node: subscribe on this node, which the caller spins. ``None`` (the default) creates
             the plant's own node and a single-threaded executor thread for it.
         port: the robot end of a two-port TDPA (`fr3_haptic.port.RobotPort`): observes every
@@ -145,7 +147,11 @@ class FR3Plant:
         self._record = record
         self._mailbox = mailbox
         self.history: list[FR3PlantSample] = []
-        """Every sample, in order, when ``record`` is set."""
+        """Every controller tick, in order, when ``record`` is set."""
+        self.targets: list[tuple[float, int, np.ndarray, np.ndarray, np.ndarray, np.ndarray | None]] = []
+        """Every target published, when ``record`` is set: ``(time.monotonic(), haptic tick, position
+        (3,) base frame, x, v, f_ff)``; the tick is the haptic tick the target came from, -1 for a
+        freeze or an unknown one."""
         self.sample: tuple[int, FR3PlantSample] | None = None
         """Latest ``(updates, sample)``, replaced whole; ``None`` before the first one."""
         self.last_target: tuple[int, np.ndarray, np.ndarray, np.ndarray, np.ndarray | None] | None = None
@@ -263,13 +269,15 @@ class FR3Plant:
                     self._frame.project(np.array([f.x, f.y, f.z])), self._frame.project(np.array([v.x, v.y, v.z])), key * 1e-9
                 )
 
+            sample = self._make_sample(ee, wrench, key * 1e-9) if self._record else None
+            if sample is not None:
+                self.history.append(sample)
             if not self._keep(key):
                 return
-            sample = self._make_sample(ee, wrench, key * 1e-9)
+            if sample is None:
+                sample = self._make_sample(ee, wrench, key * 1e-9)
             self._updates += 1
             self.sample = (self._updates, sample)
-            if self._record:
-                self.history.append(sample)
             if self._mailbox is not None:
                 energy = self.port.energy_in if self.port is not None else 0.0
                 self._mailbox.write(sample.x_i, sample.v_i, sample.lam, sample.t_s, sample.rx_s, energy_in=energy)
@@ -323,7 +331,7 @@ class FR3Plant:
 
     # ---------------------------------------------------------------- command side
 
-    def aim(self, x: np.ndarray, v: np.ndarray, energy_in: float | None = None) -> None:
+    def aim(self, x: np.ndarray, v: np.ndarray, energy_in: float | None = None, tick: int = -1) -> None:
         """Stream the leader state as the coupling target (ZOH, linear, TDPA).
 
         Args:
@@ -331,15 +339,16 @@ class FR3Plant:
             v: ``(dim,)`` leader interface velocity [m/s].
             energy_in: the operator end's input energy, sent with the target (two-port TDPA);
                 with a [port][FR3Plant.port], the target carries its damping wrench.
+            tick: the haptic tick the target came from, for the log.
         """
         f_ff = None
         if self.port is not None:
             if energy_in is not None:
                 self.port.receive(energy_in)
             f_ff = self.port.wrench(time.monotonic())
-        self._publish(x, v, f_ff)
+        self._publish(x, v, f_ff, tick)
 
-    def command(self, x: np.ndarray, v: np.ndarray | None = None, f_ff: np.ndarray | None = None) -> None:
+    def command(self, x: np.ndarray, v: np.ndarray | None = None, f_ff: np.ndarray | None = None, tick: int = -1) -> None:
         """Stream a proxy state and a feedforward force (RIM, fixed-mass).
 
         Args:
@@ -347,8 +356,9 @@ class FR3Plant:
             v: ``(dim,)`` proxy interface velocity [m/s]; zero if ``None``.
             f_ff: ``(dim,)`` feedforward force on the robot along the interface [N]; not
                 published if ``None`` (the controller zeroes a stale one after its timeout).
+            tick: the haptic tick the target came from, for the log.
         """
-        self._publish(x, np.zeros(self.dim) if v is None else v, f_ff)
+        self._publish(x, np.zeros(self.dim) if v is None else v, f_ff, tick)
 
     @property
     def frozen(self) -> bool:
@@ -376,7 +386,7 @@ class FR3Plant:
         """Forget the frozen target; the next [aim][FR3Plant.aim] / [command][FR3Plant.command] takes over."""
         self._frozen_x = None
 
-    def _publish(self, x: np.ndarray, v: np.ndarray, f_ff: np.ndarray | None) -> None:
+    def _publish(self, x: np.ndarray, v: np.ndarray, f_ff: np.ndarray | None, tick: int = -1) -> None:
         if self._hold_pose is None:
             raise RuntimeError("FR3Plant has no hold pose: call set_hold_pose() before streaming targets")
         x = np.asarray(x, dtype=float)
@@ -393,7 +403,10 @@ class FR3Plant:
         force = None if f_ff is None else self._frame.lift(np.asarray(f_ff, dtype=float))
         self._robot.publish_target(pose=pose, twist=twist, force=force)
         self._targets += 1
-        self.last_target = (self._targets, pose.position.copy(), x.copy(), v, None if f_ff is None else np.asarray(f_ff, dtype=float))
+        f_ff = None if f_ff is None else np.asarray(f_ff, dtype=float)
+        self.last_target = (self._targets, pose.position.copy(), x.copy(), v, f_ff)
+        if self._record:
+            self.targets.append((time.monotonic(), int(tick), pose.position.copy(), x.copy(), v, f_ff))
 
     def _spin(self) -> None:
         try:

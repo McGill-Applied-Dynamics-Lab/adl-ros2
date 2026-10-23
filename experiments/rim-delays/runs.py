@@ -11,6 +11,12 @@ A run is ``<run_dir>/metadata.json`` + ``<run_dir>/samples.mcap`` (``fr3_teleop 
 | ``fx, fy, fz`` | OSC task force on the robot [N] (sim: the PD + feedforward; robot: ``task_wrench``) |
 | ``f_table`` | table force on the robot, up [N] (sim: the contact model; robot: ``-fz`` clipped at 0, quasi-static) |
 | ``qx, qy, qz, qw`` | tool orientation quaternion, base frame (robot runs that logged it; absent in sim) |
+| ``vx, vy, vz`` | tool point velocity [m/s] (robot: ``ee_velocity`` when logged, else differentiated) |
+
+The ``haptic`` stream's ``ts`` is rebuilt from its ``mono_s`` column when the run logged it, so it
+is on the same clock as the robot side (``fr3_teleop`` saves ``t0_mono_s``); ``target`` is every
+target published to the robot with the haptic ``tick`` it came from, ``model`` RIM's reduced model
+per update. Both are ``None`` for runs that did not log them.
 
 [orientation_error][] and [tip_error][] turn the orientation into what a demo shows: how far the
 tool has turned from the held orientation, and how far that moves the tip of a tool.
@@ -45,9 +51,11 @@ plt.rcParams.update({
 })
 
 
-def load_run(run_dir: Path, streams: tuple[str, ...] = ("haptic", "plant", "sim", "command")) -> dict | None:
-    """``{"meta", "haptic", "robot", "command", "dir"}`` for a run, or ``None`` if it is incomplete.
-    ``robot`` (see the module docstring) and ``command`` may be ``None``."""
+def load_run(
+    run_dir: Path, streams: tuple[str, ...] = ("haptic", "plant", "sim", "command", "target", "model")
+) -> dict | None:
+    """``{"meta", "haptic", "robot", "command", "target", "model", "dir"}`` for a run, or ``None`` if
+    it is incomplete. Every stream but ``haptic`` may be ``None``."""
     run_dir = Path(run_dir)
     meta_path = run_dir / "metadata.json"
     if not meta_path.exists() or not (run_dir / "samples.mcap").exists():
@@ -55,6 +63,9 @@ def load_run(run_dir: Path, streams: tuple[str, ...] = ("haptic", "plant", "sim"
     meta = json.loads(meta_path.read_text())
     meta = meta.get("metadata", meta)
     s = load_streams(run_dir, list(streams))
+    haptic = s.get("haptic")
+    if haptic is not None and "mono_s" in haptic and meta.get("t0_mono_s") is not None:
+        haptic = haptic.assign(ts=haptic.mono_s - float(meta["t0_mono_s"]))
     robot = None
     if "sim" in s:
         d = s["sim"]
@@ -68,10 +79,15 @@ def load_run(run_dir: Path, streams: tuple[str, ...] = ("haptic", "plant", "sim"
         if "ee_orientation_0" in d:
             for k, c in enumerate(("qx", "qy", "qz", "qw")):
                 robot[c] = d[f"ee_orientation_{k}"]
-        dt = np.gradient(robot.ts.to_numpy())
-        for a in "xyz":
-            robot[f"v{a}"] = np.gradient(robot[a].to_numpy()) / np.where(dt > 0, dt, np.nan)
-    return {"meta": meta, "haptic": s.get("haptic"), "robot": robot, "command": s.get("command"), "dir": run_dir}
+        if "ee_velocity_0" in d:
+            for k, a in enumerate("xyz"):
+                robot[f"v{a}"] = d[f"ee_velocity_{k}"]
+        else:
+            dt = np.gradient(robot.ts.to_numpy())
+            for a in "xyz":
+                robot[f"v{a}"] = np.gradient(robot[a].to_numpy()) / np.where(dt > 0, dt, np.nan)
+    return {"meta": meta, "haptic": haptic, "robot": robot, "command": s.get("command"), "target": s.get("target"),
+            "model": s.get("model"), "dir": run_dir}
 
 
 def find(meta: dict, key: str, default=None):

@@ -156,6 +156,30 @@ controller is not in the model: the robot is assumed to track the proxy exactly 
 - Robot: $x_t = x_p(t - T_c)$, $v_t = v_p(t - T_c)$, $f_{ff} = -f(t - T_c)$. The feedforward supplies the force; the OSC PD only rejects model error.
 - Links: → $x_p, v_p, f_{ff}$; ← the model $(\Lambda, z, f_{eff})$ at the model update rate.
 
+#### 3-DoF contact projection (M4, M5) · *implemented in `pyrim.RIMIntegrator`*
+
+The wall $n^T x_p \ge s$ ($n = e_z$) pushes along $n$ only, so its impulse $p \ge 0$ moves the
+proxy along $\Lambda^{-1} n$, which is not along $n$ when $\Lambda$ couples axes. One step, with
+the velocity implicit in the coupling and $A = \Lambda + \Delta t\,(D + \Delta t\,K)\,I$:
+
+$$A\,v^* = \Lambda\,v + \Delta t\,\tilde r \quad\text{(free step)},\qquad
+v^+ = v^* + A^{-1} n\,p,\qquad x^+ = x + \Delta t\,v^+,$$
+
+$$p = \max\Big(0,\ \frac{-\max(g, 0)/\Delta t - n^T v^*}{n^T A^{-1} n}\Big),\qquad g = n^T x - s.$$
+
+The proxy lands exactly on the wall; equivalently $v^+$ is the point nearest $v^*$ in the
+$A$-metric with $n^T v^+ \ge -\max(g,0)/\Delta t$ (Gauss's principle). At rest in contact
+$\Delta t\,\tilde r + n\,p = 0$: the tangential force vanishes and $f$ is normal (a frictionless
+table). A proxy that starts inside the wall ($g < 0$) only stops moving in, and its position is
+moved back along $A^{-1}n$ without a velocity change, so no energy is injected.
+
+The per-axis projection used before (clamp $x_z$, $v_z \ge 0$) is the identity-metric one. At rest
+it requires $(A^{-1}\tilde r)_x = 0$, i.e. a static tangential force
+$r_x \approx -(\Lambda^{-1})_{xz}/(\Lambda^{-1})_{xx}\, r_z$: $-0.29\,r_z$ with $\Lambda_0$ at
+$(0.4, 0, 0.2)$ m, about $-6$ N felt sideways in a 20 N vertical press (measured on the robot,
+2026-10-23: $-6.8$ N, proxy 6.9 mm off the leader). M4 ($A \propto I$) and M3 (massless, isotropic
+$K$) are unaffected: $A^{-1}n \parallel n$.
+
 ### M6 — RIM, closed loop (arm + OSC) · *proposal*
 
 The RIM is the robot **under its controller**, seen from the controller's input (the target). The

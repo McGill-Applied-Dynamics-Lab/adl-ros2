@@ -31,6 +31,7 @@ from fr3_haptic.teleop import (
     build_parser,
     interface_basis,
     links_config,
+    log_run_streams,
     resolve_rates,
     script_config,
     scripted_device,
@@ -111,7 +112,7 @@ def main(argv: list[str] | None = None) -> None:
         model_box = ModelMailbox(sim.model.n, dim)
         boxes.append(model_box)
         model_box.write(sim.model)
-        rim_loop = RimModelLoop(sim, links.model_sink(model_box))
+        rim_loop = RimModelLoop(sim, links.model_sink(model_box), record=args.save)
 
     spec = HapticProcessSpec(
         basis=frame.basis,
@@ -235,6 +236,7 @@ def main(argv: list[str] | None = None) -> None:
         "hold_position": list(start),
         "leader_origin": leader_origin.tolist(),
         "stop_reason": stop_reason,
+        "t0_mono_s": t0,  # time.monotonic() at the run start: the haptic log's mono_s minus this is run time
     }
     config = (
         LoggingConfig.to_file(args.output_dir, run_name=args.run_name, notes=args.notes or f"sim {args.method}")
@@ -245,19 +247,17 @@ def main(argv: list[str] | None = None) -> None:
         with ExperimentLogger(config, metadata=metadata) as logger:
             if result.log is not None:
                 result.log.to_logger(logger, "haptic", 1.0 / args.haptic_hz)
-            for t_s, x, v, f_ff in loop.shared.commands:
-                logger.log_sample("command", {"x": x, "v": v, "f_ff": f_ff}, timestamp_s=t_s)
+            log_run_streams(
+                logger,
+                t0,
+                commands=loop.shared.commands,
+                targets=sim.targets,
+                links=links,
+                model_history=rim_loop.history if rim_loop is not None else (),
+            )
             truth = sim.truth
             for row in truth[truth[:, 0] >= t0]:
                 logger.log_sample("sim", dict(zip(TRUTH_COLS[1:], row[1:])), timestamp_s=row[0] - t0)
-            for rx_s, delivered_s, delay_s, t_s in links.records.feedback:
-                if delivered_s >= t0:
-                    logger.log_sample("feedback_link", {"delay_ms": delay_s * 1e3, "sent_s": rx_s - t0, "t_s": t_s},
-                                      timestamp_s=delivered_s - t0)
-            for sent_s, delivered_s, delay_s in links.records.command:
-                if delivered_s >= t0:
-                    logger.log_sample("command_link", {"delay_ms": delay_s * 1e3, "sent_s": sent_s - t0},
-                                      timestamp_s=delivered_s - t0)
             if port is not None and port.history is not None:
                 for t_s, e_in, e_out, remote_in, alpha in port.history:
                     if t_s >= t0:

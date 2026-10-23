@@ -31,7 +31,7 @@ import yaml
 from fr3_haptic.scripted import Script, ScriptConfig
 
 HERE = Path(__file__).resolve().parent
-REPO = HERE.parents[1]
+REPO = HERE.parents[2]
 SCRIPT_KEYS = {
     "script": "profile", "script_depth": "depth", "script_speed": "speed", "script_hold_s": "hold_s",
     "script_rest_s": "rest_s", "script_repeats": "repeats", "script_radius": "radius",
@@ -121,7 +121,7 @@ def plan(cfg: dict, backend: str, only_task=None, only_method=None, only_rtt=Non
 
 
 def command(run: Run, cfg: dict, backend: str, out_dir: Path) -> list[str]:
-    exe = [sys.executable, str(HERE / "sim_teleop.py")] if backend == "sim" else ["fr3_teleop"]
+    exe = [sys.executable, str(HERE.parent / "sim_teleop.py")] if backend == "sim" else ["fr3_teleop"]
     conf = cfg.get("conf")
     head = ["--conf", str(REPO / conf)] if conf else []
     tail = ["--seconds", f"{run.seconds:.1f}", "--save", "--output-dir", str(out_dir), "--run-name", run.name,

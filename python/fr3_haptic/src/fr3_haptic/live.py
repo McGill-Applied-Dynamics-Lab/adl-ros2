@@ -20,6 +20,11 @@ under ``values``):
   ``tdpa_damping``, ``watchdog_gain``, ``guard_tripped``, trip counts, and the plant / delivery /
   device ages [ms].
 
+Interface vectors (``dim`` values, in interface coordinates) also come lifted to the base frame as
+``<field>_world`` (3 values, ``null`` on an axis outside the interface), so the layout plots x, y
+and z whatever ``--interface-axis`` is: ``x_l``, ``proxy_x``, ``force``, ``f``, ``lam``, ``sent_x``,
+``robot_f_ff``.
+
 Every stream has the same fields from its first sample on (the channel schema is inferred from
 it): a value not available yet is ``null``, and so is a non-finite one (JSON has no NaN).
 """
@@ -69,6 +74,16 @@ def _vec(value, n: int) -> list[float | None]:
     return [_num(v) for v in np.asarray(value, dtype=float).ravel()]
 
 
+def _world(value, basis: np.ndarray) -> list[float | None]:
+    """An interface vector in the base frame (3 JSON-safe floats), ``None`` on the axes the
+    interface ``basis`` does not span; all ``None`` for a missing value."""
+    if value is None:
+        return [None] * 3
+    world = basis @ np.asarray(value, dtype=float).ravel()
+    world[~np.any(basis != 0.0, axis=1)] = np.nan
+    return _vec(world, 3)
+
+
 class _Rate:
     """Events per second from a monotonic counter, over a sliding window."""
 
@@ -97,6 +112,8 @@ class LiveView:
         logger: an ``ExperimentLogger`` ([live_logger][]), started by [start][LiveView.start].
         hz: sample rate [Hz].
         dim: interface dimension.
+        basis: ``(3, dim)`` interface basis in the base frame (``InterfaceFrame.basis``), for the
+            ``*_world`` fields; ``None`` is the z axis, for a 1-DoF interface.
         plant: the `FR3Plant` (robot samples, targets published).
         plant_box: the ``PlantMailbox`` the haptic loop reads (feedback delivered).
         haptic_state: ``HapticStateMailbox``.
@@ -111,6 +128,7 @@ class LiveView:
         hz: float,
         *,
         dim: int = 1,
+        basis: np.ndarray | None = None,
         plant=None,
         plant_box=None,
         haptic_state=None,
@@ -123,6 +141,11 @@ class LiveView:
         self.logger = logger
         self.hz = float(hz)
         self.dim = int(dim)
+        if basis is None:
+            if self.dim != 1:
+                raise ValueError(f"a {self.dim}-DoF interface needs its basis")
+            basis = np.array([[0.0], [0.0], [1.0]])
+        self.basis = np.asarray(basis, dtype=float).reshape(3, self.dim)
         self.plant = plant
         self.plant_box = plant_box
         self.haptic_state = haptic_state
@@ -163,7 +186,7 @@ class LiveView:
         now = time.monotonic() if now_s is None else now_s
         t = now - self._t0
         self.ticks += 1
-        d = self.dim
+        d, B = self.dim, self.basis
         log = self.logger.log_sample
         rates: dict[str, float | None] = dict.fromkeys(RATES)
         rates["live"] = self._rates["live"].update(self.ticks, now)
@@ -171,14 +194,17 @@ class LiveView:
         telemetry = self.telemetry.read() if self.telemetry is not None else None
         haptic = self.haptic_state.read() if self.haptic_state is not None else None
         if haptic is not None:
+            f = telemetry["f"] if telemetry else None
             log(
                 "haptic",
                 {
                     "t": t,
                     "haptic_t": _num(haptic["t_s"]),
                     **{k: _vec(haptic[k], d) for k in ("x_l", "v_l", "proxy_x", "proxy_v", "force")},
-                    "f": _vec(telemetry["f"] if telemetry else None, d),
+                    "f": _vec(f, d),
                     "f_handle": _vec(telemetry["f_handle"] if telemetry else None, 3),
+                    **{f"{k}_world": _world(haptic[k], B) for k in ("x_l", "proxy_x", "force")},
+                    "f_world": _world(f, B),
                 },
             )
 
@@ -197,6 +223,7 @@ class LiveView:
                         "v_i": _vec(s.v_i, d),
                         "lam": _vec(s.lam, d),
                         "task_force": _vec(s.task_force, 3),
+                        "lam_world": _world(s.lam, B),
                     },
                 )
         if self.plant is not None or self.commands is not None:
@@ -217,6 +244,8 @@ class LiveView:
                     "robot_x": _vec(x, d),
                     "robot_v": _vec(v, d),
                     "robot_f_ff": _vec(f_ff, d),
+                    "sent_x_world": _world(sent[1], B),
+                    "robot_f_ff_world": _world(f_ff, B),
                 },
             )
         if self.commands is not None:
@@ -262,40 +291,49 @@ def _plot(title: str, series: list[tuple[str, str]], window_s: float) -> dict:
     }
 
 
-def layout_panels(interface_axis: str = "z", window_s: float = 10.0) -> dict[str, list[tuple[str, dict]]]:
-    """The layout's tabs: per tab title, its ``(panel id, Plot config)`` in order."""
-    if interface_axis not in ("x", "y", "z"):
-        raise ValueError(f"interface_axis must be x, y or z, got {interface_axis!r}")
+def layout_panels(window_s: float = 10.0) -> dict[str, list[tuple[str, dict]]]:
+    """The layout's tabs: per tab title, its ``(panel id, Plot config)`` in order. The Teleop tab
+    has a position and a force panel per base axis, whatever the interface: the interface
+    signals are ``null`` on an axis outside it, where the robot's own traces remain."""
     xyz = list(enumerate("xyz"))
+    position = [
+        (
+            f"Plot!position_{a}",
+            _plot(
+                f"Position {a} [m]",
+                [
+                    (f"haptic.values.x_l_world[{i}]", "leader"),
+                    (f"robot.values.ee_position[{i}]", "robot (measured)"),
+                    (f"target.values.sent_x_world[{i}]", "target sent"),
+                    (f"target.values.robot_position[{i}]", "target at robot"),
+                    (f"haptic.values.proxy_x_world[{i}]", "proxy"),
+                ],
+                window_s,
+            ),
+        )
+        for i, a in xyz
+    ]
+    force = [
+        (
+            f"Plot!force_{a}",
+            _plot(
+                f"Force {a} [world N]",
+                [
+                    (f"haptic.values.force_world[{i}]", "rendered"),
+                    (f"haptic.values.f_world[{i}]", "sent to device"),
+                    (f"robot.values.lam_world[{i}]", "robot λ (measured)"),
+                    (f"target.values.robot_f_ff_world[{i}]", "feedforward at robot"),
+                    (f"robot.values.task_force[{i}]", "robot task force"),
+                ],
+                window_s,
+            ),
+        )
+        for i, a in xyz
+    ]
     return {
         "Teleop": [
-            (
-                "Plot!position",
-                _plot(
-                    f"Position on {interface_axis} [m]",
-                    [
-                        ("haptic.values.x_l[0]", "leader"),
-                        ("robot.values.x_i[0]", "robot (measured)"),
-                        ("target.values.sent_x[0]", "target sent"),
-                        ("target.values.robot_x[0]", "target at robot"),
-                        ("haptic.values.proxy_x[0]", "proxy"),
-                    ],
-                    window_s,
-                ),
-            ),
-            (
-                "Plot!force",
-                _plot(
-                    "Force on the interface [world N]",
-                    [
-                        ("haptic.values.force[0]", "rendered"),
-                        ("haptic.values.f[0]", "sent to device"),
-                        ("robot.values.lam[0]", "robot λ (measured)"),
-                        ("target.values.robot_f_ff[0]", "feedforward at robot"),
-                    ],
-                    window_s,
-                ),
-            ),
+            *position,
+            *force,
             (
                 "Plot!energy",
                 _plot(
@@ -358,27 +396,31 @@ def _split(ids: list[str], direction: str):
     }
 
 
-def write_layout(path: str | Path, interface_axis: str = "z", window_s: float = 10.0) -> Path:
+def write_layout(path: str | Path, window_s: float = 10.0) -> Path:
     """Write a Foxglove layout for the ``/live`` topics to ``path``: import it once in the app
-    (Layouts → Import from file).
+    (Layouts → Import from file). The same layout serves every ``--interface-axis``.
 
     Args:
         path: the ``.json`` file to write.
-        interface_axis: ``x``, ``y`` or ``z``, for the titles.
         window_s: the plots' time window [s].
     """
-    tabs = layout_panels(interface_axis, window_s)
+    tabs = layout_panels(window_s)
     config_by_id: dict[str, dict] = {}
     tab_items = []
     for title, panels in tabs.items():
         ids = [pid for pid, _ in panels]
         config_by_id.update(dict(panels))
-        if title == "Teleop":  # two columns: position and force on the left, energy and handle on the right
+        if title == "Teleop":  # three columns: position x, y, z | force x, y, z | energy and handle
             tree = {
-                "first": _split(ids[:2], "column"),
-                "second": _split(ids[2:], "column"),
+                "first": _split(ids[:3], "column"),
+                "second": {
+                    "first": _split(ids[3:6], "column"),
+                    "second": _split(ids[6:], "column"),
+                    "direction": "row",
+                    "splitPercentage": 60.0,
+                },
                 "direction": "row",
-                "splitPercentage": 65.0,
+                "splitPercentage": 37.5,
             }
         else:
             tree = _split(ids, "column")

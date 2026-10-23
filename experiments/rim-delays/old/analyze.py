@@ -32,7 +32,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from runs import COLORS, INK, INK_2, INK_3, LABELS, find  # noqa: E402
 from runs import load_run as _load_run  # noqa: E402
 from runs import save as _save  # noqa: E402

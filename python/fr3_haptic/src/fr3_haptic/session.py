@@ -30,10 +30,12 @@ origin is shifted onto it and the proxy target is shifted back by ``tool_correct
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, field
 
 import numpy as np
 from haptic_teleop import HapticStateMailbox, ModelMailbox, StatusMailbox, clamp_force
+from pyrim import RIMCalculator
 
 __all__ = ["PROXY_METHODS", "CommandLoop", "CommandLoopConfig", "RimModelLoop"]
 
@@ -66,7 +68,8 @@ class CommandLoopConfig:
 class _Shared:
     stop: bool = False
     stop_reason: str = ""
-    commands: list[tuple[float, np.ndarray, np.ndarray, np.ndarray]] = field(default_factory=list)
+    # (t_s, x, v, f_ff, haptic tick) per command sent
+    commands: list[tuple[float, np.ndarray, np.ndarray, np.ndarray, int]] = field(default_factory=list)
 
 
 class CommandLoop:
@@ -119,22 +122,23 @@ class CommandLoop:
         state = self.haptic_state.read()
         if state is None:
             return
+        tick = state["tick"]
         if self.cfg.proxy:
             x, v = state["proxy_x"], state["proxy_v"]
             if np.isnan(x).any():
                 return  # proxy not running yet: the controller holds its pose
             target = x + self._tool_correction
             f_ff = clamp_force(-state["force"], self.cfg.feedforward_cap)
-            self.plant.command(target, v, f_ff)
-            s.commands.append((t_s, target.copy(), v.copy(), f_ff))
+            self.plant.command(target, v, f_ff, tick=tick)
+            s.commands.append((t_s, target.copy(), v.copy(), f_ff, tick))
         else:
             x_l, v_l = state["x_l"], state["v_l"]
             energy = state.get("energy_in", float("nan"))
             if np.isfinite(energy):  # two-port TDPA: the operator end's energy goes with the target
-                self.plant.aim(x_l, v_l, energy_in=energy)
+                self.plant.aim(x_l, v_l, energy_in=energy, tick=tick)
             else:
-                self.plant.aim(x_l, v_l)
-            s.commands.append((t_s, x_l.copy(), v_l.copy(), np.zeros_like(x_l)))
+                self.plant.aim(x_l, v_l, tick=tick)
+            s.commands.append((t_s, x_l.copy(), v_l.copy(), np.zeros_like(x_l), tick))
 
     def shutdown_robot(self) -> None:
         """Freeze the robot at the end of the run (idempotent)."""
@@ -147,15 +151,25 @@ class RimModelLoop:
     Args:
         system: a ``pyrim.SystemInterface`` with a ``ready`` flag (`FR3System`).
         model_out: where the model goes, for the haptic process.
+        record: keep every update's reduced model in [history][RimModelLoop.history], for logging.
     """
 
-    def __init__(self, system, model_out: ModelMailbox) -> None:
+    def __init__(self, system, model_out: ModelMailbox, record: bool = False) -> None:
         self.system = system
         self.model_out = model_out
         self.updates = 0
+        self._calculator = RIMCalculator() if record else None
+        self.history: list[tuple[float, np.ndarray, np.ndarray, np.ndarray, np.ndarray]] = []
+        """Per update, when ``record`` is set: ``(time.monotonic() when sent, M_eff (dim, dim),
+        z_i, f_eff, x_i)``, what the haptic side reduces the model to."""
 
     def step(self, tick: int, t_s: float) -> None:
         self.system.update()
         if self.system.ready:
-            self.model_out.write(self.system.model)
+            model = self.system.model
+            sent_s = time.monotonic()
+            self.model_out.write(model)
             self.updates += 1
+            if self._calculator is not None:
+                rim = self._calculator.compute(model)
+                self.history.append((sent_s, rim.M_eff, rim.z_i, rim.f_eff, rim.x))

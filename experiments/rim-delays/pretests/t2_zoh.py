@@ -21,7 +21,7 @@ PRESET = {
     "command_delay_ms": 0,
     "force": True,
     "seconds": 600,
-    "contact_surface": 0.41858,
+    # "contact_surface": 0.41858,
 }
 
 

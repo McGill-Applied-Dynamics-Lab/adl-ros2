@@ -118,6 +118,7 @@ class SimFR3:
         self.f_contact = np.zeros(3)
         self._model: DynModel | None = None
         self.samples = 0
+        self.targets: list = []  # as FR3Plant.targets: (time.monotonic(), haptic tick, position, x, v, f_ff)
         self.t0 = time.monotonic()
 
     # -- FR3Plant surface -------------------------------------------------------------------
@@ -125,29 +126,32 @@ class SimFR3:
     def dim(self) -> int:
         return self.frame.dim
 
-    def aim(self, x, v, energy_in: float | None = None) -> None:
+    def aim(self, x, v, energy_in: float | None = None, tick: int = -1) -> None:
         f_ff = None
         if self.port is not None:
             if energy_in is not None:
                 self.port.receive(energy_in)
             f_ff = self.port.wrench(time.monotonic())
-        self._set(x, v, f_ff)
+        self._set(x, v, f_ff, tick)
 
-    def command(self, x, v=None, f_ff=None) -> None:
-        self._set(x, np.zeros(self.dim) if v is None else v, f_ff)
+    def command(self, x, v=None, f_ff=None, tick: int = -1) -> None:
+        self._set(x, np.zeros(self.dim) if v is None else v, f_ff, tick)
 
     def freeze(self) -> None:
         with self._lock:
             self._frozen = True
             self._target = (self.x.copy(), np.zeros(3), np.zeros(3))
 
-    def _set(self, x, v, f_ff) -> None:
+    def _set(self, x, v, f_ff, tick: int = -1) -> None:
         pose = self.frame.compose(np.asarray(x, dtype=float), self.hold)
         twist = self.frame.lift(np.asarray(v, dtype=float))
         wrench = np.zeros(3) if f_ff is None else self.frame.lift(np.asarray(f_ff, dtype=float))
         with self._lock:
             if not self._frozen:
                 self._target = (pose, twist, wrench)
+                f = None if f_ff is None else np.asarray(f_ff, dtype=float)
+                self.targets.append((time.monotonic(), int(tick), pose.copy(), np.asarray(x, dtype=float).copy(),
+                                     np.asarray(v, dtype=float).copy(), f))
 
     # -- FR3System surface ------------------------------------------------------------------
     def update(self) -> None:

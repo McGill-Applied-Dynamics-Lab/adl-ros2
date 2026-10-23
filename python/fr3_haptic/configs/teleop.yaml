@@ -8,7 +8,22 @@ method:
   linear_max_extrapolation: 1.0
   tdpa_max_damping: 10.0
   proxy_mass: 1.0
-  contact_surface: null      # proxy methods: wall on the interface axis [m], model interface point
+  contact_surface: 0.083      # proxy methods: wall on the interface axis [m], model interface point
+
+
+script:
+  script: press  # press or circle
+  script_speed: 0.05
+  script_rest_s: 1.0  # time at origin between presses
+  script_depth: 0.02
+  press:
+    script_repeats: 1  # Number of presses
+    script_hold_s: 2.0
+  circle:
+    script_radius: 0.1  # cirlce radius
+    script_period_s: 6.0  # circle period
+    script_laps: 2  # circle_laps
+
 
 rates:
   haptic_hz: 1000.0
@@ -28,7 +43,7 @@ delays:                      # simulated, per link; 0 = none (the link is bypass
   delay_seed: null           # null = drawn and logged in the run metadata
 
 interface:
-  interface_axis: z
+  interface_axis: xyz
   interface_min: null        # commanded interface position bounds [m], robot base frame
   interface_max: null
   interface_range: 0       # commanded position stays within ± this of the start [m]; 0 disables
@@ -52,7 +67,7 @@ safety:
   guard_cooldown_s: 3.0
   plant_max_age_ms: 50.0     # watchdog: freeze the robot and end the run past this
   watchdog_ramp_ms: 100.0
-  feedforward_cap: 15.0
+  feedforward_cap: 30.0      # proxy methods: |f_ff| clamp [N]; Λa reaches ~19 N on a 0.4 m/s circle
 
 robot:
   namespace: fr3
@@ -69,6 +84,7 @@ live:                        # Foxglove live view: open ws://localhost:<live_por
   live_port: 8766
 
 run:
+  save: false
   seconds: 99999.0
   output_dir: /home/athena/csirois/data/franka/fr3_haptic
   notes: ""

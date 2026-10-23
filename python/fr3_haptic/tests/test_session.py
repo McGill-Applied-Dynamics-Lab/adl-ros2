@@ -29,12 +29,15 @@ from utilities import apply_yaml_config
 class FakePlant:
     def __init__(self) -> None:
         self.calls: list[tuple] = []
+        self.ticks: list[int] = []
 
-    def aim(self, x, v):
+    def aim(self, x, v, tick=-1):
         self.calls.append(("aim", np.asarray(x).copy(), np.asarray(v).copy()))
+        self.ticks.append(tick)
 
-    def command(self, x, v=None, f_ff=None):
+    def command(self, x, v=None, f_ff=None, tick=-1):
         self.calls.append(("command", np.asarray(x).copy(), np.asarray(v).copy(), np.asarray(f_ff).copy()))
+        self.ticks.append(tick)
 
     def freeze(self):
         self.calls.append(("freeze",))
@@ -81,6 +84,7 @@ def test_coupling_methods_aim_the_leader(boxes):
     kind, x, v = plant.calls[-1]
     assert kind == "aim" and x[0] == pytest.approx(0.32) and v[0] == pytest.approx(0.1)
     assert len(loop.shared.commands) == 1
+    assert plant.ticks == [10] and loop.shared.commands[-1][-1] == 10  # the haptic tick travels with it
 
 
 def test_proxy_methods_command_proxy_with_capped_feedforward(boxes):
@@ -95,6 +99,7 @@ def test_proxy_methods_command_proxy_with_capped_feedforward(boxes):
     loop.step(1, 0.02)
     kind, x, v, f_ff = plant.calls[-1]
     assert kind == "command" and x[0] == pytest.approx(0.33) and v[0] == pytest.approx(0.01)
+    assert plant.ticks == [2]
     assert f_ff[0] == pytest.approx(-2.0)  # minus the operator's force, clamped to the cap
 
 

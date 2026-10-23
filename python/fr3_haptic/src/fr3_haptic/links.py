@@ -163,13 +163,13 @@ class DelayedPlant:
         self.line = line
         self.frozen = False
 
-    def aim(self, x, v, energy_in: float | None = None) -> None:
+    def aim(self, x, v, energy_in: float | None = None, tick: int = -1) -> None:
         if not self.frozen:
-            self.line.push(("aim", np.copy(x), np.copy(v), energy_in), sent_s=time.monotonic())
+            self.line.push(("aim", np.copy(x), np.copy(v), energy_in, tick), sent_s=time.monotonic())
 
-    def command(self, x, v=None, f_ff=None) -> None:
+    def command(self, x, v=None, f_ff=None, tick: int = -1) -> None:
         if not self.frozen:
-            args = ("command", np.copy(x), None if v is None else np.copy(v), None if f_ff is None else np.copy(f_ff))
+            args = ("command", np.copy(x), None if v is None else np.copy(v), None if f_ff is None else np.copy(f_ff), tick)
             self.line.push(args, sent_s=time.monotonic())
 
     def freeze(self) -> None:
@@ -180,20 +180,20 @@ class DelayedPlant:
     def deliver(self, target) -> None:
         if self.frozen:
             return
-        kind, x, v, extra = target
+        kind, x, v, extra, tick = target
         if kind == "aim":
             if extra is None:
-                self.plant.aim(x, v)
+                self.plant.aim(x, v, tick=tick)
             else:
-                self.plant.aim(x, v, energy_in=extra)  # the operator end's energy, with the target
+                self.plant.aim(x, v, energy_in=extra, tick=tick)  # the operator end's energy, with the target
         else:
-            self.plant.command(x, v, extra)
+            self.plant.command(x, v, extra, tick=tick)
 
 
 @dataclass
 class _Records:
     feedback: list[tuple[float, float, float, float]] = field(default_factory=list)  # rx, delivered, delay, t_s
-    command: list[tuple[float, float, float]] = field(default_factory=list)  # sent, delivered, delay
+    command: list[tuple[float, float, float, int]] = field(default_factory=list)  # sent, delivered, delay, haptic tick
 
 
 class Links:
@@ -221,13 +221,12 @@ class Links:
         return self.plant_writer
 
     def model_sink(self, model_box: ModelMailbox):
-        """What the RIM model loop should write to. Same feedback delay distribution as the samples,
-        independent draws (exact only once the model comes from the same controller tick)."""
+        """What the RIM model loop should write to. The model travels on the feedback link: same
+        delay config and seed as the samples, so a constant (or time-indexed) delay is the same
+        for both; a per-item random draw (jitter, ``iid`` trace) is not."""
         if not self.cfg.feedback.enabled:
             return model_box
-        cfg = self.cfg.feedback
-        seed = None if cfg.seed is None else cfg.seed + 1000  # its own stream of draws
-        self.model_writer = DelayedModelWriter(DelayLine(DelayConfig(**{**cfg.__dict__, "seed": seed}).build()), model_box)
+        self.model_writer = DelayedModelWriter(DelayLine(self.cfg.feedback.build()), model_box)
         return self.model_writer
 
     def command_plant(self, plant):
@@ -255,7 +254,7 @@ class Links:
             if got is not None:
                 target, sent, delay = got
                 self.delayed_plant.deliver(target)
-                self.records.command.append((sent, now, delay))
+                self.records.command.append((sent, now, delay, target[-1]))
 
     def start(self) -> None:
         """Start the delivery thread (only if a link has a delay)."""

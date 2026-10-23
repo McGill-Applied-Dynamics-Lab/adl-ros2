@@ -12,11 +12,13 @@ from haptic_teleop import DelayConfig, DelayLine, ModelMailbox, PlantMailbox
 class FakePlant:
     def __init__(self) -> None:
         self.calls: list[tuple] = []
+        self.ticks: list[int] = []
 
-    def aim(self, x, v):
+    def aim(self, x, v, tick=-1):
         self.calls.append(("aim", float(x[0])))
+        self.ticks.append(tick)
 
-    def command(self, x, v=None, f_ff=None):
+    def command(self, x, v=None, f_ff=None, tick=-1):
         self.calls.append(("command", float(x[0])))
 
     def freeze(self):
@@ -63,11 +65,12 @@ def test_commands_arrive_after_the_delay_and_freeze_drops_what_is_in_flight(monk
     plant = FakePlant()
     delayed = links.command_plant(plant)
     assert isinstance(delayed, DelayedPlant)
-    delayed.aim(np.array([0.31]), np.zeros(1))
+    delayed.aim(np.array([0.31]), np.zeros(1), tick=7)
     links.pump(now_s=10.010)
     assert plant.calls == []
     links.pump(now_s=10.021)
     assert plant.calls == [("aim", 0.31)]
+    assert plant.ticks == [7] and links.records.command[-1][-1] == 7  # the haptic tick, delivered and logged
 
     now[0] = 10.030
     delayed.command(np.array([0.32]), np.zeros(1), np.zeros(1))  # in flight...
@@ -79,7 +82,7 @@ def test_commands_arrive_after_the_delay_and_freeze_drops_what_is_in_flight(monk
     assert plant.calls[-1] == ("freeze",)
 
 
-def test_model_link_uses_its_own_draws():
+def test_model_link_shares_the_feedback_delays():
     box = ModelMailbox(7, 1)
     try:
         links = Links(LinksConfig(feedback=DelayConfig(base_ms=10, jitter_ms=5, seed=3)))
@@ -87,7 +90,7 @@ def test_model_link_uses_its_own_draws():
         links.model_sink(box)
         a = [links.plant_writer.line.model.sample_s() for _ in range(5)]
         b = [links.model_writer.line.model.sample_s() for _ in range(5)]
-        assert a != b
+        assert a == b  # same config and seed: the model travels on the feedback link
     finally:
         box.close()
         box.unlink()

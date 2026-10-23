@@ -479,6 +479,56 @@ def scripted_device(args: argparse.Namespace, leader_origin: np.ndarray) -> tupl
     return ScriptedOperator, {"script": script, "hand": hand}, duration
 
 
+OSC_PARAM_GROUPS = ("control", "gains", "feedforward", "nullspace", "limits", "filter")
+
+
+def read_controller_params(params: ParametersClient) -> dict[str, object]:
+    """The controller's parameters as it runs them (read back after this run set them), for the
+    metadata: the groups in ``OSC_PARAM_GROUPS``."""
+    names = [n for n in params.list_parameters() if n.split(".")[0] in OSC_PARAM_GROUPS]
+    return dict(zip(names, params.get_parameters(names)))
+
+
+def log_run_streams(logger: ExperimentLogger, t0: float, *, commands, targets, links: Links, model_history=()) -> None:
+    """The streams both backends save the same way, on the run clock (``time.monotonic() - t0``,
+    the clock of the plant samples and of the haptic log's ``mono_s``).
+
+    - ``command``: every target the command loop sent, with the haptic ``tick`` it came from
+      (timestamped on the command loop's own clock).
+    - ``target``: every target published to the robot, after any command delay, with its
+      ``tick``: joins a haptic tick to when its action reached the robot. ``f_ff`` is NaN when
+      none was published.
+    - ``feedback_link`` / ``command_link``: every delivery on a delayed link.
+    - ``model``: RIM's reduced model per update, when sent (``M_eff`` row-major).
+    """
+    for t_s, x, v, f_ff, tick in commands:
+        logger.log_sample("command", {"x": x, "v": v, "f_ff": f_ff, "tick": tick}, timestamp_s=t_s)
+    for mono_s, tick, position, x, v, f_ff in targets:
+        if mono_s < t0:
+            continue
+        f_ff = np.full(len(x), np.nan) if f_ff is None else f_ff
+        logger.log_sample(
+            "target", {"tick": tick, "position": position, "x": x, "v": v, "f_ff": f_ff}, timestamp_s=mono_s - t0
+        )
+    for rx_s, delivered_s, delay_s, t_s in links.records.feedback:
+        if delivered_s >= t0:
+            logger.log_sample(
+                "feedback_link", {"delay_ms": delay_s * 1e3, "sent_s": rx_s - t0, "t_s": t_s}, timestamp_s=delivered_s - t0
+            )
+    for sent_s, delivered_s, delay_s, tick in links.records.command:
+        if delivered_s >= t0:
+            logger.log_sample(
+                "command_link",
+                {"delay_ms": delay_s * 1e3, "sent_s": sent_s - t0, "tick": tick},
+                timestamp_s=delivered_s - t0,
+            )
+    for sent_s, m_eff, z_i, f_eff, x_i in model_history:
+        if sent_s >= t0:
+            logger.log_sample(
+                "model", {"M_eff": np.ravel(m_eff), "z_i": z_i, "f_eff": f_eff, "x_i": x_i}, timestamp_s=sent_s - t0
+            )
+
+
 def move_to_start(robot: Robot, position: list[float], speed: float) -> None:
     """Move the end effector to ``position``, keeping its orientation, through
     ``joint_trajectory_controller`` (IK + joint trajectory). Blocks until the move ends."""
@@ -550,6 +600,8 @@ def main(argv: list[str] | None = None) -> None:
         params.load_param_config(args.osc_params)
     gains = controller_gains(args)
     params.set_parameters(gains)
+    controller_params = read_controller_params(params)
+    q0 = robot.q.tolist()
 
     first = plant.wait_for_sample()
     hold = first.ee_pose
@@ -650,7 +702,7 @@ def main(argv: list[str] | None = None) -> None:
         status=status,
         dim=dim,
     )
-    rim_loop = RimModelLoop(system, links.model_sink(model_box)) if system is not None else None
+    rim_loop = RimModelLoop(system, links.model_sink(model_box), record=args.save) if system is not None else None
 
     np.set_printoptions(precision=4, suppress=True)
     felt_k = args.kv * args.scale * args.force_gain
@@ -766,7 +818,7 @@ def main(argv: list[str] | None = None) -> None:
         if line:
             print(f"{TAG} {line}")
     print(f"{TAG} guard trips: {result.guard_trips}, watchdog trips: {result.watchdog_trips}")
-    print(f"{TAG} plant samples: {sum(s.rx_s >= t0 for s in plant.history)} during the run")
+    print(f"{TAG} controller ticks recorded: {sum(s.rx_s >= t0 for s in plant.history)} during the run")
     if links_cfg.enabled:
         print(f"{TAG} links: {links.summary()}")
     if recorder is not None:
@@ -775,6 +827,9 @@ def main(argv: list[str] | None = None) -> None:
     metadata = {
         "args": {k: (list(v) if isinstance(v, tuple) else v) for k, v in vars(args).items()},
         "controller_gains": gains,
+        "controller_params": controller_params,  # read back from the controller after setup
+        "q0": q0,  # joints at the start of the run [rad]
+        "t0_mono_s": t0,  # time.monotonic() at the run start: the haptic log's mono_s minus this is run time
         "command_loop": {k: (v.tolist() if isinstance(v, np.ndarray) else v) for k, v in asdict(loop.cfg).items()},
         "delays": {
             "feedback": LinksConfig.describe(links_cfg.feedback),
@@ -822,29 +877,23 @@ def main(argv: list[str] | None = None) -> None:
                         "lam": s.lam,
                         "t_s": s.t_s,
                         "ee_position": s.ee_position,
+                        "ee_velocity": s.ee_velocity,
                         "ee_orientation": s.ee_orientation,  # (x, y, z, w), base frame
                         "task_force": s.task_force,
                     },
                     timestamp_s=s.rx_s - t0,
                 )
-            for t_s, x, v, f_ff in loop.shared.commands:
-                logger.log_sample("command", {"x": x, "v": v, "f_ff": f_ff}, timestamp_s=t_s)
+            log_run_streams(
+                logger,
+                t0,
+                commands=loop.shared.commands,
+                targets=plant.targets,
+                links=links,
+                model_history=rim_loop.history if rim_loop is not None else (),
+            )
             # Robot state, commanded torques, task error/wrench, EE state; same clock as "plant"
             if recorder is not None:
                 recorder.to_logger(logger, t0)
-            # Every delivery on a delayed link: when it was sent, how long it took
-            for rx_s, delivered_s, delay_s, t_s in links.records.feedback:
-                if delivered_s >= t0:
-                    logger.log_sample(
-                        "feedback_link",
-                        {"delay_ms": delay_s * 1e3, "sent_s": rx_s - t0, "t_s": t_s},
-                        timestamp_s=delivered_s - t0,
-                    )
-            for sent_s, delivered_s, delay_s in links.records.command:
-                if delivered_s >= t0:
-                    logger.log_sample(
-                        "command_link", {"delay_ms": delay_s * 1e3, "sent_s": sent_s - t0}, timestamp_s=delivered_s - t0
-                    )
             # Two-port TDPA, robot end: energies and damping, one row per command
             if plant.port is not None and plant.port.history is not None:
                 for t_s, e_in, e_out, remote_in, alpha in plant.port.history:
