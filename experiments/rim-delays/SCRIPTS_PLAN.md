@@ -89,5 +89,8 @@ penetration at onset, overshoot, robot peak force, bounce count, settling time, 
 - Robot checks R1–R4 (`robot/checks/`): lag exact, Λ₀ matches B1, RIM e_F flat in delay
   (ZOH 2.0 → 19.6 N on z). Found: RIM's per-axis contact projection held a false −6.8 N lateral
   force in a vertical press → fixed in `pyrim.RIMIntegrator` (impulse along A⁻¹n, FORMULATION.md
-  "3-DoF contact projection"); rerun R3/R4. Open: 2–19 % of controller ticks dropped by the
-  plant subscriptions (depth-5 sensor QoS, pre-existing); friction sets RIM's floor (1–5 N).
+  "3-DoF contact projection"); rerun R3 confirms (e_F x RMS 5.25 → 1.41 N). Plant subscriptions'
+  queue 5 → 50 (2–19 % of controller ticks were dropped): rerun R1/R4 to confirm.
+- Friction is RIM's floor: Coulomb ±6.2 N on z (flat in speed, flips with direction, identical
+  under ZOH), plus a +1.3 N constant z bias — not payload (~10 g mounted): torque-sensor offset or
+  gravity-model miscalibration, open. E1: pick frequencies/amplitudes with Λa ≫ 6 N.
