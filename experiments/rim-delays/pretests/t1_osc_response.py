@@ -7,6 +7,10 @@ then sines at a few frequencies. Then reports, per axis:
   $F \approx \hat K (x_t - x) + \hat D (v_t - v)$, against the set $K_r, D_r$;
 - **arm**: least squares of the same force on the motion it produces (free space),
   $F \approx \hat\Lambda a + \hat b v + \hat F_c \tanh(v / v_0)$ — inertia, viscous and Coulomb friction;
+- **inertia (3 × 3)**: one full $\hat\Lambda$ fitted on every sine at ≥ 2 Hz (where inertia dominates
+  friction), against RIM's model at the start joints: rotation free (what RIM uses) and rotation
+  held (the translation block of the 6-D task inertia). The OSC holds orientation softly, so the arm
+  sits between the two; the residual with each model says which one the robot follows;
 - **steps**: rise time (10-90 %), overshoot, steady-state error (friction shows up here, as $F_c / K_r$);
 - **sines**: amplitude ratio and phase lag per frequency (closed-loop bandwidth);
 - **orientation** (robot only): how far the tool turns from the held orientation while the target
@@ -16,7 +20,10 @@ These are the closed-loop parameters RIM's closed-loop variant (M6) models.
 
     pixi run -e humble python experiments/rim-delays/pretests/t1_osc_response.py --sim
     pixi run -e humble python experiments/rim-delays/pretests/t1_osc_response.py --kv 1000 --dv 70
+    pixi run -e humble python experiments/rim-delays/pretests/t1_osc_response.py --kv 1500 1500 3500 --dv 120 120 260
+    pixi run -e humble python experiments/rim-delays/pretests/t1_osc_response.py --kv 1500 1500 3500 --dv -1   # auto damping
     pixi run -e humble python experiments/rim-delays/pretests/t1_osc_response.py --preset   # osc_teleop.yaml gains
+    pixi run -e humble python experiments/rim-delays/pretests/t1_osc_response.py --analyse <run dir>   # re-analyse
 
 The robot starts at ``--start-position`` (joint trajectory), then the OSC holds orientation and
 posture while the target moves. Ctrl-C stops early (the data so far is still analysed).
@@ -46,6 +53,13 @@ OUT = Path("~/data/franka/rim-delays").expanduser()
 
 
 # ------------------------------------------------------------------ the target profile
+
+
+def per_axis(values: list[float], flag: str) -> np.ndarray:
+    """``--kv`` / ``--dv``: one value for every axis, or one per axis (x, y, z)."""
+    if len(values) not in (1, 3):
+        raise SystemExit(f"{flag} takes 1 or 3 values, got {len(values)}")
+    return np.broadcast_to(np.asarray(values, dtype=float), (3,)).copy()
 
 
 def build_profile(step: float, amp: float, freqs: list[float], cycles: int, rest: float, axes: str):
@@ -89,7 +103,7 @@ def target_at(segs, t: float, amp: float) -> tuple[np.ndarray, np.ndarray, int, 
 
 
 class SimBackend:
-    """`sim_plant.SimFR3` with the same gains on every axis (or the teleop preset)."""
+    """`sim_plant.SimFR3` with the ``--kv`` / ``--dv`` gains (or the teleop preset)."""
 
     def __init__(self, args) -> None:
         from pyrim import InterfaceFrame
@@ -99,12 +113,17 @@ class SimBackend:
             def write(self, *a, **k):
                 pass
 
-        coupling = None if args.preset else (args.kv, args.dv)
         cfg = SimConfig(start=tuple(args.start_position), table_z=-1.0, friction=0.0)
-        self.gains = osc_gains("xyz", coupling, cfg.mass)
+        self.gains = osc_gains("xyz", None, cfg.mass)
+        if not args.preset:
+            K = per_axis(args.kv, "--kv")
+            D = per_axis(args.dv, "--dv")
+            D = np.where(D < 0, self.gains[1] * np.sqrt(K / self.gains[0]), D)  # auto: 2 zeta sqrt(K m)
+            self.gains = (K, D)
         self.sim = SimFR3(cfg, InterfaceFrame(np.eye(3)), self.gains, sink=_Sink(), sample_hz=1000.0)
         self.start = np.asarray(args.start_position, dtype=float)
         self.preset_k = PRESET_K
+        self.q0 = None
 
     def begin(self) -> np.ndarray:
         self.sim.start()
@@ -148,8 +167,9 @@ class RobotBackend:
         gains = [("control.inertia_decoupling", False), ("feedforward.twist", True), ("feedforward.wrench", False),
                  ("feedforward.accel", False)]
         if not args.preset:
-            for a in AXES:
-                gains += [(f"gains.k_pos_{a}", float(args.kv)), (f"gains.d_pos_{a}", float(args.dv))]
+            K, D = per_axis(args.kv, "--kv"), per_axis(args.dv, "--dv")
+            for i, a in enumerate(AXES):
+                gains += [(f"gains.k_pos_{a}", float(K[i])), (f"gains.d_pos_{a}", float(D[i]))]  # d < 0: auto
         params.set_parameters(gains)
         self.params = params
         self.gains_set = gains
@@ -159,6 +179,7 @@ class RobotBackend:
         self.plant.set_interface_limits((first.x_i - reach, first.x_i + reach))
         self.start = first.x_i.copy()
         self.hold_q = first.ee_orientation.copy()  # (x, y, z, w): the orientation the OSC holds
+        self.q0 = self.robot.q.copy()  # start joints, for the model's inertia
 
     def begin(self) -> np.ndarray:
         return self.start.copy()
@@ -249,6 +270,73 @@ def analyse(robot: pd.DataFrame, tgt: pd.DataFrame, segs, start: np.ndarray, amp
         r["sines"] = sines
         results[ax] = r
     return results, series
+
+
+def inertia_fit(robot: pd.DataFrame, segs, min_hz: float = 2.0) -> dict | None:
+    """One full 3 × 3 Λ̂ from every sine at ``min_hz`` or faster:
+    ``F = Λ̂ a + B v + F_c tanh(v / v0) + c``, per-axis viscous and Coulomb terms, signals low-passed
+    at 15 Hz with zero phase. ``None`` without enough samples."""
+    from scipy.signal import butter, filtfilt
+
+    t = robot.t.to_numpy()
+    keep = np.zeros(len(t), bool)
+    for (_, kind, t0, t1, fr) in segs:
+        if kind == "sine" and fr >= min_hz:
+            keep |= (t >= t0) & (t < t1)
+    if keep.sum() < 500:
+        return None
+    dt = float(np.median(np.diff(t)))
+    b, a = butter(2, min(0.99, 15.0 * 2 * dt))
+    v = np.stack([filtfilt(b, a, robot[f"v{ax}"].to_numpy()) for ax in AXES], 1)
+    acc = np.stack([filtfilt(b, a, np.gradient(v[:, i], t)) for i in range(3)], 1)
+    f = np.stack([filtfilt(b, a, robot[f"f{ax}"].to_numpy()) for ax in AXES], 1)
+    X = np.hstack([acc[keep], v[keep], np.tanh(v[keep] / 0.005), np.ones((keep.sum(), 1))])
+    coef, *_ = np.linalg.lstsq(X, f[keep], rcond=None)
+    lam = 0.5 * (coef[:3].T + coef[:3])
+    rest = X[:, 3:] @ coef[3:]  # the friction and offset terms, kept when a model's Λ replaces Λ̂
+
+    def residual(L):
+        return np.sqrt(np.mean((f[keep] - acc[keep] @ L.T - rest) ** 2, axis=0))
+
+    pred = X @ coef
+    r2 = 1 - np.sum((f[keep] - pred) ** 2, 0) / np.sum((f[keep] - f[keep].mean(0)) ** 2, 0)
+    return {"Lambda_hat": lam, "eig": np.linalg.eigvalsh(lam), "r2": r2, "residual": residual(lam), "_residual": residual,
+            "samples": int(keep.sum()), "acc_p95": float(np.percentile(np.linalg.norm(acc[keep], axis=1), 95))}
+
+
+def model_inertia(q0, start_position) -> tuple[dict, str] | tuple[None, str]:
+    """RIM's model at the start joints (``q0``; else IK from home to ``start_position``)."""
+    try:
+        sys.path.insert(0, str(HERE.parent / "tools"))
+        from lambda_map import Inertia, line_joints
+
+        inertia = Inertia()
+        if q0 is None:
+            q0 = line_joints(inertia, np.asarray(inertia.fr3.home_config, float), start_position, 40)[-1]
+            note = "start joints from IK from home (approximate: the run did not log q0)"
+        else:
+            note = "at the run's start joints"
+        return inertia.at(q0), note
+    except Exception as e:  # noqa: BLE001 - the report must not depend on the model being available
+        return None, f"model not available ({e!r})"
+
+
+def inertia_report(fit: dict | None, model: dict | None, note: str) -> str:
+    if fit is None:
+        return "inertia (3 × 3): not enough sine samples at ≥ 2 Hz"
+    np.set_printoptions(precision=2, suppress=True)
+    lines = [f"inertia (3 × 3), sines ≥ 2 Hz: {fit['samples']} samples, |a| p95 {fit['acc_p95']:.1f} m/s², "
+             f"R² {np.round(fit['r2'], 3)}"]
+    rows = [("fitted Λ̂", fit["Lambda_hat"], fit["residual"])]
+    if model is not None:
+        rows += [("RIM, rotation free", model["Lambda"], fit["_residual"](model["Lambda"])),
+                 ("rotation held", model["Lambda_held"], fit["_residual"](model["Lambda_held"]))]
+    lines.append("                     | Λxx   Λyy   Λzz   Λxz  | eigenvalues [kg]     | force residual x y z [N]")
+    for name, L, res in rows:
+        lines.append(f"  {name:19}| {L[0, 0]:5.2f} {L[1, 1]:5.2f} {L[2, 2]:5.2f} {L[0, 2]:5.2f} | "
+                     f"{np.round(np.linalg.eigvalsh(L), 2)!s:20} | {np.round(res, 2)}")
+    lines.append(f"  (model {note})")
+    return "\n".join(lines)
 
 
 def report(results: dict) -> str:
@@ -356,8 +444,9 @@ def plot_orientation(robot: pd.DataFrame, tgt: pd.DataFrame, hold_q, length: flo
 def main(argv: list[str] | None = None) -> None:
     p = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     p.add_argument("--sim", action="store_true", help="simulated FR3 instead of the robot")
-    p.add_argument("--kv", type=float, default=1000.0, help="stiffness on every axis [N/m]")
-    p.add_argument("--dv", type=float, default=70.0, help="damping on every axis [N·s/m]")
+    p.add_argument("--kv", type=float, nargs="+", default=[1000.0], help="stiffness, every axis or x y z [N/m]")
+    p.add_argument("--dv", type=float, nargs="+", default=[70.0],
+                   help="damping, every axis or x y z [N·s/m]; negative = the controller's auto damping")
     p.add_argument("--preset", action="store_true", help="keep the --osc-params gains (no --kv/--dv override)")
     p.add_argument("--axes", default="xyz", help="axes to test, in order")
     p.add_argument("--step", type=float, default=0.01, help="step size [m]")
@@ -372,57 +461,81 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--controller", default="osc_controller")
     p.add_argument("--osc-params", default="python/fr3_haptic/configs/osc_teleop.yaml")
     p.add_argument("--tool-length", type=float, default=0.1, help="tool beyond the end-effector point, for the tip error [m]")
+    p.add_argument("--analyse", type=Path, default=None, help="re-analyse this saved run instead of running")
     p.add_argument("--out", type=Path, default=None, help="run directory; default ~/data/franka/rim-delays/<backend>/pretests/t1_<time>")
     args = p.parse_args(argv)
 
-    from haptic_teleop import RateTicker
+    if args.analyse is not None:
+        out = args.analyse
+        saved = json.loads((out / "results.json").read_text())
+        q0 = saved.get("q0")
+        for key in ("sim", "kv", "dv", "preset", "step", "amp", "freqs", "cycles", "rest", "axes", "start_position", "tool_length"):
+            if key in saved["args"]:
+                value = saved["args"][key]
+                setattr(args, key, [value] if key in ("kv", "dv") and not isinstance(value, list) else value)
+        robot = pd.read_csv(out / "robot.csv")
+        tgt = pd.read_csv(out / "target.csv")
+        segs_rel, _ = build_profile(args.step, args.amp, args.freqs, args.cycles, args.rest, args.axes)
+        start = tgt[["xx", "xy", "xz"]].to_numpy()[0]
+        hold_q = robot[["qx", "qy", "qz", "qw"]].to_numpy()[0] if "qw" in robot else None
+    else:
+        from haptic_teleop import RateTicker
 
-    backend_name = "sim" if args.sim else "robot"
-    out = args.out or OUT / backend_name / "pretests" / datetime.datetime.now().strftime("t1_%Y%m%d_%H%M%S")
-    segs, total = build_profile(args.step, args.amp, args.freqs, args.cycles, args.rest, args.axes)
-    print(f"[T1] {backend_name}: {len(args.axes)} axes, {total:.0f} s; "
-          f"{'preset gains' if args.preset else f'K = {args.kv:g} N/m, D = {args.dv:g} N·s/m on every axis'}")
+        backend_name = "sim" if args.sim else "robot"
+        out = args.out or OUT / backend_name / "pretests" / datetime.datetime.now().strftime("t1_%Y%m%d_%H%M%S")
+        segs, total = build_profile(args.step, args.amp, args.freqs, args.cycles, args.rest, args.axes)
+        print(f"[T1] {backend_name}: {len(args.axes)} axes, {total:.0f} s; "
+              f"{'preset gains' if args.preset else f'K = {per_axis(args.kv, chr(75))} N/m, D = {per_axis(args.dv, chr(68))} N·s/m (x, y, z)'}")
 
-    backend = SimBackend(args) if args.sim else RobotBackend(args)
-    start = backend.begin()
-    ticker = RateTicker(args.command_hz)
-    rows = []
-    t0 = time.monotonic()
-    try:
-        while True:
-            now = time.monotonic()
-            off, vel, axis, kind = target_at(segs, now - t0, args.amp)
-            if kind == "done":
-                break
-            backend.aim(start + off, vel)
-            rows.append((now, *(start + off), *vel, axis))
-            ticker.sleep()
-    except KeyboardInterrupt:
-        print("\n[T1] interrupted: analysing what was recorded")
-    robot = backend.end()
-    tgt = pd.DataFrame(rows, columns=["t", "xx", "xy", "xz", "vx", "vy", "vz", "axis"])
-    robot = robot[(robot.t >= t0)].copy()
-    tgt.t -= t0
-    robot.t -= t0
-    segs_rel = segs  # segment times are already relative to t0
+        backend = SimBackend(args) if args.sim else RobotBackend(args)
+        start = backend.begin()
+        ticker = RateTicker(args.command_hz)
+        rows = []
+        t0 = time.monotonic()
+        try:
+            while True:
+                now = time.monotonic()
+                off, vel, axis, kind = target_at(segs, now - t0, args.amp)
+                if kind == "done":
+                    break
+                backend.aim(start + off, vel)
+                rows.append((now, *(start + off), *vel, axis))
+                ticker.sleep()
+        except KeyboardInterrupt:
+            print("\n[T1] interrupted: analysing what was recorded")
+        robot = backend.end()
+        tgt = pd.DataFrame(rows, columns=["t", "xx", "xy", "xz", "vx", "vy", "vz", "axis"])
+        robot = robot[(robot.t >= t0)].copy()
+        tgt.t -= t0
+        robot.t -= t0
+        segs_rel = segs  # segment times are already relative to t0
+        q0 = None if backend.q0 is None else backend.q0.tolist()
+        hold_q = getattr(backend, "hold_q", None)
 
     gains_set = {}
     if not args.preset:
-        gains_set = {**{f"k_pos_{a}": args.kv for a in AXES}, **{f"d_pos_{a}": args.dv for a in AXES}}
+        K, D = per_axis(args.kv, "--kv"), per_axis(args.dv, "--dv")
+        gains_set = {**{f"k_pos_{a}": K[i] for i, a in enumerate(AXES)},
+                     **{f"d_pos_{a}": (D[i] if D[i] >= 0 else None) for i, a in enumerate(AXES)}}
     results, series = analyse(robot, tgt, segs_rel, start, args.amp, gains_set)
     text = report(results)
-    if "qw" in robot:
-        text += "\n\n" + orientation_report(robot, tgt, backend.hold_q, args.tool_length)
+    fit = inertia_fit(robot, segs_rel)
+    model, note = model_inertia(q0, args.start_position) if fit is not None and not args.sim else (None, "sim")
+    text += "\n\n" + inertia_report(fit, model, note)
+    if "qw" in robot and hold_q is not None:
+        text += "\n\n" + orientation_report(robot, tgt, hold_q, args.tool_length)
     print(text)
     out.mkdir(parents=True, exist_ok=True)
     robot.to_csv(out / "robot.csv", index=False)
     tgt.to_csv(out / "target.csv", index=False)
+    inertia = None if fit is None else {k: (v.tolist() if isinstance(v, np.ndarray) else v) for k, v in fit.items()
+                                        if not k.startswith("_")}
     (out / "results.json").write_text(json.dumps({"args": {k: (str(v) if isinstance(v, Path) else v) for k, v in vars(args).items()},
-                                                  "results": results}, indent=2, default=float))
+                                                  "q0": q0, "results": results, "inertia": inertia}, indent=2, default=float))
     (out / "report.txt").write_text(text + "\n")
     paths = plot(series, results, segs_rel, start, out)
-    if "qw" in robot:
-        paths += plot_orientation(robot, tgt, backend.hold_q, args.tool_length, out)
+    if "qw" in robot and hold_q is not None:
+        paths += plot_orientation(robot, tgt, hold_q, args.tool_length, out)
     print(f"[T1] -> {out} ({paths[0].name})")
 
 

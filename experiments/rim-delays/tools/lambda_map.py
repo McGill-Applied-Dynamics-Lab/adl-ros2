@@ -62,14 +62,22 @@ class Inertia:
         self._tcp = self.adapter._model.getFrameId(self.fr3.target_frame)
 
     def at(self, q) -> dict:
-        """``Lambda`` (3, 3), interface point ``x``, ``sigma_min`` of the translational Jacobian, and
-        the ``fr3_hand_tcp`` pose (``tcp_position``, ``tcp_rotation``) at joints ``q``."""
+        """``Lambda`` (3, 3; rotation free, what RIM uses), ``Lambda_held`` (3, 3; the translation
+        block of the 6-D task inertia, rotation held rigid), interface point ``x``, ``sigma_min`` of
+        the translational Jacobian, and the ``fr3_hand_tcp`` pose (``tcp_position``,
+        ``tcp_rotation``) at joints ``q``."""
+        import pinocchio as pin
+
         q = np.asarray(q, dtype=float)
         zeros = np.zeros_like(q)
         model = self.adapter.compute_at(q, zeros, zeros)
         tcp = self.adapter._data.oMf[self._tcp]
+        a = self.adapter
+        J6 = pin.computeFrameJacobian(a._model, a._data, q, a._ee_frame_id, pin.LOCAL_WORLD_ALIGNED)
+        held = np.linalg.inv(J6 @ np.linalg.inv(a._data.M) @ J6.T)[:3, :3]
         return {
             "Lambda": self._calc.compute(model).M_eff,
+            "Lambda_held": held,
             "x": model.x_i,
             "sigma_min": float(np.linalg.svd(model.J_i, compute_uv=False)[-1]),
             "tcp_position": tcp.translation.copy(),
