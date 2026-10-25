@@ -40,7 +40,7 @@ from geometry_msgs.msg import WrenchStamped
 from nav_msgs.msg import Odometry
 from pyrim import DynModel, InterfaceFrame
 from rclpy.executors import SingleThreadedExecutor
-from rclpy.qos import qos_profile_sensor_data
+from rclpy.qos import QoSProfile, qos_profile_sensor_data
 from scipy.spatial.transform import Rotation
 
 from .adapters import RobotModelAdapter
@@ -119,7 +119,11 @@ class FR3Plant:
             haptic loop in another process.
     """
 
-    _MAX_PENDING = 16
+    QUEUE_DEPTH = 50
+    """Subscription queue per topic [messages = ms at 1 kHz]. The sensor-data default (5) dropped
+    2-19 % of controller ticks whenever the executor fell 5 ms behind (measured 2026-10-23); a
+    burst now arrives late (at most this many ms) instead of being lost."""
+    _MAX_PENDING = 2 * QUEUE_DEPTH  # unpaired halves kept: a queued burst of one topic must not evict them
 
     def __init__(
         self,
@@ -174,9 +178,15 @@ class FR3Plant:
             self._executor.add_node(node)
             self._spin_thread = threading.Thread(target=self._spin, name="fr3_plant_spin", daemon=True)
         self._node = node
+        qos = QoSProfile(
+            depth=self.QUEUE_DEPTH,
+            reliability=qos_profile_sensor_data.reliability,
+            durability=qos_profile_sensor_data.durability,
+            history=qos_profile_sensor_data.history,
+        )
         self._subs = [
-            node.create_subscription(Odometry, ee_state_topic, self._on_ee_state, qos_profile_sensor_data),
-            node.create_subscription(WrenchStamped, task_wrench_topic, self._on_task_wrench, qos_profile_sensor_data),
+            node.create_subscription(Odometry, ee_state_topic, self._on_ee_state, qos),
+            node.create_subscription(WrenchStamped, task_wrench_topic, self._on_task_wrench, qos),
         ]
         if self._spin_thread is not None:
             self._spin_thread.start()
