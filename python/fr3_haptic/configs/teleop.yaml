@@ -88,4 +88,4 @@ run:
   seconds: 99999.0
   output_dir: /home/athena/csirois/data/franka/fr3_haptic
   notes: ""
-  robot_log_hz: 50.0         # robot state, commanded torques, task error/wrench, EE state [Hz]; 0 disables
+  robot_log_hz: 0.0         # robot state, commanded torques, task error/wrench, EE state [Hz]; 0 disables. Off: it starves the plant executor (issue #53)

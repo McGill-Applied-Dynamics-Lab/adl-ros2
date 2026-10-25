@@ -119,11 +119,12 @@ class FR3Plant:
             haptic loop in another process.
     """
 
-    QUEUE_DEPTH = 50
-    """Subscription queue per topic [messages = ms at 1 kHz]. The sensor-data default (5) dropped
-    2-19 % of controller ticks whenever the executor fell 5 ms behind (measured 2026-10-23); a
-    burst now arrives late (at most this many ms) instead of being lost."""
-    _MAX_PENDING = 2 * QUEUE_DEPTH  # unpaired halves kept: a queued burst of one topic must not evict them
+    QUEUE_DEPTH = 5
+    """Subscription queue per topic [messages = ms at 1 kHz]. Keep it short: when the executor is
+    short of throughput on average (2-19 % of ticks lost on 2026-10-23), a deeper queue does not
+    save samples, it delays them — at 50 the proxy-rim run received samples ~45 ms late, an
+    extra feedback delay the plant age does not show. Fix the executor's load instead."""
+    _MAX_PENDING = 16  # unpaired halves kept
 
     def __init__(
         self,
