@@ -12,6 +12,7 @@ A run is ``<run_dir>/metadata.json`` + ``<run_dir>/samples.mcap`` (``fr3_teleop 
 | ``f_table`` | table force on the robot, up [N] (sim: the contact model; robot: ``-fz`` clipped at 0, quasi-static) |
 | ``qx, qy, qz, qw`` | tool orientation quaternion, base frame (robot runs that logged it; absent in sim) |
 | ``vx, vy, vz`` | tool point velocity [m/s] (robot: ``ee_velocity`` when logged, else differentiated) |
+| ``t_ctrl`` | the controller's stamp of each sample [s] (robot only) |
 
 The ``haptic`` stream's ``ts`` is rebuilt from its ``mono_s`` column when the run logged it, so it
 is on the same clock as the robot side (``fr3_teleop`` saves ``t0_mono_s``); ``target`` is every
@@ -79,6 +80,8 @@ def load_run(
         if "ee_orientation_0" in d:
             for k, c in enumerate(("qx", "qy", "qz", "qw")):
                 robot[c] = d[f"ee_orientation_{k}"]
+        if "t_s" in d:
+            robot["t_ctrl"] = d.t_s  # the controller's own stamp [s]: gaps are lost controller ticks
         if "ee_velocity_0" in d:
             for k, a in enumerate("xyz"):
                 robot[f"v{a}"] = d[f"ee_velocity_{k}"]

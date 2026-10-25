@@ -4,13 +4,18 @@ Prints the run's configuration, every stream's size and rate, the haptic loop's 
 guard, period, plant age), the measured haptic → robot lag against the configured command delay,
 e_F and the energy balance (`metrics.py`), and Λ₀ at the start joints; then a list of warnings.
 
+Saves the report and the run's figures (`run_plots.py`) next to its data, to compare runs:
+``<run dir>/analysis/check.md`` (the report, the figures embedded) and ``<run dir>/analysis/*.png``.
+
     pixi run -e humble python experiments/rim-delays/analysis/check_run.py <run dir> [<run dir> ...]
+    pixi run -e humble python experiments/rim-delays/analysis/check_run.py <run dir> --show-plot   # also open the figures
     pixi run -e humble python experiments/rim-delays/analysis/check_run.py <run dir> --no-lambda   # skip the Pinocchio model
 """
 
 from __future__ import annotations
 
 import argparse
+import datetime
 import sys
 from pathlib import Path
 
@@ -20,12 +25,20 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
 sys.path.insert(0, str(HERE.parent / "tools"))
 
+import matplotlib.pyplot as plt  # noqa: E402
 import metrics as M  # noqa: E402
+import run_plots as P  # noqa: E402
 from runs import find, load_run  # noqa: E402
 
 HAPTIC_HZ_MIN = 990.0  # below this the haptic loop missed ticks
 PLANT_HZ_MIN = 900.0  # robot side: every controller tick should be recorded (1 kHz)
 LAG_TOLERANCE_MS = 5.0  # measured lag minus configured command delay, median
+FIGURES = {
+    "positions": "Position",
+    "forces": "Force: felt vs robot, and e_F",
+    "timing": "Timing",
+    "energy_and_model": "Energy and model",
+}  # run_plots function -> title in check.md
 
 
 def rate(ts) -> float:
@@ -34,8 +47,17 @@ def rate(ts) -> float:
     return (len(ts) - 1) / (ts[-1] - ts[0]) if len(ts) > 1 and ts[-1] > ts[0] else float("nan")
 
 
-def line(label: str, value: str) -> None:
-    print(f"  {label:<28} {value}")
+class Report:
+    """The report's lines, printed and written to ``check.md`` the same way."""
+
+    def __init__(self) -> None:
+        self.lines: list[str] = []
+
+    def head(self, text: str) -> None:
+        self.lines.append(f"  {text}")
+
+    def line(self, label: str, value: str) -> None:
+        self.lines.append(f"  {label:<28} {value}")
 
 
 def configured_command_delay_ms(meta: dict) -> float | None:
@@ -61,16 +83,16 @@ def lambda0(run: dict, use_model: bool) -> np.ndarray | None:
     return Inertia(find(run["meta"], "tool_tip_offset")).at(q0)["Lambda"]
 
 
-def check(run_dir: Path, use_model: bool) -> list[str]:
-    """Print the report for one run; returns its warnings."""
+def check(run_dir: Path, use_model: bool, run: dict | None = None) -> tuple[list[str], list[str]]:
+    """The report for one run, as ``(lines, warnings)``. ``run``: the loaded run, if at hand."""
+    report = Report()
+    line = report.line
     warn: list[str] = []
-    run = load_run(run_dir)
+    run = load_run(run_dir) if run is None else run
     if run is None:
-        print(f"[check_run] {run_dir}: incomplete (no metadata.json or samples.mcap)")
-        return [f"{run_dir.name}: incomplete"]
+        return [f"  {run_dir}: incomplete (no metadata.json or samples.mcap)"], [f"{run_dir.name}: incomplete"]
     meta, h = run["meta"], run["haptic"]
     np.set_printoptions(precision=3, suppress=True)
-    print(f"\n[check_run] {run_dir}")
 
     # -- configuration
     delays = meta.get("delays") or {}
@@ -100,7 +122,7 @@ def check(run_dir: Path, use_model: bool) -> list[str]:
         warn.append("no controller_params in the metadata (run recorded before they were logged)")
 
     # -- streams
-    print("  streams:")
+    report.head("streams:")
     streams = {"haptic": h, "robot": run["robot"], "command": run["command"], "target": run["target"], "model": run["model"]}
     for name, df in streams.items():
         if df is None or not len(df):
@@ -109,19 +131,30 @@ def check(run_dir: Path, use_model: bool) -> list[str]:
         line(f"  {name}", f"{len(df):7d} rows, {rate(df.ts):7.1f} Hz, {df.ts.iloc[0]:6.2f} → {df.ts.iloc[-1]:6.2f} s")
     if h is None or not len(h):
         warn.append("no haptic log")
-        return warn
+        return report.lines, warn
     for name in ("target",):
         if streams[name] is None:
             warn.append(f"no {name} stream (run recorded before it was logged): no e_F")
     if find(meta, "method") == "proxy-rim" and run["model"] is None:
         warn.append("proxy-rim without a model stream")
     robot_hz = rate(run["robot"].ts) if run["robot"] is not None else float("nan")
+    r = run["robot"]
+    if r is not None and "t_ctrl" in r and not meta.get("sim"):
+        stamp = r.t_ctrl.to_numpy()
+        order = np.argsort(stamp)
+        missing = int(np.sum(np.maximum(np.round(np.diff(stamp[order]) * 1e3) - 1, 0)))
+        lost = missing / (len(stamp) + missing)
+        latency = 1e3 * (r.ts.to_numpy() - stamp)  # receive time minus controller stamp, up to a clock offset
+        latency -= latency.min()
+        line("  controller ticks lost", f"{100 * lost:.1f} %")
+        line("  receive latency p50/p99/max", f"{np.median(latency):.1f} / {np.percentile(latency, 99):.1f} / "
+             f"{latency.max():.1f} ms (above the fastest sample)")
     new_format = h is not None and "mono_s" in h  # older runs recorded only the decimated plant samples
     if not meta.get("sim") and new_format and not robot_hz >= PLANT_HZ_MIN:
         warn.append(f"robot recorded at {robot_hz:.0f} Hz (< {PLANT_HZ_MIN:g}): controller ticks lost")
 
     # -- haptic loop health
-    print("  haptic loop:")
+    report.head("haptic loop:")
     if "mono_s" in h:
         period_ms = 1e3 * np.diff(h.mono_s.to_numpy())
         line("  period p50 / p99 / max", f"{np.median(period_ms):.2f} / {np.percentile(period_ms, 99):.2f} / {period_ms.max():.2f} ms")
@@ -147,12 +180,12 @@ def check(run_dir: Path, use_model: bool) -> list[str]:
         warn.append(f"stopped by the watchdog: {meta['stop_reason']}")
 
     if run["target"] is None or run["robot"] is None:
-        return warn
+        return report.lines, warn
 
     # -- alignment: when each haptic tick's action reached the robot
     e = M.unfelt_force(run)
     lag = 1e3 * e["lag"][np.isfinite(e["lag"])]
-    print("  haptic → robot:")
+    report.head("haptic → robot:")
     if len(lag):
         line("  measured lag p1 / p50 / p99", f"{np.percentile(lag, 1):.1f} / {np.median(lag):.1f} / {np.percentile(lag, 99):.1f} ms")
         expected = configured_command_delay_ms(meta)
@@ -165,7 +198,7 @@ def check(run_dir: Path, use_model: bool) -> list[str]:
         warn.append("no haptic tick reached the robot")
 
     # -- metrics
-    print("  metrics:")
+    report.head("metrics:")
     axes = "xyz" if e["e_F"].shape[1] == 3 else [f"i{k}" for k in range(e["e_F"].shape[1])]
     line("  e_F RMS per axis", "  ".join(f"{a} {v:.2f}" for a, v in zip(axes, M.rms(e["e_F"]))) + " N")
     line("  felt |f| RMS / max", f"{M.rms(np.linalg.norm(e['f'], axis=1)):.2f} / {np.nanmax(np.linalg.norm(e['f'], axis=1)):.2f} N")
@@ -178,17 +211,83 @@ def check(run_dir: Path, use_model: bool) -> list[str]:
     if lam is not None:
         w, v = np.linalg.eigh(lam)
         line("Λ₀ eigenvalues", f"{w} kg (heaviest {v[:, -1]}, lightest {v[:, 0]})")
-    return warn
+    return report.lines, warn
+
+
+def verdict(warnings: list[str]) -> list[str]:
+    return ["  OK"] if not warnings else ["  WARNINGS:"] + [f"    - {w}" for w in warnings]
+
+
+def save_figures(run: dict, out: Path, show: bool) -> list[str]:
+    """Save every figure of the run as ``<out>/<name>.png``; returns the names saved. A figure that
+    fails (a stream missing) is skipped with a note."""
+    saved = []
+    for name in FIGURES:
+        try:
+            fig = getattr(P, name)(run)
+        except Exception as e:  # noqa: BLE001 - one missing stream must not lose the other figures
+            print(f"[check_run] {name}: not plotted ({e!r})")
+            continue
+        fig.savefig(out / f"{name}.png", dpi=150, bbox_inches="tight")
+        saved.append(name)
+        if not show:
+            plt.close(fig)
+    return saved
+
+
+def write_markdown(path: Path, run_dir: Path, lines: list[str], warnings: list[str], figures: list[str]) -> None:
+    text = [
+        f"# Check: {run_dir.name}",
+        "",
+        f"`{run_dir}` — checked {datetime.datetime.now():%Y-%m-%d %H:%M}",
+        "",
+        "**OK**" if not warnings else "**Warnings**\n\n" + "\n".join(f"- {w}" for w in warnings),
+        "",
+        "## Report",
+        "",
+        "```text",
+        *[ln[2:] if ln.startswith("  ") else ln for ln in lines],
+        "```",
+    ]
+    for name in figures:
+        text += ["", f"## {FIGURES[name]}", "", f"![{name}]({name}.png)"]
+    path.write_text("\n".join(text) + "\n")
+
+
+def use_gui_backend() -> None:
+    """``runs.py`` selects the non-interactive Agg backend; switch to a GUI one to show figures."""
+    for backend in ("QtAgg", "TkAgg"):
+        try:
+            plt.switch_backend(backend)
+            return
+        except Exception:  # noqa: BLE001 - try the next one
+            continue
+    print("[check_run] no GUI backend (Qt, Tk): figures are saved, not shown")
 
 
 def main(argv=None) -> None:
     p = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     p.add_argument("runs", type=Path, nargs="+")
     p.add_argument("--no-lambda", action="store_true", help="do not compute Λ₀ from q0 (no Pinocchio model)")
+    p.add_argument("--show-plot", action="store_true", help="also open the figures (they are saved either way)")
     args = p.parse_args(argv)
+    if args.show_plot:
+        use_gui_backend()
     for run_dir in args.runs:
-        warnings = check(run_dir.expanduser(), use_model=not args.no_lambda)
-        print("  " + ("OK" if not warnings else "WARNINGS:\n    - " + "\n    - ".join(warnings)))
+        run_dir = run_dir.expanduser()
+        run = load_run(run_dir)
+        lines, warnings = check(run_dir, use_model=not args.no_lambda, run=run)
+        print(f"\n[check_run] {run_dir}")
+        print("\n".join(lines + verdict(warnings)))
+        if run is None:
+            continue
+        out = run_dir / "analysis"
+        out.mkdir(exist_ok=True)
+        figures = save_figures(run, out, args.show_plot)
+        write_markdown(out / "check.md", run_dir, lines, warnings, figures)
+        print(f"[check_run] saved {out / 'check.md'} and {len(figures)} figures")
+    if args.show_plot:
+        plt.show()
 
 
 if __name__ == "__main__":
