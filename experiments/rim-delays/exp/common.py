@@ -39,6 +39,10 @@ REPO = RIM.parents[1]
 CONF = REPO / "python/fr3_haptic/configs/teleop.yaml"
 OUT = Path("~/data/franka/rim-delays").expanduser()
 TRACE_RTT_MS = {"5g": 45.0}  # rough mean round trip of a replayed trace, for the run length [ms]
+# Frozen feedback rates (tools/pilot_fm.py on pilots/fm_circle2): robot state 500 Hz (M1 ripple
+# K|v|/f_m 0.72 N), RIM model 25 Hz (Λ change 2.1 % per update, 0.12 N RMS from holding); targets
+# at f_t = f_h = 1 kHz. Every run gets them.
+RATES = {"model_update_hz": 500.0, "rim_update_hz": 25.0, "command_hz": 1000.0}
 
 
 @dataclass
@@ -211,7 +215,7 @@ def run_experiment(exp: str, conditions: list[Condition], base_flags: dict, anal
     print(f"[exp] {exp}: {len(todo)} runs -> {out_dir}  (session list: {session})")
     done: list[Path] = []
     for i, c in enumerate(todo, 1):
-        flags = {**base_flags, **c.flags, "method": c.method, **delay_flags(c.rtt)}
+        flags = {**RATES, **base_flags, **c.flags, "method": c.method, **delay_flags(c.rtt)}
         if "seconds" not in flags:
             script_s = script_seconds(flags)
             if script_s is None:
@@ -268,6 +272,20 @@ def collect(sources) -> list[Path]:
     return runs
 
 
+def method_key(run_dir: Path, method: str | None) -> str | None:
+    """The method as the notebooks group it: ``proxy-rim`` (orientation held) or ``proxy-rim-free``
+    (rotation free, also every run from before ``--rim-hold-orientation`` existed), from the run's
+    metadata; other methods unchanged."""
+    if method != "proxy-rim":
+        return method
+    meta_path = Path(run_dir) / "metadata.json"
+    if not meta_path.exists():
+        return method
+    meta = json.loads(meta_path.read_text())
+    meta = meta.get("metadata", meta)
+    return "proxy-rim" if meta.get("args", {}).get("rim_hold_orientation") else "proxy-rim-free"
+
+
 def load_table(runs, analyse=None):
     """One row per run: its condition (``experiment.json``) and metrics (``analysis/metrics.json``,
     recomputed with ``analyse`` when given or missing)."""
@@ -284,6 +302,6 @@ def load_table(runs, analyse=None):
             metrics = analyse(run) if (analyse is not None and run is not None) else {}
         else:
             metrics = json.loads(mpath.read_text())
-        rows.append({"run": r.name, "dir": str(r), "method": cond.get("method"), "rtt": cond.get("rtt"),
+        rows.append({"run": r.name, "dir": str(r), "method": method_key(r, cond.get("method")), "rtt": cond.get("rtt"),
                      "label": cond.get("label"), **{k: v for k, v in metrics.items() if not isinstance(v, (list, dict))}})
     return pd.DataFrame(rows)

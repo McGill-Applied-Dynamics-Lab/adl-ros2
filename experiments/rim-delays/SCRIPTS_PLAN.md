@@ -98,3 +98,8 @@ penetration at onset, overshoot, robot peak force, bounce count, settling time, 
 - Friction is RIM's floor: Coulomb ±6.2 N on z (flat in speed, flips with direction, identical
   under ZOH), plus a +1.3 N constant z bias — not payload (~10 g mounted): torque-sensor offset or
   gravity-model miscalibration, open. E1: pick frequencies/amplitudes with Λa ≫ 6 N.
+
+**B3 (2026-10-26): f_m frozen.** `tools/pilot_fm.py` on `pilots/fm_circle2` (proxy-rim, model at
+1 kHz, 1.5 s circle): robot state 500 Hz (M1 hold ripple K|v|/f_m 0.72 N at p95 speed), RIM model
+25 Hz (Λ change 2.1 % per update p95, 0.12 N RMS from holding). `rim_update_hz: 25` in
+`teleop.yaml`; `exp/common.py` pins both (`RATES`) on every experiment run.

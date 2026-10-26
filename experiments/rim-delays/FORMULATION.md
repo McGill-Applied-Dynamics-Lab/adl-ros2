@@ -55,6 +55,27 @@ are held between updates (and arrive $T_f$ late).
 **Contact.** Unilateral and rigid, at $z = s$: the model's position is projected onto $z \ge s$ and
 its velocity into the table is removed (`pyrim.RIMIntegrator`).
 
+**Delays.** Each link is a latest-value delay line: an item sent at $t$ is delivered at
+$t + d(t)$, and an item that arrives after a newer one is discarded, so arrivals never go back in
+time. A delay condition is a round trip $T$, split evenly, $T_c = T_f = T/2$. Every method sees
+the same delay sequence at a given condition: one seed per condition, $s$ on the feedback link and
+$s + 1$ on the command link.
+
+- **Constant** ($T$ = 0, 850 ms, 2.6 s): $d = T/2$ on each link.
+- **5G**: a replay of the lab's 5G round-trip measurements (`src/teleop/network_sim/data/5G-data.csv`,
+  condition 5G: four recordings from 2022, 21 000 samples, median 40 ms, p95 74 ms, p99 81 ms,
+  max 637 ms). Each link replays the trace in order, from a start index drawn from its seed, one
+  sample per 10 ms of send time, halved to a one-way delay:
+  $d(t) = \tfrac12\,\tau_{k_0 + \lfloor (t - t_0)/10\,\text{ms} \rfloor}$. The two links read the
+  trace from different starts, so the round trip is the sum of two independent halves, not one
+  recorded round trip. The trace's sampling period is unknown and consecutive samples are
+  uncorrelated, so the 10 ms period sets how fast the delay changes; it is a choice, stated as such.
+  Packet loss is not modelled.
+
+The rates at which each signal is sent, before its delay: haptic loop and targets
+$f_h = f_t = 1$ kHz; robot state (M1, M2) 500 Hz; RIM model (M5) 25 Hz. A received value is held
+until the next delivery.
+
 ---
 
 ## 2. Methods

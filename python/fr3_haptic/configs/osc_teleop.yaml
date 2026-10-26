@@ -65,8 +65,8 @@ filter.joint_velocity: 1.0
 filter.target_pose: 1.0
 
 log.enabled: true
-log.timing: false
+log.timing: true
 log.robot_state: false
 log.targets: false
 log.task_space: false
-log.controller_parameters: true
+log.controller_parameters: false

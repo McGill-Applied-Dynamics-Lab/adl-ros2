@@ -14,9 +14,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from runs import COLORS, INK_2, LABELS, save  # noqa: E402,F401
 
 DELAYS = ["0", "5g", "850", "2600"]  # round trips, in plot order
-METHOD_ORDER = ["zoh", "proxy-god-object", "proxy-fixed-mass", "proxy-rim"]
+METHOD_ORDER = ["zoh", "proxy-god-object", "proxy-fixed-mass", "proxy-rim-free", "proxy-rim"]
 LABELS = {**LABELS, "zoh": "M1 P-P (ZOH)", "proxy-god-object": "M3 God-object", "proxy-fixed-mass": "M4 Fixed mass",
-          "proxy-rim": "M5 RIM"}
+          "proxy-rim": "M5 RIM (orientation held)", "proxy-rim-free": "M5 RIM (rotation free)"}
+COLORS = {**COLORS, "proxy-rim-free": "#008300"}  # categorical slot 6 (slots 1-5 are the other methods)
 
 
 def delay_key(rtt) -> str:

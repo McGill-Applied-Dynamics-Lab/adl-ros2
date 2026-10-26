@@ -30,9 +30,9 @@ rates:
   # robot -> haptic: the robot's state. The controller measures at 1 kHz; this many per second
   # reach the haptic loop (0 = every controller tick).
   model_update_hz: 500.0
-  rim_update_hz: null        # RIM dynamics model (proxy-rim); null = model_update_hz (and at most that)
+  rim_update_hz: 25.0        # RIM dynamics model (proxy-rim); null = model_update_hz (and at most that). 25 Hz: pilot_fm (2026-10-26)
   # haptic -> robot: targets sent to osc_controller; null = model_update_hz
-  command_hz: null
+  command_hz: 1000.0        # f_t = f_h (EXP_PLAN frozen values)
 
 delays:                      # simulated, per link; 0 = none (the link is bypassed)
   feedback_delay_ms: 250.0     # robot -> haptic: base delay [ms]

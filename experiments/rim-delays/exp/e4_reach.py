@@ -42,7 +42,7 @@ def conditions() -> list[Condition]:
     n = np.subtract(LINE_END, START)
     out = []
     for m in METHODS:
-        flags = {"proxy_mass": round(mass_along(lam0["Lambda"], n), 3)} if m == "proxy-fixed-mass" else {}
+        flags = {"proxy_mass": round(mass_along(lam0["Lambda_rim"], n), 3)} if m == "proxy-fixed-mass" else {}
         out += [Condition(m, rtt, flags) for rtt in RTTS]
     return out
 

@@ -4,7 +4,8 @@ Scripted leader (no hand) on a circle in the air: radius 10 cm, period 2 s, cent
 (0.5, 0, 0.25) m, from its own start (0.5, 0, 0.3) m (EXP_PLAN: the common start folds joint 4 too
 far for a fast circle). Reports e_F split into its radial (inertia) and tangential (friction)
 parts, per phase, and the angle of the felt and robot forces to the centripetal direction. M4's
-mass is nᵀΛ₀n along the initial motion direction (+y).
+mass is nᵀΛ₀n along the initial motion direction (+y). M5 runs twice: orientation held (the RIM
+used in the talk) and rotation free (the plain arm reduction), to show what holding buys.
 
     pixi run -e humble python experiments/rim-delays/exp/e2_circle.py [--sim] [--only-method ...] [--only-rtt ...]
 """
@@ -42,7 +43,11 @@ def conditions() -> list[Condition]:
     out = []
     for m in METHODS:
         flags = {"proxy_mass": round(mass_along(lam0["Lambda_rim"], [0.0, 1.0, 0.0]), 3)} if m == "proxy-fixed-mass" else {}
-        out += [Condition(m, rtt, flags) for rtt in RTTS]
+        if m == "proxy-rim":
+            out += [Condition(m, rtt, {"rim_hold_orientation": True}, "held") for rtt in RTTS]
+            out += [Condition(m, rtt, {"no_rim_hold_orientation": True}, "free") for rtt in RTTS]
+        else:
+            out += [Condition(m, rtt, flags) for rtt in RTTS]
     return out
 
 

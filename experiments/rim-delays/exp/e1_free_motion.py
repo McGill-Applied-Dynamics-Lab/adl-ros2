@@ -28,7 +28,7 @@ from common import CONF, Condition, mass_along, parse, run_experiment, start_ine
 METHODS = ["zoh", "proxy-god-object", "proxy-fixed-mass", "proxy-rim"]
 RTTS = {"zoh": [0, "5g", 850, 2600], "default": [0, 2600]}  # round trips [ms]; M3-M5 are flat in T
 DIRECTIONS = ["heavy", "light"]  # eigenvectors of Λ₀
-FREQUENCIES = [0.5, 1.0, 2.0]  # [Hz]
+FREQUENCIES = [0.25, 0.5, 1.0]  # [Hz]
 AMPLITUDE = 0.05  # [m]
 CYCLES = 5
 START = [0.4, 0.0, 0.2]  # [m]

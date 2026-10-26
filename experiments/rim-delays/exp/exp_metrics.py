@@ -88,7 +88,9 @@ def e2(run, bins: int = 36) -> dict:
     rel = hs["x_l"][w, :2] - seg.center[:2]
     phase = np.arctan2(rel[:, 1], rel[:, 0])
     inward = -rel / np.linalg.norm(rel, axis=1, keepdims=True)
-    tangent = np.stack([-inward[:, 1], inward[:, 0]], 1) * np.sign(seg.omega)  # direction of motion
+    # direction of motion: the circle's angle grows with omega, so for omega > 0 the leader moves
+    # counter-clockwise, along (-sin φ, cos φ) = (inward_y, -inward_x)
+    tangent = np.stack([inward[:, 1], -inward[:, 0]], 1) * np.sign(seg.omega)
     eF = e["e_F"][w]
     radial, tangential = np.sum(eF[:, :2] * inward, 1), np.sum(eF[:, :2] * tangent, 1)
 
@@ -106,6 +108,10 @@ def e2(run, bins: int = 36) -> dict:
         "eF_radial_mean": float(np.mean(radial)), "eF_radial_rms": float(M.rms(radial)),
         "eF_tangential_mean": float(np.mean(tangential)), "eF_tangential_rms": float(M.rms(tangential)),
         "eF_z_rms": float(M.rms(eF[:, 2])),
+        # radial forces: the outward reaction felt while the proxy is pulled inward (the rendered
+        # inertia), and the robot's centripetal force; eF_radial = robot - felt
+        "felt_radial_mean": float(np.mean(np.sum(-e["f"][w, :2] * inward, 1))),
+        "robot_radial_mean": float(np.nanmean(np.sum(e["F_osc"][w, :2] * inward, 1))),
         "angle_f_deg": float(np.nanmean(angle_to_inward(-e["f"][w, :2]))),  # felt: the proxy pulls the hand inward
         "angle_Fosc_deg": float(np.nanmean(angle_to_inward(e["F_osc"][w, :2]))),
         "phase_deg": np.degrees(0.5 * (edges[:-1] + edges[1:])).tolist(),

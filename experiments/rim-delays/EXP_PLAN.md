@@ -148,7 +148,7 @@ Order, since each step depends on the one before:
 - **Coupling stiffness K.** 70% of the released-handle K\_max of a model-based method at T = 0, from E5. It is delay-independent for M3–M5.
 - **Coupling damping D.** The coupling mode's reduced mass is μ = m\_d λ / (m\_d + λ) ≈ m\_d, the handle mass in robot units (m\_dev / αβ). Aim for ζ ≈ 0.7, capped by velocity-noise buzz.
 - **M1 in device runs (E5, E6).** The common K where stable; otherwise 70% of M1's own K\_max(T) from E5, reported. Scripted runs (E1–E4) close no loop through the leader, so every method uses the common K there.
-- **Feedback rate f\_m.** Shared by all methods: M1's state and M5's model travel on the same link. Log Λ at 1 kHz in a pilot run and choose the lowest f\_m at which Λ changes by only a few percent per update and holding it adds little to e\_F.
+- **Feedback rate f\_m.** Set per signal, since M1 receives only the robot state and M5 only the model. Log Λ at 1 kHz in a pilot run and choose, for the model, the lowest f\_m at which Λ changes by only a few percent per update and holding it adds little to e\_F; for the state, the lowest f\_m whose hold ripple K\|v\|/f\_m stays under 1 N. Pilot (2026-10-26): 25 Hz for the model, 500 Hz for the state.
 - **5G delay model.** Replay a measured trace if one can be found; otherwise fit a shifted heavy-tailed distribution (log-normal or gamma) to one cited study. Make the delay correlated (AR(1) or trace replay) with nondecreasing arrivals, not independent per packet: at 1 kHz, independent jitter of tens of ms reorders constantly and latest-value delivery drops most packets. Seed it, so every method sees the identical delay sequence on both links.
 
 Reported 5G figures vary widely: an RTT of about 6.5 ms in a field trial ([source](https://www.netmode.ntua.gr/wp-content/uploads/2023/02/IEEE_CSCN_2022.pdf)), an average RTT of 47 ms for teleoperated driving ([source](https://arxiv.org/html/2503.14186v1)), and median latency 32.4 ms with 30.8 ms jitter on a private 5G link for telesurgery ([source](https://www.scielo.br/j/clin/a/yB969c5FvZM6FTQfCg77cwd/?lang=en)).
@@ -157,17 +157,18 @@ Reported 5G figures vary widely: an RTT of about 6.5 ms in a field trial ([sourc
 
 | Parameter | Value | Units | Rule | Notes |
 | --- | --- | --- | --- | --- |
-| α, β (mapping) |  | — | workspace and force fit |  |
-| K\_r |  | N/m | K\_r δ ≤ accepted force | M3–M5; M1 uses K |
-| D\_r |  | N·s/m | ζ ≥ 0.7 at λ\_max | M3–M5; M1 uses D |
-| K |  | N/m | 70% of K\_max at T = 0 | from E5 |
-| D |  | N·s/m | ζ ≈ 0.7 on m\_d, buzz-capped |  |
-| K for M1 (per T) |  | N/m | common K, else 70% of M1's K\_max(T) | device runs only |
-| m (M4) |  | kg | nᵀΛ₀n | per direction in E1 |
-| f\_t | 1000 | Hz | = f\_h |  |
-| f\_m |  | Hz | small Λ change per update | from pilot run |
-| 5G delay model |  | ms | trace or fitted, correlated, seeded | source to cite |
-| 5G packet loss |  | % | same source |  |
+| α, β (mapping) | 1.0, 0.5 | —, N/N | workspace and force fit | `teleop.yaml` `scale`, `force_gain`; handle clamp `max_i3_force` 10 N = 20 N at the robot |
+| K\_r | 3000 (x, y, z) | N/m | K\_r δ ≤ accepted force | M3–M5; M1 uses K. `osc_teleop.yaml` `gains.k_pos_*`; 6 N at δ = 2 mm. Orientation k\_rot 85, 265, 10 N·m/rad |
+| D\_r | auto: 2 ζ √(K\_r Λ\_ii), ζ = 0.7 | N·s/m | ζ ≥ 0.7 at λ\_max | M3–M5; M1 uses D. `gains.d_pos_* = -1`, `damping_ratio_pos` 0.7; per axis on the controller's live Λ\_ii, not a fixed value |
+| K | 1000 | N/m | 70% of K\_max at T = 0 | `teleop.yaml` `kv` |
+| D | 70 | N·s/m | ζ ≈ 0.7 on m\_d, buzz-capped | `teleop.yaml` `dv` |
+| K for M1 (per T) | 1000 (common K) | N/m | common K, else 70% of M1's K\_max(T) | device runs only; `K_M1` in `e6_taps.py` is empty |
+| m (M4) | E1 14.46 (heavy) / 4.79 (light); E2 4.73 (+y); E3, E5, E6 9.08 (z); E4 13.41 (along the line) | kg | nᵀΛ₀n | held Λ₀ (`rim_hold_orientation`), IK from home to each start; computed by the scripts per run |
+| f\_t | 1000 | Hz | = f\_h | `teleop.yaml` `command_hz` |
+| f\_m, robot state (M1) | 500 | Hz | ZOH ripple K\|v\|/f\_m ≤ 1 N | pilot (fm\_circle2): 0.72 N at p95 speed, 1 ms mean hold |
+| f\_m, RIM model (M5) | 25 | Hz | Λ change ≤ 3 % per update, holding ≤ 0.5 N | pilot (fm\_circle2): 2.1 % p95, 0.12 N RMS |
+| 5G delay model | replay, half per link, 10 ms per sample | ms | trace or fitted, correlated, seeded | lab trace (5G-data.csv, condition 5G, 21k samples): RTT median 40, p95 74, p99 81 ms; seeds 156 / 157; FORMULATION.md §1 |
+| 5G packet loss | not modelled | % | same source | the trace has latencies only |
 
 ## Priorities and risks
 
