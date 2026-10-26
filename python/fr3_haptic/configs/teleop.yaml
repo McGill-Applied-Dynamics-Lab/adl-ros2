@@ -54,7 +54,8 @@ inverse3:
   uri: ws://localhost:10001
   axes: "y,-x,z"             # signed device axis per robot base axis
   scale: 1.0                 # robot metres per device metre (alpha)
-  force_gain: 0.5            # handle N per world N: felt stiffness = kv * scale * force_gain (beta)
+  force_gain: 0.2            # handle N per world N: felt stiffness = kv * scale * force_gain (beta). 0.2: stable with kv 1000, dv 70
+                             # on the Inverse3 (0.5: 33 Hz limit cycle, handle damping 35 N·s/m through the 8 Hz velocity filter)
   max_i3_force: 10.0          # clamp at the handle [N]
   vel_filter_hz: 8.0
   force_ramp_s: 1.0

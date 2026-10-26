@@ -44,7 +44,7 @@ It is not circular for M4 and M5, even though they send f\_ff = −f: for them, 
 | M4 | ≈ (Λ − m) a: right on average, wrong by direction and configuration |
 | M5 | model error only: joint friction, held terms |
 
-Contact metrics (E3, E6): force-onset latency after the leader crosses z = s; leader penetration at onset; felt-force overshoot and oscillation; robot-side peak table force; e\_F during the hold.
+Contact metrics (E3, E6): time to the hold force (from the leader's crossing of z = s until the felt force is within ±20 % of its hold value for good — the one defined for every method: M1 under delay drags more before contact than it feels in it, so its onset and overshoot are not defined); force-onset latency after the crossing; leader penetration at onset; felt-force overshoot and oscillation; robot-side peak table force; e\_F during the hold; whether osc\_controller's contact force limiter fired.
 
 Stability indicators (E5, E6): bounce count, settling time, and RMS force in a band above about 8 Hz.
 
@@ -53,6 +53,24 @@ Energy balance, computed offline from the logs for every method. A negative valu
 ```latex
 E(t) = -\int_0^t \left( f \cdot v_l + F_{osc} \cdot v \right) d\tau
 ```
+
+**Phase-separated masses (E1, E4).** Inertia and friction are separated by phase on a periodic motion. Along the motion direction n, take the first harmonic at the drive frequency ω (least squares on cos, sin, an offset and a linear trend for a slow motion underneath) of a position, X, and a force, F. For a mass, F = m a = −m ω² x, in phase opposition with x; Coulomb and viscous friction are in phase with the velocity, 90° away, so they drop out of the in-phase part:
+
+```latex
+m = -\frac{\mathrm{Re}(F/X)}{\omega^2}, \qquad F_c \approx \frac{\pi}{4}\,\mathrm{Im}(F/X)\,|X|
+```
+
+Applied to three pairs (`exp_metrics.e4`, `mass_by_s`, per position bin along E4's line; E1's notebook fits the same over its three frequencies):
+
+| Mass | Force | Position | Clock | Meaning |
+| --- | --- | --- | --- | --- |
+| m\_robot | F\_osc (task\_wrench) | robot EE (ee\_state) | robot, window shifted by the measured lag | the arm's apparent mass under its controller |
+| m\_felt | −f | proxy x\_p | haptic | the mass the method renders |
+| m\_err | e\_F | proxy x\_p | haptic | the mass the operator was not shown (≈ m\_robot − m\_felt when the robot tracks the proxy) |
+
+Also logged: robot/proxy tracking (amplitude ratio at ω; near 1 means the methods are compared on the same motion) and the model's nᵀΛn (M5).
+
+Caveats. (1) With one frequency the in-phase part is m − k/ω², k any stiffness-like force in phase with the position (null-space posture, position-dependent gravity-model error); E1's three-frequency fit gave k ≈ 30–60 N/m, which at E4's 0.7 Hz (ω² ≈ 19) would make m\_robot read 1.5–3 kg low — two frequencies separate m and k. (2) F\_osc is the commanded force, equal to the applied one while nothing saturates (torque, torque rate, the contact force limiter); joint friction then belongs to the arm, in Im(F/X). (3) It is an apparent mass at ω: it includes the orientation hold and anything the model leaves out (rotor inertia). (4) Drive below the proxy's coupling resonance, √(K/m)/2π: near it the proxy swings wider than the leader and the robot cannot follow (E4's first design, 1.5 Hz on a ~1.4 Hz resonance).
 
 ## Scripted-leader experiments
 
@@ -159,7 +177,7 @@ Reported 5G figures vary widely: an RTT of about 6.5 ms in a field trial ([sourc
 
 | Parameter | Value | Units | Rule | Notes |
 | --- | --- | --- | --- | --- |
-| α, β (mapping) | 1.0, 0.5 | —, N/N | workspace and force fit | `teleop.yaml` `scale`, `force_gain`; handle clamp `max_i3_force` 10 N = 20 N at the robot |
+| α, β (mapping) | 1.0, 0.2 | —, N/N | workspace and force fit; stable on the device | `teleop.yaml` `scale`, `force_gain`; handle clamp `max_i3_force` 10 N = 50 N at the robot. β only matters with the device (E5, E6): handle stiffness K β = 200 N/m, damping D β = 14 N·s/m. At β = 0.5 (35 N·s/m at the handle, through the 8 Hz velocity filter) the Inverse3 and the haptic loop went into a 33 Hz limit cycle; β = 0.2 is stable and comfortable (2026-10-26). The scripted runs (E1–E4) have no handle: they used β = 0.5 for their logged clamp only |
 | K\_r | 2000 (x, y, z) | N/m | K\_r δ ≤ accepted force | M3–M5; M1 uses K. `osc_teleop.yaml` `gains.k_pos_*`; 4 N at δ = 2 mm. Lowered from 3000: a 40–46 Hz oscillation on the torque-rate limit stopped the server (E1 god-object, 2026-10-26). Orientation k\_rot 85, 265, 10 N·m/rad |
 | D\_r | auto: 2 ζ √(K\_r Λ\_ii), ζ = 0.7 | N·s/m | ζ ≥ 0.7 at λ\_max | M3–M5; M1 uses D. `gains.d_pos_* = -1`, `damping_ratio_pos` 0.7; per axis on the controller's live Λ\_ii, not a fixed value |
 | K | 1000 | N/m | 70% of K\_max at T = 0 | `teleop.yaml` `kv` |

@@ -22,11 +22,8 @@ from __future__ import annotations
 
 import exp_metrics
 import numpy as np
-import yaml
-from common import CONF, Condition, mass_along, parse, run_experiment, start_inertia
+from common import Condition, mass_along, parse, run_experiment, start_inertia
 
-CONF_VALUES = {k: v for group in yaml.safe_load(CONF.read_text()).values() if isinstance(group, dict)
-               for k, v in group.items()}
 
 # ------------------------------------------------------------------ the experiment
 METHODS = ["zoh", "proxy-god-object", "proxy-fixed-mass", "proxy-rim"]
@@ -36,6 +33,7 @@ FREQUENCIES = [0.25, 0.5, 1.0]  # [Hz]
 AMPLITUDE = 0.05  # [m]
 CYCLES = 5
 START = [0.4, 0.0, 0.2]  # [m]
+SCRIPTED_FORCE_GAIN = 0.5  # force_gain when these runs were made (2026-10-26)
 FELT_CLAMP_N = 150.0  # clamp on the felt force f [world N] (ZOH at 2.6 s, 1 Hz: up to K · 2A = 100 N)
 FEEDFORWARD_CAP_N = 50.0  # |f_ff| sent to the robot (M4, M5) [N]; peak Λa ~29 N (heavy, 1 Hz)
 BASE = {
@@ -47,7 +45,9 @@ BASE = {
     "script": "sine",
     "script_amplitude": AMPLITUDE,
     "script_cycles": CYCLES,
-    "max_i3_force": FELT_CLAMP_N * CONF_VALUES["force_gain"],  # the clamp in handle N
+    # the clamp in handle N, with the force gain these runs used (0.5): fixed, so a later change of
+    # force_gain in teleop.yaml (device runs only; no handle here) does not change these flags
+    "max_i3_force": FELT_CLAMP_N * SCRIPTED_FORCE_GAIN,
     "feedforward_cap": FEEDFORWARD_CAP_N,
 }
 

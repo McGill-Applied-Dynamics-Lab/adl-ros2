@@ -13,11 +13,8 @@ Check the FR3's collision reflex thresholds before the fast approaches.
 from __future__ import annotations
 
 import exp_metrics
-import yaml
-from common import CONF, Condition, mass_along, parse, run_experiment, start_inertia
+from common import Condition, mass_along, parse, run_experiment, start_inertia
 
-CONF_VALUES = {k: v for group in yaml.safe_load(CONF.read_text()).values() if isinstance(group, dict)
-               for k, v in group.items()}
 
 METHODS = ["zoh", "proxy-god-object", "proxy-fixed-mass", "proxy-rim"]
 SPEEDS = [0.01, 0.05, 0.10, 0.20]  # approach speeds [m/s]
@@ -43,6 +40,7 @@ START = [0.4, 0.0, 0.12]  # just above the pre-height (0.083 + 0.03 m): a short 
 # Clamp on the felt force f [world N]. No handle feels it (scripted leader): it only cut what the
 # metrics read. M1 drags with K·v·T before contact: 170 N at 20 cm/s and 850 ms, 130 N at 5 cm/s and
 # 2.6 s. The feedforward cap stays the yaml's (30 N): here f_ff pushes the robot into the table.
+SCRIPTED_FORCE_GAIN = 0.5  # force_gain when these runs were made (2026-10-26)
 FELT_CLAMP_N = 250.0
 BASE = {
     "interface_axis": "xyz",
@@ -56,7 +54,9 @@ BASE = {
     "script_pre_height": 0.03,  # the constant speed starts this high above the table [m]
     "script_hold_s": 2.0,
     "script_repeats": REPEATS,
-    "max_i3_force": FELT_CLAMP_N * CONF_VALUES["force_gain"],  # the clamp in handle N
+    # the clamp in handle N, with the force gain these runs used (0.5): fixed, so a later change of
+    # force_gain in teleop.yaml (device runs only; no handle here) does not change these flags
+    "max_i3_force": FELT_CLAMP_N * SCRIPTED_FORCE_GAIN,
 }
 
 
