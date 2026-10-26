@@ -21,12 +21,13 @@ control.coriolis_compensation: true
 # it 5-10x (rate-limited ticks ~1 %), at the cost of a softer x/y hold (x spread 7-12 mm vs 3-6
 # mm while moving). Measured 2026-10-08, torque_debug/ab.npz.
 # The interface-axis gains are overridden per run (coupling methods: kv, dv).
-gains.k_pos_x: 1500.0
-gains.k_pos_y: 1500.0
-gains.k_pos_z: 3500.0
+gains.k_pos_x: 3000.0
+gains.k_pos_y: 3000.0
+gains.k_pos_z: 3000.0
 gains.d_pos_x: -1.0
 gains.d_pos_y: -1.0
 gains.d_pos_z: -1.0
+
 gains.k_rot_x: 85.0
 gains.k_rot_y: 265.0
 gains.k_rot_z: 10.0
@@ -63,4 +64,9 @@ contact_limit.max_force: 30.0 # Maximum contact force (N): norm of libfranka's e
 filter.joint_velocity: 1.0
 filter.target_pose: 1.0
 
-log.enabled: false
+log.enabled: true
+log.timing: false
+log.robot_state: false
+log.targets: false
+log.task_space: false
+log.controller_parameters: true

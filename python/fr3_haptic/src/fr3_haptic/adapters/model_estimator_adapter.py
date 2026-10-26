@@ -52,6 +52,7 @@ class RobotModelAdapter:
         self._di = np.zeros((frame.dim, 6))
         self._di[:, :3] = frame.basis.T
 
+        self._hold_orientation = bool(model_cfg.hold_orientation)
         self._f_q = LowPassFilter(model_cfg.filter_alpha_q)
         self._f_dq = LowPassFilter(model_cfg.filter_alpha_q_dot)
 
@@ -173,11 +174,24 @@ class RobotModelAdapter:
             b_i=b_i.copy(),
             f_ext=None,  # tau_ext.copy() if tau_ext is not None else None,
             stamp_s=time.time(),
+            **self._held_rows(j_ee, j_dot_ee, dq),
         )
 
         with self._lock:
             self._latest = dyn
         return dyn
+
+    def _held_rows(self, j_ee: np.ndarray, j_dot_ee: np.ndarray, dq: np.ndarray) -> dict:
+        """``J_hold`` / ``b_hold``: the end effector's rotation rows (LOCAL_WORLD_ALIGNED), when the
+        orientation is held (``ModelConfig.hold_orientation``); nothing otherwise."""
+        if not self._hold_orientation:
+            return {}
+        return {"J_hold": j_ee[3:, :].copy(), "b_hold": (j_dot_ee[3:, :] @ dq).copy()}
+
+    @property
+    def held_rows(self) -> int:
+        """Rows of ``DynModel.J_hold`` this adapter produces (3 or 0)."""
+        return 3 if self._hold_orientation else 0
 
     def compute_at(self, q: np.ndarray, dq: np.ndarray, tau: np.ndarray) -> DynModel:
         """Compute and return a DynModel for a given joint state without reading from the robot.
@@ -215,6 +229,7 @@ class RobotModelAdapter:
             b_i=b_i.copy(),
             f_ext=tau.copy(),
             stamp_s=time.time(),
+            **self._held_rows(j_ee, j_dot_ee, dq),
         )
 
     def latest(self) -> DynModel | None:

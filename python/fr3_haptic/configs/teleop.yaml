@@ -53,8 +53,8 @@ interface:
 inverse3:
   uri: ws://localhost:10001
   axes: "y,-x,z"             # signed device axis per robot base axis
-  scale: 1.0                 # robot metres per device metre
-  force_gain: 0.1            # handle N per world N: felt stiffness = kv * scale * force_gain
+  scale: 1.0                 # robot metres per device metre (alpha)
+  force_gain: 0.5            # handle N per world N: felt stiffness = kv * scale * force_gain (beta)
   max_i3_force: 10.0          # clamp at the handle [N]
   vel_filter_hz: 8.0
   force_ramp_s: 1.0
@@ -78,6 +78,7 @@ robot:
   ee_state_topic: /fr3/osc/ee_state
   task_wrench_topic: /fr3/osc/task_wrench
   tool_tip_offset: null      # proxy-rim: model interface point offset from fr3_hand_tcp [m]
+  rim_hold_orientation: true # proxy-rim: Λ with the EE orientation held (the OSC holds it at low frequency); false = free
 
 live:                        # Foxglove live view: open ws://localhost:<live_port>, layout configs/foxglove_live_layout.json
   live_hz: 50.0              # 0 disables

@@ -156,6 +156,23 @@ controller is not in the model: the robot is assumed to track the proxy exactly 
 - Robot: $x_t = x_p(t - T_c)$, $v_t = v_p(t - T_c)$, $f_{ff} = -f(t - T_c)$. The feedforward supplies the force; the OSC PD only rejects model error.
 - Links: → $x_p, v_p, f_{ff}$; ← the model $(\Lambda, z, f_{eff})$ at the model update rate.
 
+#### Orientation held · *implemented: `rim_hold_orientation` (`ModelConfig.hold_orientation`)*
+
+The free reduction assumes the only force on the arm acts at the interface point. On the robot the
+OSC also holds the end effector's orientation, with a spring (k_rot) whose rotational modes are at
+~3.6–11 Hz: below them the hand barely turns, and the interface point moves as if the orientation
+were constrained. With the rotation rows $J_h$ of the end-effector Jacobian ($J_h \ddot q + b_h = 0$,
+$b_h = \dot J_h \dot q$) stacked under the interface rows, $J = [J_i; J_h]$:
+
+$$\Lambda_6 = (J M^{-1} J^T)^{-1},\quad M_{eff} = [\Lambda_6]_{ii},\quad
+z_i = [\Lambda_6 (J M^{-1} c - b)]_i,\quad f_{eff} = [\Lambda_6 J M^{-1} f_{ext}]_i .$$
+
+Holding only adds inertia ($M_{eff}^{held} \succeq M_{eff}^{free}$). At (0.4, 0, 0.2) m:
+$\Lambda_{xx}$ 1.69 → 10.55 kg, eigenvalues (0.87, 1.95, 9.41) → (4.79, 5.21, 14.46) kg. Measured on
+the robot: a 0.5 Hz circle follows the held model in x (radial gap 7.4 → 1.2 N); 2–4 Hz sines sit
+near the free one (T1) — the rotation is held only below the rotational modes. It is the limit
+$k_{rot} \to \infty$ of M6's orientation part below.
+
 #### 3-DoF contact projection (M4, M5) · *implemented in `pyrim.RIMIntegrator`*
 
 The wall $n^T x_p \ge s$ ($n = e_z$) pushes along $n$ only, so its impulse $p \ge 0$ moves the

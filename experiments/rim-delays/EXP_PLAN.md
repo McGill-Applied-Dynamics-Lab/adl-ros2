@@ -23,6 +23,8 @@ Four methods, read as a ladder: M1 shows the delay problem, and M3 → M4 → M5
 
 M4 is tuned to its best case: m equals the effective mass along the initial motion direction at the start configuration, nᵀΛ₀n. Any gap to M5 then comes from Λ changing, not from a poorly chosen m.
 
+**M5's inertia: orientation held.** The OSC holds the end effector's orientation, and at the experiments' frequencies (below its rotational modes, ~3.6 Hz and up) the arm moves as if the orientation were fixed: on the E2 circle the free-rotation Λ was ~7× too light along x (radial gap +7.4 N, +1.2 N with the held reduction). M5 therefore reduces with the orientation held (`rim_hold_orientation: true` in `teleop.yaml`, `--no-rim-hold-orientation` for the free reduction), and M4's m is taken from the same held Λ₀ (`tools/lambda_map.py`, `Lambda_held`) so the comparison stays fair. The frequency-dependent version (a 6-D proxy held by the OSC's own orientation gains, free at impacts and held in slow pushes) is future work (M6, FORMULATION.md).
+
 Delay conditions (round trip T, split evenly T\_c = T\_f = T/2): 0, 5g, 850 ms, 2.6 s. Model-based methods are expected to be flat in T, so their free-motion runs need only T = 0 and 2.6 s; M1 needs all four.
 
 ## Metrics
@@ -69,7 +71,8 @@ Shows that model-based transparency is flat in delay and improves with model fid
 
 Shows that a fixed mass cannot follow an inertia that varies with the direction of motion.
 
-- **Protocol:** a horizontal circle at constant speed, e.g. radius 10 cm and period 1.5 s (v ≈ 0.42 m/s, a ≈ 1.75 m/s²). The centripetal acceleration rotates through every direction of the plane.
+- **Protocol:** a horizontal circle at constant speed: radius 10 cm, period 2 s (v ≈ 0.31 m/s, a ≈ 0.99 m/s²), centered at (0.5, 0, 0.25) m. The centripetal acceleration rotates through every direction of the plane.
+- **Start position (E2 only):** (0.5, 0, 0.3) m, not the common start: centered on (0.4, 0, 0.16) the near side folds the arm until joint 4 is at −3.03 rad, where libfranka's position-dependent velocity limit stops even a 3 s circle (joint 4 at ~100 % of its limit; a 1.5 s circle aborted with `joint_velocity_violation`). At (0.5, 0, 0.25) the 2 s circle uses ~52 % of the limit. Compute Λ at this start for M4's mass.
 - **Conditions:** M4 and M5 (M3 for reference), at T = 0 and 2.6 s.
 - **Plots:** e\_F against circle phase; the angle between force and acceleration, for f and for −F\_osc.
 - **Expected:** M4's e\_F oscillates at twice the circle frequency while M5 stays flat. With off-diagonal coupling, the robot's force is not parallel to its acceleration; M5 reproduces that sideways component, M4 cannot.

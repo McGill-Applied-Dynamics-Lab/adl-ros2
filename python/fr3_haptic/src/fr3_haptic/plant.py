@@ -456,6 +456,11 @@ class FR3System:
         self._adapter = adapter
         self._model: DynModel | None = None
 
+    @property
+    def adapter(self) -> RobotModelAdapter:
+        """The adapter the models come from."""
+        return self._adapter
+
     def update(self) -> None:
         """Recompute the model from the latest robot state; keeps the previous one if no state yet."""
         model = self._adapter.compute()

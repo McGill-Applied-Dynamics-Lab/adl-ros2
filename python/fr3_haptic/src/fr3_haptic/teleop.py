@@ -70,7 +70,7 @@ from .live import LiveView, live_logger
 from .plant import FR3Plant, FR3System
 from .port import RobotPort
 from .recorder import RobotStateRecorder
-from .scripted import PROFILES, HandConfig, Script, ScriptConfig, ScriptedOperator
+from .scripted import PROFILES, SURFACE_PROFILES, HandConfig, Script, ScriptConfig, ScriptedOperator
 from .session import PROXY_METHODS, CommandLoop, CommandLoopConfig, RimModelLoop
 
 TAG = "[fr3_teleop]"
@@ -207,7 +207,11 @@ def build_parser() -> argparse.ArgumentParser:
     g = p.add_argument_group("scripted operator (--device scripted: the leader follows a script, no hand)")
     g.add_argument("--device", choices=("inverse3", "scripted"), default="inverse3", help="operator input")
     g.add_argument(
-        "--script", choices=PROFILES, default="press", help="press: down and up; circle: circles on the table"
+        "--script",
+        choices=PROFILES,
+        default="press",
+        help="press: down and up; circle: circles (on the table, or in the air with --script-surface-z); "
+        "sine: sinusoids along a direction; approach: constant speed through the table; line: a line with a dither",
     )
     g.add_argument(
         "--script-surface-z",
@@ -223,6 +227,17 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--script-radius", type=float, default=0.05, help="circle: radius [m]")
     g.add_argument("--script-period-s", type=float, default=6.0, help="circle: time per lap [s]")
     g.add_argument("--script-laps", type=int, default=2, help="circle: number of laps")
+    g.add_argument("--script-direction", type=float, nargs=3, default=[0.0, 0.0, 1.0], help="sine: direction (world)")
+    g.add_argument("--script-amplitude", type=float, default=0.05, help="sine: amplitude [m]")
+    g.add_argument("--script-frequency", type=float, default=1.0, help="sine: frequency [Hz]")
+    g.add_argument("--script-cycles", type=int, default=5, help="sine: cycles at full amplitude")
+    g.add_argument("--script-ramp-cycles", type=float, default=1.0, help="sine / line: envelope ramp [cycles]")
+    g.add_argument("--script-approach-speed", type=float, default=0.05, help="approach: speed through the table [m/s]")
+    g.add_argument("--script-pre-height", type=float, default=0.03, help="approach: constant speed from this high above the table [m]")
+    g.add_argument("--script-line-end", type=float, nargs=3, default=None, help="line: end point (world) [m]")
+    g.add_argument("--script-dither-amplitude", type=float, default=0.01, help="line: dither amplitude [m]")
+    g.add_argument("--script-dither-hz", type=float, default=1.0, help="line: dither frequency [Hz]")
+    g.add_argument("--script-dither-direction", type=float, nargs=3, default=None, help="line: dither direction; default along the line")
     g.add_argument(
         "--hand",
         action="store_true",
@@ -302,6 +317,13 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--ee-state-topic", default="/fr3/osc/ee_state")
     g.add_argument("--task-wrench-topic", default="/fr3/osc/task_wrench")
     g.add_argument("--tool-tip-offset", type=float, nargs=3, default=None, help="proxy-rim: model interface point [m]")
+    g.add_argument(
+        "--rim-hold-orientation",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="proxy-rim: reduce with the end effector's orientation held still (what the OSC's orientation "
+        "control does at low frequency) instead of free",
+    )
 
     g = p.add_argument_group("live view (Foxglove)")
     g.add_argument(
@@ -439,13 +461,16 @@ def script_config(args: argparse.Namespace) -> ScriptConfig | None:
     """The programmed operator's script (``--device scripted``), or ``None`` for the Inverse3.
 
     Raises:
-        ValueError: without a table height (``--script-surface-z`` or ``--contact-surface``).
+        ValueError: without a table height (``--script-surface-z`` or ``--contact-surface``) for a
+            profile that goes to the table.
     """
     if args.device != "scripted":
         return None
     surface = args.script_surface_z if args.script_surface_z is not None else args.contact_surface
     if surface is None:
-        raise ValueError("--device scripted needs the table height: --script-surface-z or --contact-surface")
+        if args.script in SURFACE_PROFILES:
+            raise ValueError("--device scripted needs the table height: --script-surface-z or --contact-surface")
+        surface = float("-inf")  # unused: the profile never goes to the table
     return ScriptConfig(
         profile=args.script,
         surface_z=surface,
@@ -457,6 +482,17 @@ def script_config(args: argparse.Namespace) -> ScriptConfig | None:
         radius=args.script_radius,
         period_s=args.script_period_s,
         laps=args.script_laps,
+        direction=tuple(args.script_direction),
+        amplitude=args.script_amplitude,
+        frequency_hz=args.script_frequency,
+        cycles=args.script_cycles,
+        ramp_cycles=args.script_ramp_cycles,
+        approach_speed=args.script_approach_speed,
+        pre_height=args.script_pre_height,
+        line_end=None if args.script_line_end is None else tuple(args.script_line_end),
+        dither_amplitude=args.script_dither_amplitude,
+        dither_hz=args.script_dither_hz,
+        dither_direction=None if args.script_dither_direction is None else tuple(args.script_dither_direction),
     )
 
 
@@ -615,6 +651,7 @@ def main(argv: list[str] | None = None) -> None:
         model_cfg = ModelConfig()
         if args.tool_tip_offset is not None:
             model_cfg.tool_tip_offset = list(args.tool_tip_offset)
+        model_cfg.hold_orientation = bool(args.rim_hold_orientation)
         system = FR3System(RobotModelAdapter(node=robot.node, robot=robot, model_cfg=model_cfg, frame=frame))
         system.update()
         tool_correction = first.x_i - system.model.x_i
@@ -642,7 +679,7 @@ def main(argv: list[str] | None = None) -> None:
         boxes.append(telemetry)
     model_box = None
     if system is not None:
-        model_box = ModelMailbox(system.model.n, dim)
+        model_box = ModelMailbox(system.model.n, dim, held=system.adapter.held_rows)
         boxes.append(model_box)
         model_box.write(system.model)
     spec = HapticProcessSpec(

@@ -68,6 +68,9 @@ class ModelConfig:
     filter_alpha_tau: float = 0.2
     # Tool mounted in the gripper. Offset is in the EE frame (e.g. [0, 0, L] for a peg of length L along z).
     tool_tip_offset: list = field(default_factory=lambda: [0.0, 0.0, 0.0])
+    # Reduce with the end effector's orientation held still (DynModel.J_hold = the 3 rotation rows):
+    # what the OSC's orientation control does at low frequency. False: rotation free.
+    hold_orientation: bool = False
 
 
 @dataclass(kw_only=True)

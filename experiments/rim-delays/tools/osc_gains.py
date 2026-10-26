@@ -9,7 +9,8 @@ For each position of a workspace grid (Λ from RIM's Pinocchio model at the join
 home, orientation kept), this reports the modes for:
 
 - a fixed ``--d`` per axis (what M6 can model; constant), and
-- the controller's auto damping (``d = -1``: ``2 ζ₀ √(K_ii Λ_ii)``, recomputed live from the diagonal),
+- the controller's auto damping (``d = -1``: ``2 ζ₀ √(K_ii Λ_ii)`` with Λ_ii the diagonal of its 6×6
+  task inertia, i.e. the held-rotation inertia; recomputed every tick),
 
 recommends the smallest fixed D_r (``--d`` scaled uniformly) whose least-damped mode over the grid
 has ζ ≥ ``--zeta``, shows how overdamped the light modes then are, and checks the K_r δ rule
@@ -78,9 +79,10 @@ def modes(lam: np.ndarray, K: np.ndarray, D: np.ndarray) -> tuple[np.ndarray, np
     return w / (2 * np.pi), zeta, m
 
 
-def auto_damping(lam: np.ndarray, K: np.ndarray, zeta0: float) -> np.ndarray:
-    """The controller's ``d = -1``: ``2 ζ₀ √(K_ii Λ_ii)``, per configuration."""
-    return 2 * zeta0 * np.sqrt(K * np.diag(lam))
+def auto_damping(lam_held: np.ndarray, K: np.ndarray, zeta0: float) -> np.ndarray:
+    """The controller's ``d = -1``: ``2 ζ₀ √(K_ii Λ_ii)``, Λ_ii the diagonal of its 6×6 task inertia
+    (osc_controller.cpp), i.e. of the held-rotation translational inertia, per configuration."""
+    return 2 * zeta0 * np.sqrt(K * np.diag(lam_held))
 
 
 def main(argv=None) -> None:
@@ -113,6 +115,7 @@ def main(argv=None) -> None:
     reached = np.array([a["tcp_position"] for a in ats])
     miss = np.linalg.norm(reached - pts, axis=1)
     lams = np.array([a["Lambda"] for a in ats])
+    helds = np.array([a["Lambda_held"] for a in ats])
     if miss.max() > 0.005:
         print(f"[osc_gains] WARNING: IK missed {np.sum(miss > 0.005)} points by > 5 mm (max {1e3 * miss.max():.0f} mm)")
 
@@ -123,10 +126,10 @@ def main(argv=None) -> None:
           f"z {diag[:, 2].min():.2f}…{diag[:, 2].max():.2f} kg")
 
     for k in k_sets:
-        report(np.asarray(k, dtype=float), lams, pts, args)
+        report(np.asarray(k, dtype=float), lams, helds, pts, args)
 
 
-def report(K: np.ndarray, lams: np.ndarray, pts: np.ndarray, args) -> None:
+def report(K: np.ndarray, lams: np.ndarray, helds: np.ndarray, pts: np.ndarray, args) -> None:
     """The modes, damping and force cap for one K_r."""
     diag = np.diagonal(lams, axis1=1, axis2=2)
 
@@ -145,9 +148,9 @@ def report(K: np.ndarray, lams: np.ndarray, pts: np.ndarray, args) -> None:
         D = np.round(hi * D, 1)
 
     rows = []
-    for pt, lam in zip(pts, lams):
+    for pt, lam, held in zip(pts, lams, helds):
         f_fix, z_fix, m = modes(lam, K, D)
-        f_auto, z_auto, _ = modes(lam, K, auto_damping(lam, K, args.zeta0))
+        f_auto, z_auto, _ = modes(lam, K, auto_damping(held, K, args.zeta0))
         rows.append((pt, f_fix, z_fix, z_auto, m))
     z_fix = np.array([r[2] for r in rows])
     z_auto = np.array([r[3] for r in rows])
@@ -157,8 +160,8 @@ def report(K: np.ndarray, lams: np.ndarray, pts: np.ndarray, args) -> None:
     print(f"\n[osc_gains] K_r = {K} N/m (x, y, z)")
     print(f"  fixed D_r = {D} N·s/m{'' if args.d is not None else f'  (smallest uniform scale with ζ_min ≥ {args.zeta})'}")
     print(f"    ζ over all modes and points: min {z_fix.min():.2f}, max {z_fix.max():.2f}")
-    print(f"  auto damping (d = -1, ζ₀ = {args.zeta0}): D_r = 2 ζ₀ √(K Λ_ii) per point,"
-          f" x {auto_damping(lams[0], K, args.zeta0)[0]:.0f}… on the first point")
+    print(f"  auto damping (d = -1, ζ₀ = {args.zeta0}): D_r = 2 ζ₀ √(K Λ_ii), Λ_ii of the 6x6 task inertia, per point,"
+          f" {np.round(auto_damping(helds[0], K, args.zeta0))} on the first point")
     print(f"    ζ over all modes and points: min {z_auto.min():.2f}, max {z_auto.max():.2f}")
     print(f"  natural frequencies: {f_all.min():.1f} … {f_all.max():.1f} Hz")
     print(f"  K_r δ at δ = {1e3 * args.delta:g} mm: {K * args.delta} N per axis "

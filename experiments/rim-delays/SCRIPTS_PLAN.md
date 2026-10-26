@@ -40,19 +40,23 @@ one run per invocation, its parameters set by hand at the top of the file; repea
 
 ## C. Experiments (`exp/`)
 
-Each script: the condition at the top (method, delay, direction, frequency, speed, K, ...), reads
-`params.yaml`, runs `fr3_teleop` once, saves to `~/data/franka/rim-delays/robot/<exp>/`, prints the
-metrics and saves the plot; `--analyse <run dir>` reruns the analysis only. Experiment-level plots
-(e.g. RMS e_F vs T) come from a separate `summarize` step over the saved runs.
+One script per experiment, parameters at the top, including the lists of methods and conditions
+(revised 2026-10-25: running a list is optional, `--only-method` / `--only-rtt` narrow it). For
+each condition the runner (`exp/common.py`) asks, runs `fr3_teleop` (`--sim`: `sim_teleop.py`),
+saves the run as `<YYYYmmdd_HHMMSS>_<exp>_<method>_rtt<T>_<label>` (never overwritten), analyses it
+(`analysis/check.md` + figures, `analysis/metrics.json`) and appends it to the session file
+`<exp>/sessions/<start>.txt`. `--analyse <run dirs>` re-runs the analysis; `--dry-run` prints the
+commands. M4's mass is set per condition to nᵀΛ₀n (Λ₀ from IK at the start, the motion direction).
+Notebooks `exp/eN_*.ipynb`: `RUNS` = run dirs, session files or a folder; table + the plan's plots.
 
-| Script | Run | Per-run output |
-|---|---|---|
-| `e1_free_motion.py` | sine along a Λ₀ eigenvector | RMS e_F, Λa magnitude |
-| `e2_hcircle.py` | horizontal circle | e_F vs phase, force/acceleration angles |
-| `e3_approach.py` | constant-speed approach, hold, retract | contact metrics |
-| `e4_reach.py` | line + dither | e_F and Λ eigenvalues vs path position |
-| `e5_kmax.py` | Inverse3 at one K | RMS > 8 Hz vs threshold → stable / unstable, appended to `kmax.csv` |
-| `e6_taps.py` | Inverse3 taps and holds | contact + stability metrics, energy balance |
+| Script | Scripted profile / device | Conditions (defaults) | Metrics (`exp_metrics.py`) |
+|---|---|---|---|
+| `e1_free_motion.py` | `sine` along Λ₀'s heavy / light eigenvector | 4 methods × {0, 2600} (M1: + 5g, 850) × 3 freqs | RMS e_F along n, f, F_osc |
+| `e2_circle.py` | `circle` in the air, start (0.5, 0, 0.3) | M3–M5 × {0, 2600} | e_F radial / tangential, by phase; force angles |
+| `e3_approach.py` | `approach` (constant speed through the table) | speeds at 850 ms + delays at 5 cm/s | onset latency, penetration, overshoot, robot peak force, saturation |
+| `e4_reach.py` | `line` + dither | M4, M5 × {0, 2600} | e_F and Λ eigenvalues along the line |
+| `e5_kmax.py` | Inverse3, one run per K | ladder per method × delay × grip, `kmax.csv` | HF RMS > 8 Hz → stable / unstable (confirmed) |
+| `e6_taps.py` | Inverse3 | 4 methods × 4 delays | contact + bounces, settling, HF RMS, energy |
 
 `metrics.py` (shared): e_F on logged packet times, energy balance E(t), force-onset latency,
 penetration at onset, overshoot, robot peak force, bounce count, settling time, RMS > 8 Hz.

@@ -88,3 +88,26 @@ def rms(x: np.ndarray, axis=0) -> np.ndarray:
     """RMS ignoring NaN rows (per column for a ``(n, dim)`` array)."""
     x = np.asarray(x, dtype=float)
     return np.sqrt(np.nanmean(x**2, axis=axis))
+
+
+def script_of(run: dict):
+    """The run's scripted leader (``fr3_haptic.scripted.Script``) rebuilt from its metadata, or
+    ``None`` for an Inverse3 run. Its time is the haptic log's (t = 0 at the haptic loop's start)."""
+    from fr3_haptic.scripted import Script, ScriptConfig
+
+    cfg = run["meta"].get("script")
+    if not cfg:
+        return None
+    return Script(ScriptConfig(**cfg), np.asarray(run["meta"]["leader_origin"], dtype=float))
+
+
+def hf_rms(x: np.ndarray, t: np.ndarray, cutoff_hz: float = 8.0) -> float:
+    """RMS of ``x`` above ``cutoff_hz`` (2nd-order Butterworth high-pass, zero phase) [same unit]."""
+    from scipy.signal import butter, filtfilt
+
+    x = np.asarray(x, dtype=float)
+    if len(x) < 30:
+        return float("nan")
+    fs = 1.0 / float(np.median(np.diff(t)))
+    b, a = butter(2, cutoff_hz / (fs / 2), btype="high")
+    return float(np.sqrt(np.mean(filtfilt(b, a, x, axis=0) ** 2)))

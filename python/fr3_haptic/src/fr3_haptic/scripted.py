@@ -12,6 +12,16 @@ Profiles (``ScriptConfig.profile``):
   times. The table is reached on the way down, at the speed the profile has there.
 - ``circle``: over to the circle's start, down to ``depth`` below the surface, ``laps`` circles of
   ``radius`` around the origin's x/y at ``period_s`` per lap (smooth start and stop), up, back.
+  With ``surface_z`` above the table the circle is in the air.
+- ``sine``: ``cycles`` sinusoids of ``amplitude`` at ``frequency_hz`` along ``direction``, centred
+  on the origin, under a raised-cosine envelope (``ramp_cycles`` up and down). No table.
+- ``approach``: down to ``pre_height`` above the surface, then at the constant ``approach_speed``
+  through the surface to ``depth`` below it (short cosine speed ramps: the start one above the
+  surface, the stop one below it, so the table is crossed at full speed), hold, back up;
+  ``repeats`` times.
+- ``line``: from the origin to ``line_end`` (a minimum-jerk move at ``speed``) with a sinusoidal
+  dither of ``dither_amplitude`` at ``dither_hz`` along ``dither_direction`` (default: the line),
+  under the same envelope; hold, then back to the origin. No table.
 
 Every move is a minimum-jerk segment, so position and velocity are continuous. After the last
 segment the operator holds the origin.
@@ -32,7 +42,8 @@ import numpy as np
 
 __all__ = ["PROFILES", "HandConfig", "ScriptConfig", "Script", "ScriptedOperator"]
 
-PROFILES = ("press", "circle")
+PROFILES = ("press", "circle", "sine", "approach", "line")
+SURFACE_PROFILES = ("press", "circle", "approach")  # the ones that go to the table
 
 
 @dataclass(kw_only=True)
@@ -52,6 +63,17 @@ class ScriptConfig:
         period_s: ``circle``: time per lap at full speed [s].
         laps: ``circle``: number of laps.
         ramp_s: ``circle``: time to reach full angular speed, and to stop [s].
+        direction: ``sine``: direction of the motion (normalized), world.
+        amplitude: ``sine``: amplitude [m].
+        frequency_hz: ``sine``: frequency [Hz].
+        cycles: ``sine``: number of cycles at full amplitude (plus the envelope ramps).
+        ramp_cycles: ``sine`` / ``line``: envelope ramp, in cycles of the sine / dither.
+        approach_speed: ``approach``: constant speed through the surface [m/s].
+        pre_height: ``approach``: height above the surface where the constant speed starts [m].
+        line_end: ``line``: end point, world [m].
+        dither_amplitude: ``line``: dither amplitude [m].
+        dither_hz: ``line``: dither frequency [Hz].
+        dither_direction: ``line``: dither direction; ``None``: along the line.
     """
 
     profile: str = "press"
@@ -65,10 +87,27 @@ class ScriptConfig:
     period_s: float = 6.0
     laps: int = 2
     ramp_s: float = 1.0
+    direction: tuple[float, float, float] = (0.0, 0.0, 1.0)
+    amplitude: float = 0.05
+    frequency_hz: float = 1.0
+    cycles: int = 5
+    ramp_cycles: float = 1.0
+    approach_speed: float = 0.05
+    pre_height: float = 0.03
+    line_end: tuple[float, float, float] | None = None
+    dither_amplitude: float = 0.01
+    dither_hz: float = 1.0
+    dither_direction: tuple[float, float, float] | None = None
 
     def __post_init__(self) -> None:
         if self.profile not in PROFILES:
             raise ValueError(f"profile must be one of {PROFILES}, got {self.profile!r}")
+        if self.profile == "sine" and (self.amplitude <= 0 or self.frequency_hz <= 0 or self.cycles < 1):
+            raise ValueError("sine: amplitude and frequency_hz must be > 0, cycles >= 1")
+        if self.profile == "approach" and (self.approach_speed <= 0 or self.pre_height <= 0 or self.depth <= 0):
+            raise ValueError("approach: approach_speed, pre_height and depth must be > 0")
+        if self.profile == "line" and self.line_end is None:
+            raise ValueError("line: line_end is required")
         if self.speed <= 0 or self.period_s <= 0 or self.depth < 0:
             raise ValueError("speed and period_s must be > 0, depth >= 0")
         if self.repeats < 1 or self.laps < 1:
@@ -111,6 +150,81 @@ class _Move:
         dp = (30 * s**2 - 60 * s**3 + 30 * s**4) / self.duration if self.duration > 0 else 0.0
         d = self.end - self.start
         return self.start + p * d, dp * d
+
+
+def _envelope(t: float, duration: float, ramp: float) -> tuple[float, float]:
+    """Raised-cosine envelope ``(w, dw/dt)``: 0 → 1 over ``ramp``, 1, then 1 → 0 over the last ``ramp``."""
+    if t <= 0 or t >= duration:
+        return 0.0, 0.0
+    if ramp <= 0:
+        return 1.0, 0.0
+    for u, sign in ((t, 1.0), (duration - t, -1.0)):
+        if u < ramp:
+            return 0.5 * (1 - np.cos(np.pi * u / ramp)), sign * 0.5 * np.pi / ramp * np.sin(np.pi * u / ramp)
+    return 1.0, 0.0
+
+
+def _unit(v) -> np.ndarray:
+    v = np.asarray(v, dtype=float).reshape(3)
+    n = np.linalg.norm(v)
+    if n == 0:
+        raise ValueError("a direction must be non-zero")
+    return v / n
+
+
+@dataclass
+class _Oscillation:
+    """``base(t) + n · A · w(t) · sin(2π f (t - t0))``: a sine under the envelope, on a base segment
+    (a hold for ``sine``, the line's move for ``line``)."""
+
+    t0: float
+    duration: float
+    base: object  # a segment with sample(t) over the same span
+    direction: np.ndarray
+    amplitude: float
+    frequency_hz: float
+    ramp_s: float
+
+    def sample(self, t: float) -> tuple[np.ndarray, np.ndarray]:
+        x, v = self.base.sample(t)
+        u = t - self.t0
+        w, dw = _envelope(u, self.duration, self.ramp_s)
+        om = 2 * np.pi * self.frequency_hz
+        s, c = np.sin(om * u), np.cos(om * u)
+        a = self.amplitude
+        return x + self.direction * a * w * s, v + self.direction * a * (dw * s + w * om * c)
+
+
+@dataclass
+class _Cruise:
+    """From ``start`` to ``end`` at constant ``speed``, with cosine speed ramps of ``ramp_s`` at both
+    ends (each covering ``speed · ramp_s / 2``)."""
+
+    t0: float
+    duration: float
+    start: np.ndarray
+    end: np.ndarray
+    speed: float
+    ramp_s: float
+
+    def sample(self, t: float) -> tuple[np.ndarray, np.ndarray]:
+        d = self.end - self.start
+        length = float(np.linalg.norm(d))
+        n = d / length
+        u = float(np.clip(t - self.t0, 0.0, self.duration))
+        v, tau, T = self.speed, self.ramp_s, self.duration
+
+        def ramp_dist(x):  # distance covered x seconds into a ramp from rest
+            return v * (x / 2 - tau / (2 * np.pi) * np.sin(np.pi * x / tau))
+
+        if u < tau:
+            s, ds = ramp_dist(u), v * (1 - np.cos(np.pi * u / tau)) / 2
+        elif u > T - tau:
+            r = T - u
+            s, ds = length - ramp_dist(r), v * (1 - np.cos(np.pi * r / tau)) / 2
+        else:
+            s, ds = v * tau / 2 + v * (u - tau), v
+        return self.start + n * s, n * ds
 
 
 @dataclass
@@ -166,10 +280,47 @@ class Script:
         self._at = self.origin.copy()
         c = self.cfg
         bottom_z = c.surface_z - c.depth
-        if bottom_z >= self.origin[2]:
+        if c.profile in SURFACE_PROFILES and bottom_z >= self.origin[2]:
             raise ValueError(f"the origin (z = {self.origin[2]:.3f} m) must be above surface_z - depth ({bottom_z:.3f} m)")
         self._rest(c.rest_s)
-        if c.profile == "press":
+        if c.profile == "sine":
+            ramp = c.ramp_cycles / c.frequency_hz
+            duration = c.cycles / c.frequency_hz + 2 * ramp
+            hold = _Move(self._t, duration, self.origin.copy(), self.origin.copy())
+            self.segments.append(_Oscillation(self._t, duration, hold, _unit(c.direction), c.amplitude, c.frequency_hz, ramp))
+            self._t += duration
+            self._rest(c.rest_s)
+        elif c.profile == "line":
+            end = np.asarray(c.line_end, dtype=float).reshape(3)
+            length = float(np.linalg.norm(end - self.origin))
+            n_d = _unit(c.dither_direction if c.dither_direction is not None else end - self.origin)
+            duration = 1.875 * length / c.speed
+            base = _Move(self._t, duration, self.origin.copy(), end)
+            ramp = min(c.ramp_cycles / c.dither_hz, duration / 2)
+            self.segments.append(_Oscillation(self._t, duration, base, n_d, c.dither_amplitude, c.dither_hz, ramp))
+            self._t += duration
+            self._at = end.copy()
+            self._rest(c.rest_s)
+            self._move_to(self.origin)
+            self._rest(c.rest_s)
+        elif c.profile == "approach":
+            pre = np.array([self.origin[0], self.origin[1], c.surface_z + c.pre_height])
+            bottom = np.array([self.origin[0], self.origin[1], bottom_z])
+            if pre[2] >= self.origin[2]:
+                raise ValueError(f"approach: the origin (z = {self.origin[2]:.3f} m) must be above surface_z + pre_height")
+            v = c.approach_speed
+            # each ramp (covering v tau / 2) within half its side of the surface: the table is crossed at full speed
+            tau = min(0.2, min(c.depth, c.pre_height) / v)
+            cruise = (c.pre_height + c.depth) / v + tau  # two ramps of tau at half speed on average
+            for _ in range(c.repeats):
+                self._move_to(pre)
+                self.segments.append(_Cruise(self._t, cruise, pre.copy(), bottom.copy(), v, tau))
+                self._t += cruise
+                self._at = bottom.copy()
+                self._rest(c.hold_s)
+                self._move_to(self.origin)
+                self._rest(c.rest_s)
+        elif c.profile == "press":
             for _ in range(c.repeats):
                 self._move_to(np.array([self.origin[0], self.origin[1], bottom_z]))
                 self._rest(c.hold_s)
