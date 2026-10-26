@@ -90,6 +90,17 @@ def test_line_reaches_its_end_with_a_dither():
     assert np.linalg.norm(script.sample(mid)[0] - base) == pytest.approx(0.01, rel=1e-6)
 
 
+def test_line_returns_at_its_return_speed():
+    end = (0.6, 0.0, 0.2)
+    slow = Script(ScriptConfig(profile="line", line_end=end, speed=0.01, dither_amplitude=0.005, dither_hz=1.0), ORIGIN)
+    fast = Script(ScriptConfig(profile="line", line_end=end, speed=0.01, dither_amplitude=0.005, dither_hz=1.0,
+                               return_speed=0.05), ORIGIN)
+    back = 1.875 * float(np.linalg.norm(np.subtract(end, ORIGIN)))
+    assert slow.duration_s - fast.duration_s == pytest.approx(back / 0.01 - back / 0.05)
+    _, x, _ = sampled(fast)
+    np.testing.assert_allclose(x[-1], ORIGIN, atol=1e-9)
+
+
 def test_origin_must_be_above_the_bottom():
     with pytest.raises(ValueError):
         Script(ScriptConfig(surface_z=0.25), ORIGIN)

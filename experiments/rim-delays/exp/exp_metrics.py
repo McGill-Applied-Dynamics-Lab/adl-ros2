@@ -326,9 +326,26 @@ def e3(run) -> dict:
 # ------------------------------------------------------------------ E4
 
 
-def e4(run, bins: int = 20) -> dict:
-    """Reach sweep: e_F against the position along the line (binned), and the model's Λ eigenvalues
-    there (proxy-rim runs)."""
+def _harmonic(t: np.ndarray, y: np.ndarray, w: float) -> complex:
+    """``y``'s phasor at ``w`` [rad/s], with an offset and a linear trend (a slow line underneath)."""
+    B = np.c_[np.cos(w * t), np.sin(w * t), t - t.mean(), np.ones_like(t)]
+    (c, s_, *_), *_ = np.linalg.lstsq(B, y, rcond=None)
+    return complex(c, -s_)
+
+
+def e4(run, bins: int = 20, mass_bins: int = 7) -> dict:
+    """Reach sweep: e_F against the position along the line (binned), the model's Λ eigenvalues
+    there (proxy-rim runs), and, per position (``mass_bins`` bins), the masses along the dither
+    direction n, phase-separated at the dither frequency ω (friction, in phase with the velocity,
+    drops out of the in-phase part; X, F are first-harmonic phasors):
+
+    - ``m_robot``: the robot's effective mass, ``−Re(F_osc / x) / ω²`` on the robot's own motion;
+    - ``m_felt``: the mass the method renders, ``Re(f / x_p) / ω²`` on the proxy's motion;
+    - ``m_err``: the mass the operator was not shown, ``−Re(e_F / x_p) / ω²`` (≈ m_robot − m_felt
+      when the robot tracks the proxy);
+    - ``tracking``: robot / proxy amplitude, and ``coulomb_N``: the robot's Coulomb friction, ``π Im(F/x)|x|/4``;
+    - ``m_model``: nᵀΛn of the RIM model (proxy-rim runs).
+    """
     seg = _segment(run, "_Oscillation")
     c = _common(run)
     e = c["e"]
@@ -336,27 +353,64 @@ def e4(run, bins: int = 20) -> dict:
         return {"E_end_J": c["E_end_J"]}
     w = _window(e["t"], seg.t0, seg.t0 + seg.duration)
     start, end = seg.base.start, seg.base.end
-    n = (end - start) / np.linalg.norm(end - start)
+    line = (end - start) / np.linalg.norm(end - start)
     pos = M.robot_at(run, e["t"])["x"]
-    s = (pos[w] - start) @ n
+    s = (pos[w] - start) @ line
     eF = np.linalg.norm(e["e_F"][w], axis=1)
-    edges = np.linspace(0.0, float(np.linalg.norm(end - start)), bins + 1)
+    length = float(np.linalg.norm(end - start))
+    edges = np.linspace(0.0, length, bins + 1)
     k = np.clip(np.digitize(s, edges) - 1, 0, bins - 1)
-    out = {"line_length_m": float(edges[-1]), "eF_rms": float(M.rms(eF)),
+    out = {"line_length_m": length, "eF_rms": float(M.rms(eF)),
            "s_m": (0.5 * (edges[:-1] + edges[1:])).tolist(),
            "eF_rms_by_s": [float(M.rms(eF[k == i])) if np.any(k == i) else None for i in range(bins)],
            "E_end_J": c["E_end_J"]}
     m = run.get("model")
+    lam = None
     if m is not None and len(m) and "M_eff_8" in m:
         lam = m[[f"M_eff_{j}" for j in range(9)]].to_numpy().reshape(-1, 3, 3)
         mt = m.ts.to_numpy()
-        mpos = M.robot_at(run, mt)["x"]
-        ms = (mpos - start) @ n
+        ms = (M.robot_at(run, mt)["x"] - start) @ line
         mk = np.clip(np.digitize(ms, edges) - 1, 0, bins - 1)
         eig = np.linalg.eigvalsh(lam)
         inside = (mt >= seg.t0) & (mt <= seg.t0 + seg.duration)
         out["lambda_eig_by_s"] = [np.nanmean(eig[inside & (mk == i)], axis=0).tolist() if np.any(inside & (mk == i)) else None
                                   for i in range(bins)]
+
+    # masses along the dither, per position along the line
+    n, om = seg.direction, 2 * np.pi * seg.frequency_hz
+    lag = float(np.nanmedian(e["lag"]))
+    h, rb = run["haptic"], run["robot"]
+    t, tr = e["t"], rb.ts.to_numpy(float)
+    x_p = h[[f"proxy_x_{j}" for j in range(3)]].to_numpy(float) @ n if "proxy_x_0" in h else M.haptic_side(run)["x_l"] @ n
+    x_r, F_r = rb[["x", "y", "z"]].to_numpy(float), rb[["fx", "fy", "fz"]].to_numpy(float) @ n
+    s_r = (x_r - start) @ line
+    s_h = (M.robot_at(run, t + lag)["x"] - start) @ line  # where the robot was when each haptic tick's command arrived
+    edges = np.linspace(0.0, length, mass_bins + 1)
+    rows = []
+    for i in range(mass_bins):
+        on_r = (s_r >= edges[i]) & (s_r < edges[i + 1]) & _window(tr, seg.t0 + lag, seg.t0 + seg.duration + lag)
+        on_h = (s_h >= edges[i]) & (s_h < edges[i + 1]) & _window(t, seg.t0, seg.t0 + seg.duration)
+        if on_r.sum() < 2 * 1000 / seg.frequency_hz or on_h.sum() < 2 * 1000 / seg.frequency_hz:  # two cycles at least
+            rows.append(None)
+            continue
+        Xr, Fr = _harmonic(tr[on_r], (x_r @ n)[on_r], om), _harmonic(tr[on_r], F_r[on_r], om)
+        Xp = _harmonic(t[on_h], x_p[on_h], om)
+        Xt = _harmonic(t[on_h], M.robot_at(run, t[on_h] + lag)["x"] @ n, om)
+        row = {"s_m": float(0.5 * (edges[i] + edges[i + 1])),
+               "m_robot": float(-(Fr / Xr).real / om**2),
+               "m_felt": float((_harmonic(t[on_h], e["f"][on_h] @ n, om) / Xp).real / om**2),
+               "m_err": float(-(_harmonic(t[on_h], e["e_F"][on_h] @ n, om) / Xp).real / om**2),
+               "tracking": float(abs(Xt / Xp)), "coulomb_N": float(np.pi * (Fr / Xr).imag * abs(Xr) / 4),
+               "A_proxy_m": float(abs(Xp))}
+        if lam is not None:
+            mt = m.ts.to_numpy()
+            ms = (M.robot_at(run, mt)["x"] - start) @ line
+            sel = (ms >= edges[i]) & (ms < edges[i + 1]) & (mt >= seg.t0) & (mt <= seg.t0 + seg.duration)
+            row["m_model"] = float(np.mean(np.einsum("i,kij,j->k", n, lam[sel], n))) if sel.any() else None
+        rows.append(row)
+    out["mass_by_s"] = rows
+    errs = np.array([r["m_err"] for r in rows if r is not None])
+    out["m_err_rms"] = float(np.sqrt(np.mean(errs**2))) if len(errs) else float("nan")
     return out
 
 

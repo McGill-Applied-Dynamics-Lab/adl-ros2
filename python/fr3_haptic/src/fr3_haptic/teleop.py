@@ -238,6 +238,7 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--script-dither-amplitude", type=float, default=0.01, help="line: dither amplitude [m]")
     g.add_argument("--script-dither-hz", type=float, default=1.0, help="line: dither frequency [Hz]")
     g.add_argument("--script-dither-direction", type=float, nargs=3, default=None, help="line: dither direction; default along the line")
+    g.add_argument("--script-return-speed", type=float, default=None, help="line: peak speed back to the origin [m/s]; default --script-speed")
     g.add_argument(
         "--hand",
         action="store_true",
@@ -499,6 +500,7 @@ def script_config(args: argparse.Namespace) -> ScriptConfig | None:
         dither_amplitude=args.script_dither_amplitude,
         dither_hz=args.script_dither_hz,
         dither_direction=None if args.script_dither_direction is None else tuple(args.script_dither_direction),
+        return_speed=args.script_return_speed,
     )
 
 

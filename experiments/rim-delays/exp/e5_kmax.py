@@ -17,9 +17,8 @@ from __future__ import annotations
 import csv
 import json
 
-from common import OUT, Condition, ask, parse, run_experiment, start_inertia, mass_along
-
 import exp_metrics
+from common import OUT, Condition, ask, mass_along, parse, run_experiment, start_inertia
 
 METHODS = ["zoh", "proxy-rim"]  # + one of proxy-god-object / proxy-fixed-mass as a check
 RTTS = [0, "5g", 850, 2600]  # [ms]
@@ -59,7 +58,9 @@ def main() -> None:
                 k_max = None
                 for k in K_LADDER:
                     flags = {"kv": k, **({"proxy_mass": m4} if method == "proxy-fixed-mass" else {})}
-                    print(f"[e5] K = {k} N/m — {'hold the handle' if grip == 'held' else 'drop the handle onto the table'}, tap and hold")
+                    print(
+                        f"[e5] K = {k} N/m — {'hold the handle' if grip == 'held' else 'drop the handle onto the table'}, tap and hold"
+                    )
                     runs = run_experiment("e5", [Condition(method, rtt, flags, f"{grip}_K{k}")], BASE, analyse, args)
                     if args.dry_run:
                         continue
@@ -67,8 +68,11 @@ def main() -> None:
                         break
                     metrics = json.loads((runs[0] / "analysis" / "metrics.json").read_text())
                     stable = metrics["stable"]
-                    answer = ask(f"[e5] HF RMS {metrics['hf_rms_N']:.2f} N vs {HF_THRESHOLD_N} N -> "
-                                 f"{'stable' if stable else 'UNSTABLE'}.", ["accept", "flip"])
+                    answer = ask(
+                        f"[e5] HF RMS {metrics['hf_rms_N']:.2f} N vs {HF_THRESHOLD_N} N -> "
+                        f"{'stable' if stable else 'UNSTABLE'}.",
+                        ["accept", "flip"],
+                    )
                     if answer == "flip":
                         stable = not stable
                     table.parent.mkdir(parents=True, exist_ok=True)

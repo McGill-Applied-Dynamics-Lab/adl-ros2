@@ -29,6 +29,16 @@ REPEATS = 3
 # reaches the operator ~T + 0.1 s after the leader crosses (2.7 s at 2.6 s, after a 2 s hold), and
 # the robot must be back up before the next approach. Applied for T >= 2 s; 2 s / 1 s otherwise.
 LONG_DELAY = {"script_hold_s": 4.0, "script_rest_s": 3.0}
+# Steady-approach sweep, M3–M5 only (label "steady"): in the main sweeps the leader reaches its speed
+# 3 cm above the table, and the M4/M5 proxy (a mass on the coupling, ζ ≈ 0.3, decay ~0.34 s) is still
+# catching up at contact. Here the pre-height gives >= 1 s at constant speed before contact (3 decay
+# times at 20 cm/s), so the proxies meet the table at the leader's speed. M4's mass is nᵀΛn at the
+# contact (its best case at impact). Moves at 10 cm/s to keep the 20 cm retracts short.
+STEADY_METHODS = ["proxy-god-object", "proxy-fixed-mass", "proxy-rim"]
+STEADY_SPEEDS = [0.05, 0.10, 0.20]  # [m/s]
+STEADY_RTT = 850  # [ms]; M3–M5 are flat in the delay
+STEADY_START = [0.4, 0.0, 0.30]  # [m]
+STEADY = {"script_pre_height": 0.20, "script_speed": 0.10, "start_position": STEADY_START}
 START = [0.4, 0.0, 0.12]  # just above the pre-height (0.083 + 0.03 m): a short move down to it
 # Clamp on the felt force f [world N]. No handle feels it (scripted leader): it only cut what the
 # metrics read. M1 drags with K·v·T before contact: 170 N at 20 cm/s and 850 ms, 130 N at 5 cm/s and
@@ -62,6 +72,12 @@ def conditions() -> list[Condition]:
             flags = {"script_approach_speed": v, **(m4 if m == "proxy-fixed-mass" else {}),
                      **(LONG_DELAY if rtt != "5g" and rtt >= 2000 else {})}
             out.append(Condition(m, rtt, flags, f"v{100 * v:g}cm"))
+    m4_contact = {"proxy_mass": round(mass_along(start_inertia([START[0], START[1], BASE["contact_surface"] + 0.005])["Lambda_rim"],
+                                                 [0.0, 0.0, 1.0]), 3)}
+    for v in STEADY_SPEEDS:
+        for m in STEADY_METHODS:
+            flags = {"script_approach_speed": v, **STEADY, **(m4_contact if m == "proxy-fixed-mass" else {})}
+            out.append(Condition(m, float(STEADY_RTT), flags, f"v{100 * v:g}cm_steady"))
     return out
 
 

@@ -74,6 +74,7 @@ class ScriptConfig:
         dither_amplitude: ``line``: dither amplitude [m].
         dither_hz: ``line``: dither frequency [Hz].
         dither_direction: ``line``: dither direction; ``None``: along the line.
+        return_speed: ``line``: peak speed of the move back to the origin [m/s]; ``None``: ``speed``.
     """
 
     profile: str = "press"
@@ -98,6 +99,7 @@ class ScriptConfig:
     dither_amplitude: float = 0.01
     dither_hz: float = 1.0
     dither_direction: tuple[float, float, float] | None = None
+    return_speed: float | None = None
 
     def __post_init__(self) -> None:
         if self.profile not in PROFILES:
@@ -301,7 +303,7 @@ class Script:
             self._t += duration
             self._at = end.copy()
             self._rest(c.rest_s)
-            self._move_to(self.origin)
+            self._move_to(self.origin, c.return_speed)
             self._rest(c.rest_s)
         elif c.profile == "approach":
             pre = np.array([self.origin[0], self.origin[1], c.surface_z + c.pre_height])
@@ -351,9 +353,9 @@ class Script:
             self.segments.append(_Move(self._t, seconds, self._at.copy(), self._at.copy()))
             self._t += seconds
 
-    def _move_to(self, target: np.ndarray) -> None:
+    def _move_to(self, target: np.ndarray, speed: float | None = None) -> None:
         dist = float(np.linalg.norm(target - self._at))
-        duration = 1.875 * dist / self.cfg.speed  # minimum jerk peaks at 1.875x the mean speed
+        duration = 1.875 * dist / (speed or self.cfg.speed)  # minimum jerk peaks at 1.875x the mean speed
         self.segments.append(_Move(self._t, duration, self._at.copy(), np.asarray(target, dtype=float).copy()))
         self._t += duration
         self._at = np.asarray(target, dtype=float).copy()

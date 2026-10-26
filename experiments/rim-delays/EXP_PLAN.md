@@ -83,6 +83,7 @@ Shows when the model matters at contact: model-based vs P-P, and the inertial tr
 
 - **Protocol:** a vertical approach at constant velocity into the table, a hold at fixed leader depth, then retraction.
 - **Conditions:** all methods; approach speeds of 1, 5, 10 and 20 cm/s at T = 850 ms; all four delays at one speed; three repetitions each.
+- **Steady-approach sweep (M3–M5, added 2026-10-26):** 5, 10 and 20 cm/s at T = 850 ms with a 20 cm pre-height, so the proxies meet the table at the leader's speed (≥ 1 s at constant speed, about 3 decay times of the coupling mode); M4's mass tuned at the contact. In the main sweep the leader reaches its speed only 3 cm above the table, and the M4/M5 proxy is still catching up at contact.
 - **Plots:** contact metrics vs approach speed; one time series at 850 ms (leader z, felt force, and robot −F\_osc shifted by T\_c) for M1 vs M5.
 - **Expected:** at low speed all methods converge. As speed rises, M1's onset kick grows with v T, and the model-based transients scale with momentum (Λ v for M5, m v for M4, none for M3). Static force is the same across M3–M5 (K × depth), so E3 carries model-based vs P-P and E1/E2 carry which model.
 
@@ -91,6 +92,7 @@ Shows when the model matters at contact: model-based vs P-P, and the inertial tr
 Shows that a mass tuned at one configuration is wrong elsewhere.&#32;
 
 - **Protocol:** a slow scripted line from near the base outward, with a small sinusoidal dither superimposed so inertial force is present throughout.
+- **Design (2026-10-26):** x 0.30 → 0.68 m at z = 0.15 m (held Λ along z ~16 → ~7 kg), a 3 cm vertical dither at 0.7 Hz (below the proxy's coupling resonance, 1.3–1.9 Hz along the line), 1 cm/s along the line; masses phase-separated at the dither frequency (friction drops out). The first design (x at z = 0.25 m, 1 cm at 1.5 Hz along the line) sat on that resonance, and Λ along x hardly changes there.
 - **Conditions:** M4 (tuned at the start of the line) and M5, at T = 0 and 2.6 s.
 - **Plots:** e\_F and the eigenvalues of Λ against position along the path.
 - **Expected:** M4 is right at its tuning point and degrades away from it; M5 does not. Approaching the extended-arm singularity, the radial effective mass grows and M5 makes the arm feel locked, which is true of the robot. Stop well short of the singularity on hardware.
@@ -163,7 +165,7 @@ Reported 5G figures vary widely: an RTT of about 6.5 ms in a field trial ([sourc
 | K | 1000 | N/m | 70% of K\_max at T = 0 | `teleop.yaml` `kv` |
 | D | 70 | N·s/m | ζ ≈ 0.7 on m\_d, buzz-capped | `teleop.yaml` `dv` |
 | K for M1 (per T) | 1000 (common K) | N/m | common K, else 70% of M1's K\_max(T) | device runs only; `K_M1` in `e6_taps.py` is empty |
-| m (M4) | E1 14.46 (heavy) / 4.79 (light); E2 4.73 (+y); E3 11.73 (z, start (0.4, 0, 0.12)); E5, E6 9.08 (z); E4 13.41 (along the line) | kg | nᵀΛ₀n | held Λ₀ (`rim_hold_orientation`), IK from home to each start; computed by the scripts per run |
+| m (M4) | E1 14.46 (heavy) / 4.79 (light); E2 4.73 (+y); E3 11.73 (z, start (0.4, 0, 0.12)); E5, E6 9.08 (z); E4 15.95 (z, at the line's start (0.30, 0, 0.15)) | kg | nᵀΛ₀n | held Λ₀ (`rim_hold_orientation`), IK from home to each start; computed by the scripts per run |
 | f\_t | 1000 | Hz | = f\_h | `teleop.yaml` `command_hz` |
 | f\_m, robot state (M1) | 500 | Hz | ZOH ripple K\|v\|/f\_m ≤ 1 N | pilot (fm\_circle2): 0.72 N at p95 speed, 1 ms mean hold |
 | f\_m, RIM model (M5) | 25 | Hz | Λ change ≤ 3 % per update, holding ≤ 0.5 N | pilot (fm\_circle2): 2.1 % p95, 0.12 N RMS |

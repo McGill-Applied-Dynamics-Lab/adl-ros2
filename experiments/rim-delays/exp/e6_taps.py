@@ -13,9 +13,8 @@ K_max(T) from E5) and report it.
 
 from __future__ import annotations
 
-from common import Condition, mass_along, parse, run_experiment, start_inertia
-
 import exp_metrics
+from common import Condition, mass_along, parse, run_experiment, start_inertia
 
 METHODS = ["zoh", "proxy-god-object", "proxy-fixed-mass", "proxy-rim"]
 RTTS = [0, "5g", 850, 2600]  # [ms]
