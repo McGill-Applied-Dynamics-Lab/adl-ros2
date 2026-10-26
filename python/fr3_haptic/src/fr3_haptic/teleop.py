@@ -316,6 +316,11 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--start-speed", type=float, default=0.05, help="speed of the move to --start-position [m/s]")
     g.add_argument("--ee-state-topic", default="/fr3/osc/ee_state")
     g.add_argument("--task-wrench-topic", default="/fr3/osc/task_wrench")
+    g.add_argument(
+        "--contact-limit-topic",
+        default="/fr3/osc/contact_limit",
+        help="osc_controller's contact force limiter event count, logged in the run metadata; '' disables",
+    )
     g.add_argument("--tool-tip-offset", type=float, nargs=3, default=None, help="proxy-rim: model interface point [m]")
     g.add_argument(
         "--rim-hold-orientation",
@@ -333,6 +338,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     g = p.add_argument_group("run")
     g.add_argument("--seconds", type=float, default=60.0, help="run length [s]")
+    g.add_argument("--print-every-s", type=float, default=1.0, help="haptic status line period [s]; 0 disables")
     g.add_argument("--save", action="store_true", help="write an MCAP run")
     g.add_argument("--output-dir", default="data/fr3_haptic", help="where --save writes runs")
     g.add_argument("--notes", default="", help="free text stored with the run")
@@ -622,6 +628,7 @@ def main(argv: list[str] | None = None) -> None:
         frame,
         ee_state_topic=args.ee_state_topic,
         task_wrench_topic=args.task_wrench_topic,
+        contact_limit_topic=args.contact_limit_topic or None,
         sample_period_s=0.0 if args.model_update_hz <= 0 else 1.0 / args.model_update_hz,
         interface_limits=limits,
         record=True,
@@ -693,6 +700,7 @@ def main(argv: list[str] | None = None) -> None:
         contact_axis=contact_axis,
         step=HapticStepConfig(
             haptic_hz=args.haptic_hz,
+            print_every_s=args.print_every_s,
             max_force_world=args.max_i3_force / args.force_gain,
             force_ramp_s=args.force_ramp_s,
             guard_cooldown_s=args.guard_cooldown_s,
@@ -843,6 +851,8 @@ def main(argv: list[str] | None = None) -> None:
 
     # -- report and log --------------------------------------------------------------------
     stop_reason = loop.shared.stop_reason or result.stop_reason
+    if result.error:  # the haptic loop died: the run did not end, whatever the command loop saw
+        stop_reason = "haptic process error"
     print(f"{TAG} stopped: {stop_reason}")
     if result.error:
         print(f"{TAG} haptic process error:\n{result.error}")
@@ -856,6 +866,10 @@ def main(argv: list[str] | None = None) -> None:
             print(f"{TAG} {line}")
     print(f"{TAG} guard trips: {result.guard_trips}, watchdog trips: {result.watchdog_trips}")
     print(f"{TAG} controller ticks recorded: {sum(s.rx_s >= t0 for s in plant.history)} during the run")
+    contact_limit_s = [t - t0 for t in plant.contact_limit_events(t0)]
+    if contact_limit_s:
+        print(f"{TAG} WARNING: osc_controller's contact force limit was reached {len(contact_limit_s)} time(s), at "
+              + ", ".join(f"{t:.1f}" for t in contact_limit_s) + " s: the robot's force was capped")
     if links_cfg.enabled:
         print(f"{TAG} links: {links.summary()}")
     if recorder is not None:
@@ -888,6 +902,9 @@ def main(argv: list[str] | None = None) -> None:
         "hold_orientation_xyzw": hold.orientation.as_quat().tolist(),
         "leader_origin": leader_origin.tolist(),
         "stop_reason": stop_reason,
+        # osc_controller's contact force limiter: events during the run, run time of each [s]
+        # (None: not subscribed)
+        "contact_limit": {"events": len(contact_limit_s), "times_s": contact_limit_s} if args.contact_limit_topic else None,
         "haptic_scheduling": result.realtime,
     }
     logger_config = (

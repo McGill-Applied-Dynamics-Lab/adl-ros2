@@ -17,7 +17,7 @@ from __future__ import annotations
 import csv
 import json
 
-from common import OUT, Condition, parse, run_experiment, start_inertia, mass_along
+from common import OUT, Condition, ask, parse, run_experiment, start_inertia, mass_along
 
 import exp_metrics
 
@@ -67,9 +67,9 @@ def main() -> None:
                         break
                     metrics = json.loads((runs[0] / "analysis" / "metrics.json").read_text())
                     stable = metrics["stable"]
-                    answer = input(f"[e5] HF RMS {metrics['hf_rms_N']:.2f} N vs {HF_THRESHOLD_N} N -> "
-                                   f"{'stable' if stable else 'UNSTABLE'}. Enter: accept | f: flip > ").strip().lower()
-                    if answer == "f":
+                    answer = ask(f"[e5] HF RMS {metrics['hf_rms_N']:.2f} N vs {HF_THRESHOLD_N} N -> "
+                                 f"{'stable' if stable else 'UNSTABLE'}.", ["accept", "flip"])
+                    if answer == "flip":
                         stable = not stable
                     table.parent.mkdir(parents=True, exist_ok=True)
                     new = not table.exists()

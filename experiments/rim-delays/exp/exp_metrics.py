@@ -71,6 +71,55 @@ def e1(run) -> dict:
     }
 
 
+def _half_range(y: np.ndarray) -> float:
+    """Half the 1–99 percentile span: a sine's amplitude, robust to spikes."""
+    return float(np.percentile(y, 99) - np.percentile(y, 1)) / 2
+
+
+def _first_harmonic(t: np.ndarray, y: np.ndarray, w: float) -> complex:
+    """``y``'s phasor at ``w`` [rad/s] (least squares on cos, sin and an offset)."""
+    B = np.c_[np.cos(w * t), np.sin(w * t), np.ones_like(t)]
+    (c, s, _), *_ = np.linalg.lstsq(B, y, rcond=None)
+    return complex(c, -s)
+
+
+def e1_checks(run) -> dict:
+    """Diagnostics of an E1 run, over ``e1``'s window (the robot's shifted by the measured lag):
+    stop reason, OSC stiffness and coupling K, time with the chatter guard tripped; the amplitude
+    along n of the leader, the proxy (M3–M5) and the robot [m]; and the robot's first-harmonic
+    impedance ``Z = F_osc / x`` along n at the drive frequency. ``Re Z = k − m ω²`` gives the
+    robot's effective mass over the frequencies; ``Im Z`` is friction: for Coulomb friction F_c,
+    ``F_c ≈ π Im Z |X| / 4`` (constant in frequency), for viscous friction ``c = Im Z / ω``."""
+    meta = run["meta"]
+    out = {"stop_reason": meta.get("stop_reason"), "osc_k_pos_x": (meta.get("controller_params") or {}).get("gains.k_pos_x"),
+           "K": meta.get("args", {}).get("kv")}
+    seg = _segment(run, "_Oscillation")
+    if seg is None:
+        return out
+    e = M.unfelt_force(run)
+    lag = float(np.nanmedian(e["lag"]))
+    n = seg.direction
+    t0, t1 = seg.t0 + seg.ramp_s, seg.t0 + seg.duration - seg.ramp_s
+    h, rb = run["haptic"], run["robot"]
+    th, tr = h.ts.to_numpy(float), rb.ts.to_numpy(float)
+    wh, wr = _window(th, t0, t1), _window(tr, t0 + lag, t1 + lag)
+    x_l = h[[f"x_l_{i}" for i in range(3)]].to_numpy(float) @ n
+    x_r = rb[["x", "y", "z"]].to_numpy(float) @ n
+    F = rb[["fx", "fy", "fz"]].to_numpy(float) @ n
+    w = 2 * np.pi * run["meta"]["script"]["frequency_hz"]
+    X, Fh = _first_harmonic(tr[wr], x_r[wr], w), _first_harmonic(tr[wr], F[wr], w)
+    Z = Fh / X
+    out.update({
+        "guard_s": float(h.guard_tripped.to_numpy(float).sum() * np.median(np.diff(th))) if "guard_tripped" in h else 0.0,
+        "A_leader": _half_range(x_l[wh]),
+        "A_proxy": _half_range((h[[f"proxy_x_{i}" for i in range(3)]].to_numpy(float) @ n)[wh])
+        if "proxy_x_0" in h and np.isfinite(h.proxy_x_0).any() else np.nan,
+        "A_robot": _half_range(x_r[wr]),
+        "X1": abs(X), "F1": abs(Fh), "ReZ": Z.real, "ImZ": Z.imag, "coulomb_N": np.pi * Z.imag * abs(X) / 4,
+    })
+    return out
+
+
 # ------------------------------------------------------------------ E2
 
 
@@ -120,6 +169,59 @@ def e2(run, bins: int = 36) -> dict:
     }
 
 
+def _mean_and_2f(phase: np.ndarray, y: np.ndarray) -> tuple[float, float, float]:
+    """Mean, amplitude and phase [deg] of ``y``'s component at twice the circle frequency."""
+    ok = np.isfinite(y)
+    p = phase[ok]
+    (c0, c, s_), *_ = np.linalg.lstsq(np.c_[np.ones_like(p), np.cos(2 * p), np.sin(2 * p)], y[ok], rcond=None)
+    return float(c0), float(np.hypot(c, s_)), float(np.degrees(np.arctan2(s_, c)) / 2)
+
+
+def e2_checks(run, bins: int = 36) -> dict:
+    """Diagnostics of an E2 run, over ``e2``'s window: stop reason, OSC stiffness, RIM reduction
+    (orientation held or free), M4's mass, chatter-guard time; the felt radial force (the outward
+    reaction the proxy renders), the robot's radial and tangential force (``F_osc``), each binned
+    against the circle phase with its mean and its component at twice the circle frequency (2f);
+    and the robot's own circle radius (its stream, shifted by the measured lag) [m]."""
+    meta = run["meta"]
+    args = meta.get("args", {})
+    out = {"stop_reason": meta.get("stop_reason"), "osc_k_pos_x": (meta.get("controller_params") or {}).get("gains.k_pos_x"),
+           "hold_orientation": args.get("rim_hold_orientation"), "proxy_mass": args.get("proxy_mass")}
+    seg = _segment(run, "_Circle")
+    if seg is None:
+        return out
+    e = M.unfelt_force(run)
+    w = _window(e["t"], seg.t0 + seg.ramp_s, seg.t0 + seg.duration - seg.ramp_s)
+    hs = M.haptic_side(run)
+    rel = hs["x_l"][w, :2] - seg.center[:2]
+    phase = np.arctan2(rel[:, 1], rel[:, 0])
+    inward = -rel / np.linalg.norm(rel, axis=1, keepdims=True)
+    tangent = np.stack([inward[:, 1], -inward[:, 0]], 1) * np.sign(seg.omega)
+    signals = {
+        "felt_radial": np.sum(-e["f"][w, :2] * inward, 1),
+        "robot_radial": np.sum(e["F_osc"][w, :2] * inward, 1),
+        "robot_tangential": np.sum(e["F_osc"][w, :2] * tangent, 1),
+    }
+    edges = np.linspace(-np.pi, np.pi, bins + 1)
+    k = np.clip(np.digitize(phase, edges) - 1, 0, bins - 1)
+    out["phase_deg"] = np.degrees(0.5 * (edges[:-1] + edges[1:])).tolist()
+    for name, y in signals.items():
+        out[f"{name}_mean"], out[f"{name}_2f"], out[f"{name}_2f_phase_deg"] = _mean_and_2f(phase, y)
+        out[f"{name}_by_phase"] = [float(np.nanmean(y[k == i])) if np.any(k == i) else None for i in range(bins)]
+    rb, lag = run["robot"], float(np.nanmedian(e["lag"]))
+    tr = rb.ts.to_numpy(float)
+    wr = _window(tr, seg.t0 + seg.ramp_s + lag, seg.t0 + seg.duration - seg.ramp_s + lag)
+    radius = np.linalg.norm(rb[["x", "y"]].to_numpy(float)[wr] - seg.center[:2], axis=1)
+    h = run["haptic"]
+    out.update({
+        "guard_s": float(h.guard_tripped.to_numpy(float).sum() * np.median(np.diff(h.ts.to_numpy(float))))
+        if "guard_tripped" in h else 0.0,
+        "robot_radius_mean": float(radius.mean()), "robot_radius_half_range": _half_range(radius),
+        "accel": float(seg.radius * seg.omega**2),
+    })
+    return out
+
+
 # ------------------------------------------------------------------ contact (E3, E5, E6)
 
 
@@ -129,7 +231,10 @@ def contacts(run, crossings: np.ndarray, window_s: float = 1.5) -> list[dict]:
     the contact cannot show as an onset), force-onset latency (the felt force rising ``CONTACT_N``
     above its level just before the crossing), leader penetration at onset, felt overshoot (peak /
     settled), settling time, bounces (leader re-entries), robot peak table force, e_F_z and HF force
-    RMS (> 8 Hz) over the contact."""
+    RMS (> 8 Hz) over the contact; and the time to the hold force (``hold_latency_ms``: from the
+    crossing until the felt force is within ±20 % of its settled value for good). The onset needs a
+    rise; M1 under delay drags more before contact than it feels in it, so for M1 the time to the
+    hold force is the one to read. ``window_s`` should cover the leader's time at depth."""
     hs = M.haptic_side(run)
     e = M.unfelt_force(run)
     t, z, fz = hs["t"], hs["x_l"][:, 2], hs["f"][:, 2]
@@ -143,20 +248,25 @@ def contacts(run, crossings: np.ndarray, window_s: float = 1.5) -> list[dict]:
         pre = _window(t, tc - 0.1, tc - 0.01)  # just before: clear of the approach's speed ramp
         base = float(np.median(fz[pre])) if pre.any() else 0.0
         saturated = abs(base) >= 0.95 * clamp
+        # the hold force (the last 0.5 s at depth) and when the felt force reached it for good
+        held = _window(t, tc + window_s - 0.5, tc + window_s) & (z < s)
+        settled = float(np.median(fz[held])) if held.any() else float("nan")
+        band = np.abs(fz - settled) > 0.2 * max(abs(settled), CONTACT_N)  # outside ±20 % of it
+        off = np.flatnonzero(_window(t, tc, tc + window_s) & band) if np.isfinite(settled) else []
+        hold_latency = float(1e3 * (t[off[-1]] - tc)) if len(off) else 0.0
         after = _window(t, tc - 0.01, tc + window_s)
         on_idx = np.flatnonzero(after & (fz - base > CONTACT_N))
         if not len(on_idx):
-            out.append({"t_cross": float(tc), "felt_at_crossing_N": base, "saturated": saturated,
-                        "onset_latency_ms": float("nan")})
+            out.append({"t_cross": float(tc), "hold_latency_ms": hold_latency, "felt_settled_N": settled,
+                        "felt_at_crossing_N": base, "saturated": saturated, "onset_latency_ms": float("nan")})
             continue
         i0 = on_idx[0]
         inside = _window(t, t[i0], tc + window_s) & (z < s)
-        settled = float(np.median(fz[_window(t, tc + window_s - 0.5, tc + window_s) & (z < s)])) if inside.any() else float("nan")
-        band = np.abs(fz - settled) > 0.2 * max(abs(settled), CONTACT_N)
         late = np.flatnonzero(inside & band)
         reentries = np.flatnonzero(np.diff((z[inside] < s).astype(int)) == 1) if inside.any() else []
         out.append({
             "t_cross": float(tc),
+            "hold_latency_ms": hold_latency,
             "felt_at_crossing_N": base,
             "saturated": saturated,
             "onset_latency_ms": float(1e3 * (t[i0] - tc)),
@@ -199,10 +309,18 @@ def _summarize(rows: list[dict]) -> dict:
 def e3(run) -> dict:
     """Contact onset at a constant approach speed: the contact metrics, one per approach, averaged."""
     c = _common(run)
-    rows = contacts(run, _leader_crossings(run), window_s=1.5)
     cfg = run["meta"].get("script") or {}
+    # the leader's time at depth after the crossing: the rest of the approach, then the hold
+    at_depth = cfg.get("depth", 0.01) / max(cfg.get("approach_speed") or 0.05, 1e-3) + cfg.get("hold_s", 2.0)
+    rows = contacts(run, _leader_crossings(run), window_s=at_depth)
+    # osc_controller's contact force limiter (run time of each event): a contact is limited if an
+    # event falls between its leader crossing and 5 s later (the robot reaches the table T_c later)
+    limit = run["meta"].get("contact_limit") or {}
+    times = np.asarray(limit.get("times_s", []), dtype=float)
+    for r in rows:
+        r["contact_limited"] = bool(np.any((times >= r["t_cross"]) & (times <= r["t_cross"] + 5.0)))
     return {"approach_speed": cfg.get("approach_speed"), **_summarize(rows), "E_end_J": c["E_end_J"],
-            "E_min_J": c["E_min_J"]}
+            "E_min_J": c["E_min_J"], "contact_limit_events": limit.get("events")}
 
 
 # ------------------------------------------------------------------ E4

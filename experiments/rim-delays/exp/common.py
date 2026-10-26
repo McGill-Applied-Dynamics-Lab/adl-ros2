@@ -3,10 +3,20 @@
 An experiment script sets its parameters at the top and calls [run_experiment][] with a list of
 [Condition][]s (method, round-trip delay, extra ``fr3_teleop`` flags). For each condition this:
 
-1. asks before running on the robot (Enter: run, ``s``: skip, ``q``: quit; ``--yes`` does not ask);
+0. skips it if it already ran: a run of the same condition, with the same flags, that ended normally
+   (``--rerun`` runs it again); the earlier run goes in the session file;
+1. asks before an Inverse3 run on the robot (run, skip or quit; ``--yes`` does not ask); scripted
+   runs follow each other without asking. Every prompt takes a word or its first letter, and
+   Enter picks the default (in capitals);
 2. runs ``fr3_teleop`` (``--sim``: ``sim_teleop.py``) with ``configs/teleop.yaml``, the experiment's
    base flags, the condition's flags and its delay; the run is saved as
-   ``<OUT>/<robot|sim>/<exp>/<YYYYmmdd_HHMMSS>_<exp>_<condition>``, so nothing is ever overwritten;
+   ``<OUT>/<robot|sim>/<exp>/<YYYYmmdd_HHMMSS>_<exp>_<condition>``, so nothing is ever overwritten.
+   ``--home`` (if the experiment sets it) is passed to the session's first run only, and again
+   after a server crash; the other runs only move to the start position. If ``fr3_teleop`` cannot
+   reach the robot or the haptic watchdog stops the run (the server crashed: [SERVER_DOWN][],
+   [WATCHDOG][]), it asks to retry the same condition (a stopped run is kept and analysed, not
+   listed); any other failure ends the session. A crashed haptic process ([HAPTIC_ERROR][]) is
+   retried [AUTO_RETRIES][] times without asking. The haptic status lines are off;
 3. analyses it: ``analysis/check_run.py`` (``<run>/analysis/check.md`` + figures) and the
    experiment's own metrics (``<run>/analysis/metrics.json``);
 4. appends the run to the session file ``<OUT>/<robot|sim>/<exp>/sessions/<start time>.txt``, the
@@ -15,7 +25,7 @@ An experiment script sets its parameters at the top and calls [run_experiment][]
 Delays are round trips (``rtt_ms``), split evenly between the links, with one seed per delay
 condition so every method sees the same delay sequence. ``"5g"`` replays the lab's 5G trace.
 
-Common flags of every script: ``--sim``, ``--dry-run`` (print the commands), ``--yes``,
+Common flags of every script: ``--sim``, ``--dry-run`` (print the commands), ``--yes``, ``--rerun``,
 ``--only-method m …``, ``--only-rtt r …``, ``--analyse <run dir> …`` (re-run the analysis only).
 """
 
@@ -43,6 +53,13 @@ TRACE_RTT_MS = {"5g": 45.0}  # rough mean round trip of a replayed trace, for th
 # K|v|/f_m 0.72 N), RIM model 25 Hz (Λ change 2.1 % per update, 0.12 N RMS from holding); targets
 # at f_t = f_h = 1 kHz. Every run gets them.
 RATES = {"model_update_hz": 500.0, "rim_update_hz": 25.0, "command_hz": 1000.0}
+# fr3_teleop's errors when the robot server is not there (crashed): the condition can be retried.
+SERVER_DOWN = ("Timeout waiting for", "Timed out waiting for")
+WATCHDOG = "watchdog"  # in a run's stop reason: the robot's samples stopped arriving mid-run
+RUN_ENDED = "run ended"  # the stop reason of a run that went to its end
+HAPTIC_ERROR = "haptic process error"  # the stop reason when the haptic loop crashed (no haptic log)
+AUTO_RETRIES = 2  # a crashed haptic process is retried this many times before asking
+QUIET = {"print_every_s": 0}  # no haptic status lines
 
 
 @dataclass
@@ -150,6 +167,28 @@ def start_inertia(start_position, hold_orientation: bool | None = None) -> dict:
     return {**at, "q": q, "eigvals": w, "eigvecs": v, "hold_orientation": bool(hold_orientation)}
 
 
+def held_mass_with_armature(start_position, directions: dict, armatures) -> "pd.DataFrame":
+    """nᵀΛn with the orientation held, at the start joints, with a uniform reflected rotor
+    inertia (armature, kg·m²) added to the mass matrix's diagonal: what the RIM model would say
+    with the motors' inertia, which the URDF leaves out. ``directions``: name → unit vector."""
+    import pandas as pd
+    import pinocchio as pin
+
+    from lambda_map import Inertia
+
+    q = start_inertia(start_position)["q"]
+    inertia = Inertia()
+    inertia.at(q)  # fills the adapter's data at q
+    a = inertia.adapter
+    J6 = pin.computeFrameJacobian(a._model, a._data, q, a._ee_frame_id, pin.LOCAL_WORLD_ALIGNED)
+    M = a._data.M.copy()
+    rows = []
+    for ia in armatures:
+        lam = np.linalg.inv(J6 @ np.linalg.inv(M + ia * np.eye(len(q))) @ J6.T)[:3, :3]
+        rows.append({"armature": ia, **{k: mass_along(lam, n) for k, n in directions.items()}})
+    return pd.DataFrame(rows).set_index("armature")
+
+
 def mass_along(lam: np.ndarray, n) -> float:
     """``nᵀΛn`` for a unit ``n``: M4's best-case mass along ``n``."""
     n = np.asarray(n, dtype=float)
@@ -165,6 +204,7 @@ def parse(description: str, argv=None) -> argparse.Namespace:
     p.add_argument("--sim", action="store_true", help="simulated FR3 (sim_teleop.py)")
     p.add_argument("--dry-run", action="store_true", help="print the commands, run nothing")
     p.add_argument("--yes", action="store_true", help="do not ask before each robot run")
+    p.add_argument("--rerun", action="store_true", help="run every condition, even those already done")
     p.add_argument("--only-method", nargs="+", default=None)
     p.add_argument("--only-rtt", nargs="+", default=None, help="round trips [ms], or 5g")
     p.add_argument("--analyse", type=Path, nargs="+", default=None, help="re-run the analysis of these runs only")
@@ -186,6 +226,9 @@ def analyse_run(run_dir: Path, analyse) -> dict:
     out = run_dir / "analysis"
     out.mkdir(exist_ok=True)
     write_markdown(out / "check.md", run_dir, lines, warnings, save_figures(run, out, show=False))
+    if run.get("haptic") is None:  # the haptic process crashed: nothing to compute the metrics on
+        print(f"[exp] {run_dir.name}: no haptic log, no metrics")
+        return {}
     metrics = analyse(run) if analyse is not None else {}
     metrics = {k: (v.tolist() if isinstance(v, np.ndarray) else v) for k, v in metrics.items()}
     metrics["warnings"] = warnings
@@ -193,6 +236,89 @@ def analyse_run(run_dir: Path, analyse) -> dict:
     print("[exp] metrics: " + ", ".join(f"{k} {v:.3g}" if isinstance(v, float) else f"{k} {v}"
                                         for k, v in metrics.items() if not isinstance(v, (list, dict))))
     return metrics
+
+
+def stop_reason(run_dir: Path) -> str | None:
+    """Why a saved run ended (``None``: no run saved)."""
+    path = run_dir / "metadata.json"
+    if not path.exists():
+        return None
+    meta = json.loads(path.read_text())
+    return meta.get("metadata", meta).get("stop_reason", "")
+
+
+def same_flags(a: dict, b: dict) -> bool:
+    """Whether two runs' flags are the same condition (``home`` and output flags aside, floats to 1e-6)."""
+    def norm(f):
+        text = json.dumps({k: v for k, v in f.items() if k not in ("home", *QUIET)}, default=float)
+        return json.loads(text, parse_float=lambda x: round(float(x), 6))
+
+    return norm(a) == norm(b)
+
+
+def previous_run(out_dir: Path, exp: str, c: Condition, flags: dict) -> Path | None:
+    """The latest run of this condition with these flags that ended normally and was analysed, if any."""
+    for d in sorted(out_dir.glob(f"*_{c.name(exp)}"), reverse=True):
+        cond_path = d / "experiment.json"
+        if (d.name[16:] != c.name(exp) or not cond_path.exists() or stop_reason(d) != RUN_ENDED
+                or not (d / "analysis" / "metrics.json").exists()):
+            continue
+        if same_flags(json.loads(cond_path.read_text())["flags"], flags):
+            return d
+    return None
+
+
+def _tty() -> bool:
+    return sys.stdout.isatty()
+
+
+def ask(prompt: str, options: list[str]) -> str:
+    """Ask until the answer is one of ``options`` (a word or its first letter, any case); Enter
+    picks the first, the default. Returns the option."""
+    menu = " / ".join(f"[{o[0].upper()}]{o[1:]}" if i == 0 else f"({o[0]}){o[1:]}" for i, o in enumerate(options))
+    while True:
+        answer = input(f"{prompt}  {menu} > ").strip().lower()
+        if not answer:
+            return options[0]
+        for o in options:
+            if answer in (o, o[0]):
+                return o
+        print(f"  ? {answer!r}: type one of {', '.join(options)} (or its first letter)")
+
+
+def header(text: str) -> None:
+    """A condition's header: a rule across the terminal, then the text (bold on a terminal)."""
+    rule = "═" * 100
+    print(f"\n{rule}\n\033[1m{text}\033[0m" if _tty() else f"\n{rule}\n{text}", flush=True)
+
+
+def alert(message: str) -> None:
+    """A message that stands out: a bold red banner (on a terminal) and the terminal bell."""
+    bar = "!" * 78
+    text = f"\n{bar}\n!!  {message}\n{bar}"
+    if _tty():
+        text = f"\033[1;31m{text}\033[0m\a"
+    print(text, flush=True)
+
+
+def run_teleop(cmd: list[str]) -> tuple[int, str]:
+    """Run ``fr3_teleop``, its stderr shown live and kept; returns the exit code and the stderr."""
+    proc = subprocess.Popen(cmd, cwd=REPO, stderr=subprocess.PIPE, text=True, bufsize=1)
+    err = []
+    try:
+        for line in proc.stderr:
+            sys.stderr.write(line)
+            err.append(line)
+    except KeyboardInterrupt:  # Ctrl-C reaches fr3_teleop too: let it stop the robot and save
+        proc.wait()
+        raise
+    return proc.wait(), "".join(err)
+
+
+def write_condition(run_dir: Path, exp: str, c: Condition, flags: dict) -> None:
+    """``<run>/experiment.json``: the experiment, the condition and the flags it ran with."""
+    (run_dir / "experiment.json").write_text(json.dumps({"exp": exp, "method": c.method, "rtt": c.rtt,
+                                                         "label": c.label, "flags": flags}, indent=2, default=float))
 
 
 def run_experiment(exp: str, conditions: list[Condition], base_flags: dict, analyse=None, args=None,
@@ -214,8 +340,9 @@ def run_experiment(exp: str, conditions: list[Condition], base_flags: dict, anal
     exe = [sys.executable, str(RIM / "sim_teleop.py")] if args.sim else ["fr3_teleop"]
     print(f"[exp] {exp}: {len(todo)} runs -> {out_dir}  (session list: {session})")
     done: list[Path] = []
+    home = bool(base_flags.get("home"))  # the first run only (and after a server crash)
     for i, c in enumerate(todo, 1):
-        flags = {**RATES, **base_flags, **c.flags, "method": c.method, **delay_flags(c.rtt)}
+        flags = {**RATES, **QUIET, **base_flags, **c.flags, "method": c.method, **delay_flags(c.rtt), "home": home}
         if "seconds" not in flags:
             script_s = script_seconds(flags)
             if script_s is None:
@@ -223,27 +350,71 @@ def run_experiment(exp: str, conditions: list[Condition], base_flags: dict, anal
             label = rtt_label(c.rtt)
             rtt_s = (TRACE_RTT_MS[label] if label in TRACE_RTT_MS else float(c.rtt)) / 1e3
             flags["seconds"] = round(script_s + rtt_s + margin_s, 1)
-        print(f"\n[exp] {i}/{len(todo)} {c.name(exp)}  ({flags['seconds']:.0f} s)")
+        prior = None if args.rerun else previous_run(out_dir, exp, c, flags)
+        if prior is not None:
+            print(f"[exp] {i}/{len(todo)} {c.name(exp)}: done before ({prior.name}), skipped")
+            if not args.dry_run:
+                session.parent.mkdir(parents=True, exist_ok=True)
+                with session.open("a") as fh:
+                    fh.write(f"{prior}\n")
+            done.append(prior)
+            continue
+        header(f"[exp] {i}/{len(todo)} {c.name(exp)}  ({flags['seconds']:.0f} s)")
         if args.dry_run:
             print("  " + " ".join(exe + ["--conf", str(CONF)] + to_argv(flags)))
+            home = False
             continue
-        if not args.sim and not args.yes:
-            answer = input("  Enter: run | s: skip | q: quit > ").strip().lower()
-            if answer == "q":
+        if flags.get("device") != "scripted" and not args.sim and not args.yes:
+            answer = ask("[exp] ready?", ["run", "skip", "quit"])
+            if answer == "quit":
                 break
-            if answer == "s":
+            if answer == "skip":
                 continue
-        name = f"{datetime.datetime.now():%Y%m%d_%H%M%S}_{c.name(exp)}"
-        cmd = exe + ["--conf", str(CONF)] + to_argv(flags) + [
-            "--save", "--output-dir", str(out_dir), "--run-name", name, "--notes", f"{exp} {c.name(exp)}"]
-        subprocess.run(cmd, cwd=REPO)
-        run_dir = out_dir / name
-        if not (run_dir / "metadata.json").exists():
-            print(f"[exp] {name}: no run saved")
-            continue
-        meta_path = run_dir / "experiment.json"
-        meta_path.write_text(json.dumps({"exp": exp, "method": c.method, "rtt": c.rtt, "label": c.label,
-                                         "flags": flags}, indent=2, default=float))
+        auto_retries = 0
+        while True:
+            name = f"{datetime.datetime.now():%Y%m%d_%H%M%S}_{c.name(exp)}"
+            cmd = exe + ["--conf", str(CONF)] + to_argv(flags) + [
+                "--save", "--output-dir", str(out_dir), "--run-name", name, "--notes", f"{exp} {c.name(exp)}"]
+            code, err = run_teleop(cmd)
+            run_dir = out_dir / name
+            reason = stop_reason(run_dir)
+            stopped = reason is not None and WATCHDOG in reason
+            crashed = reason == HAPTIC_ERROR
+            if crashed and auto_retries < AUTO_RETRIES:
+                auto_retries += 1
+                write_condition(run_dir, exp, c, flags)
+                print(f"[exp] {name}: the haptic process crashed; retrying ({auto_retries}/{AUTO_RETRIES})")
+                continue
+            if not stopped and not crashed and (code == 0 or not any(s in err for s in SERVER_DOWN)):
+                break
+            if stopped or crashed:  # kept for diagnosis, not listed in the session
+                write_condition(run_dir, exp, c, flags)
+                analyse_run(run_dir, analyse)
+            if crashed:
+                alert(f"HAPTIC PROCESS CRASHED {AUTO_RETRIES + 1} TIMES: {c.name(exp)}\n!!  "
+                      "See the traceback above.")
+            else:
+                alert(f"ROBOT SERVER {'STOPPED MID-RUN (watchdog)' if stopped else 'NOT RESPONDING'}: "
+                      f"{c.name(exp)}\n!!  Restart the server on the mini-PC, then retry.")
+            if ask("[exp]", ["retry", "quit"]) == "quit":
+                raise SystemExit(f"[exp] stopped at {i}/{len(todo)} {c.name(exp)}; session list: {session}")
+            flags["home"] = bool(base_flags.get("home"))  # the server restarted: home again
+        home = False
+        saved = reason is not None
+        if code != 0 or not saved:
+            if saved:  # keep what was recorded before the failure
+                analyse_run(run_dir, analyse)
+            raise SystemExit(f"[exp] {name}: fr3_teleop failed (exit {code}"
+                             f"{', run saved' if saved else ', no run saved'}); stopped at {i}/{len(todo)}. "
+                             f"Session list: {session}")
+        if reason != RUN_ENDED:
+            print(f"[exp] {name}: stopped early ({reason}); it will run again next time")
+        meta = json.loads((run_dir / "metadata.json").read_text())
+        limit = meta.get("metadata", meta).get("contact_limit") or {}
+        if limit.get("events"):  # kept: the run is valid, its robot force was capped (check.md says when)
+            alert(f"CONTACT FORCE LIMIT reached {limit['events']} time(s): {c.name(exp)}\n!!  "
+                  "The robot's force was capped (osc_controller); the run is kept and flagged.")
+        write_condition(run_dir, exp, c, flags)
         analyse_run(run_dir, analyse)
         session.parent.mkdir(parents=True, exist_ok=True)
         with session.open("a") as fh:
@@ -255,6 +426,15 @@ def run_experiment(exp: str, conditions: list[Condition], base_flags: dict, anal
 
 
 # ------------------------------------------------------------------ notebooks
+
+
+def latest_session(exp: str, backend: str = "robot") -> Path:
+    """The experiment's latest session file: after a resumed session it lists every condition once
+    (the skipped runs too), so it is the complete, current set of runs."""
+    sessions = sorted((OUT / backend / exp / "sessions").glob("*.txt"))
+    if not sessions:
+        raise FileNotFoundError(f"no session file in {OUT / backend / exp / 'sessions'}")
+    return sessions[-1]
 
 
 def collect(sources) -> list[Path]:

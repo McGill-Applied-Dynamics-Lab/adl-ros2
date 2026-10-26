@@ -178,6 +178,11 @@ def check(run_dir: Path, use_model: bool, run: dict | None = None) -> tuple[list
         warn.append(f"{trips} guard trip(s)")
     if "watchdog" in str(meta.get("stop_reason", "")):
         warn.append(f"stopped by the watchdog: {meta['stop_reason']}")
+    limit = meta.get("contact_limit") or {}
+    line("  contact force limit", "not logged" if not limit else
+         f"{limit['events']} event(s)" + (f" at {', '.join(f'{t:.1f}' for t in limit['times_s'])} s" if limit["events"] else ""))
+    if limit.get("events"):
+        warn.append(f"contact force limit reached {limit['events']} time(s): the robot's force was capped")
 
     if run["target"] is None or run["robot"] is None:
         return report.lines, warn

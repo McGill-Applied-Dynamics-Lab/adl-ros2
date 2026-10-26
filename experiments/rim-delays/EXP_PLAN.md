@@ -158,12 +158,12 @@ Reported 5G figures vary widely: an RTT of about 6.5 ms in a field trial ([sourc
 | Parameter | Value | Units | Rule | Notes |
 | --- | --- | --- | --- | --- |
 | α, β (mapping) | 1.0, 0.5 | —, N/N | workspace and force fit | `teleop.yaml` `scale`, `force_gain`; handle clamp `max_i3_force` 10 N = 20 N at the robot |
-| K\_r | 3000 (x, y, z) | N/m | K\_r δ ≤ accepted force | M3–M5; M1 uses K. `osc_teleop.yaml` `gains.k_pos_*`; 6 N at δ = 2 mm. Orientation k\_rot 85, 265, 10 N·m/rad |
+| K\_r | 2000 (x, y, z) | N/m | K\_r δ ≤ accepted force | M3–M5; M1 uses K. `osc_teleop.yaml` `gains.k_pos_*`; 4 N at δ = 2 mm. Lowered from 3000: a 40–46 Hz oscillation on the torque-rate limit stopped the server (E1 god-object, 2026-10-26). Orientation k\_rot 85, 265, 10 N·m/rad |
 | D\_r | auto: 2 ζ √(K\_r Λ\_ii), ζ = 0.7 | N·s/m | ζ ≥ 0.7 at λ\_max | M3–M5; M1 uses D. `gains.d_pos_* = -1`, `damping_ratio_pos` 0.7; per axis on the controller's live Λ\_ii, not a fixed value |
 | K | 1000 | N/m | 70% of K\_max at T = 0 | `teleop.yaml` `kv` |
 | D | 70 | N·s/m | ζ ≈ 0.7 on m\_d, buzz-capped | `teleop.yaml` `dv` |
 | K for M1 (per T) | 1000 (common K) | N/m | common K, else 70% of M1's K\_max(T) | device runs only; `K_M1` in `e6_taps.py` is empty |
-| m (M4) | E1 14.46 (heavy) / 4.79 (light); E2 4.73 (+y); E3, E5, E6 9.08 (z); E4 13.41 (along the line) | kg | nᵀΛ₀n | held Λ₀ (`rim_hold_orientation`), IK from home to each start; computed by the scripts per run |
+| m (M4) | E1 14.46 (heavy) / 4.79 (light); E2 4.73 (+y); E3 11.73 (z, start (0.4, 0, 0.12)); E5, E6 9.08 (z); E4 13.41 (along the line) | kg | nᵀΛ₀n | held Λ₀ (`rim_hold_orientation`), IK from home to each start; computed by the scripts per run |
 | f\_t | 1000 | Hz | = f\_h | `teleop.yaml` `command_hz` |
 | f\_m, robot state (M1) | 500 | Hz | ZOH ripple K\|v\|/f\_m ≤ 1 N | pilot (fm\_circle2): 0.72 N at p95 speed, 1 ms mean hold |
 | f\_m, RIM model (M5) | 25 | Hz | Λ change ≤ 3 % per update, holding ≤ 0.5 N | pilot (fm\_circle2): 2.1 % p95, 0.12 N RMS |

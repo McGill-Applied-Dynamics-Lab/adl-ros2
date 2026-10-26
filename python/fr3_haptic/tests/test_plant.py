@@ -374,3 +374,13 @@ def test_robot_publish_target_publishes_and_stores(bare_robot):
     msg = bare_robot._target_wrench_publisher.msgs[-1]
     assert (msg.wrench.force.z, msg.wrench.torque.z) == (-2.0, 0.0)
     assert len(bare_robot._target_pose_publisher.msgs) == 1
+
+
+def test_contact_limit_events_are_the_count_rises_after_the_start():
+    plant = FR3Plant.__new__(FR3Plant)  # the event logic only: no robot, no node
+    # latched count of an earlier activation, the reset on activation, then two events (one double)
+    plant.contact_limit_log = [(0.5, 3), (1.0, 0), (5.0, 1), (7.0, 3)]
+    assert plant.contact_limit_events(since_s=2.0) == [5.0, 7.0, 7.0]
+    assert plant.contact_limit_events(since_s=6.0) == [7.0, 7.0]
+    plant.contact_limit_log = [(0.5, 2)]  # only the latched count: no event
+    assert plant.contact_limit_events(since_s=0.0) == []

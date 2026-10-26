@@ -17,8 +17,8 @@ Profiles (``ScriptConfig.profile``):
   on the origin, under a raised-cosine envelope (``ramp_cycles`` up and down). No table.
 - ``approach``: down to ``pre_height`` above the surface, then at the constant ``approach_speed``
   through the surface to ``depth`` below it (short cosine speed ramps: the start one above the
-  surface, the stop one below it, so the table is crossed at full speed), hold, back up;
-  ``repeats`` times.
+  surface, the stop one below it, so the table is crossed at full speed), hold, back up to
+  ``pre_height`` and rest there; ``repeats`` times, then back to the origin.
 - ``line``: from the origin to ``line_end`` (a minimum-jerk move at ``speed``) with a sinusoidal
   dither of ``dither_amplitude`` at ``dither_hz`` along ``dither_direction`` (default: the line),
   under the same envelope; hold, then back to the origin. No table.
@@ -312,14 +312,16 @@ class Script:
             # each ramp (covering v tau / 2) within half its side of the surface: the table is crossed at full speed
             tau = min(0.2, min(c.depth, c.pre_height) / v)
             cruise = (c.pre_height + c.depth) / v + tau  # two ramps of tau at half speed on average
-            for _ in range(c.repeats):
-                self._move_to(pre)
+            self._move_to(pre)
+            for _ in range(c.repeats):  # between repeats only back to pre (in the air), not the origin
                 self.segments.append(_Cruise(self._t, cruise, pre.copy(), bottom.copy(), v, tau))
                 self._t += cruise
                 self._at = bottom.copy()
                 self._rest(c.hold_s)
-                self._move_to(self.origin)
+                self._move_to(pre)
                 self._rest(c.rest_s)
+            self._move_to(self.origin)
+            self._rest(c.rest_s)
         elif c.profile == "press":
             for _ in range(c.repeats):
                 self._move_to(np.array([self.origin[0], self.origin[1], bottom_z]))

@@ -129,6 +129,7 @@ def main(argv: list[str] | None = None) -> None:
         contact_axis=contact_axis,
         step=HapticStepConfig(
             haptic_hz=args.haptic_hz,
+            print_every_s=args.print_every_s,
             max_force_world=args.max_i3_force / args.force_gain,
             force_ramp_s=args.force_ramp_s,
             guard_cooldown_s=args.guard_cooldown_s,
@@ -210,6 +211,8 @@ def main(argv: list[str] | None = None) -> None:
         sim.close()
 
     stop_reason = loop.shared.stop_reason or result.stop_reason
+    if result.error:  # the haptic loop died: the run did not end, whatever the command loop saw
+        stop_reason = "haptic process error"
     print(f"{TAG} stopped: {stop_reason}; guard trips {result.guard_trips}, watchdog trips {result.watchdog_trips}")
     if result.error:
         print(f"{TAG} haptic process error:\n{result.error}")

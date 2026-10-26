@@ -75,6 +75,8 @@ def test_approach_crosses_the_surface_at_its_constant_speed():
     np.testing.assert_allclose(vz[crossings], -0.2, rtol=1e-6)  # full speed at the table
     assert z.min() == pytest.approx(0.09)
     np.testing.assert_allclose(x[:, :2], np.tile(ORIGIN[:2], (len(x), 1)))
+    between = z[crossings[0] : crossings[1]]
+    assert between.max() == pytest.approx(0.13)  # back to pre_height between repeats, not the origin
 
 
 def test_line_reaches_its_end_with_a_dither():

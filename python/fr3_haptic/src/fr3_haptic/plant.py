@@ -40,8 +40,9 @@ from geometry_msgs.msg import WrenchStamped
 from nav_msgs.msg import Odometry
 from pyrim import DynModel, InterfaceFrame
 from rclpy.executors import SingleThreadedExecutor
-from rclpy.qos import QoSProfile, qos_profile_sensor_data
+from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy, qos_profile_sensor_data
 from scipy.spatial.transform import Rotation
+from std_msgs.msg import UInt32
 
 from .adapters import RobotModelAdapter
 
@@ -103,6 +104,9 @@ class FR3Plant:
             controller's own end-effector frame.
         ee_state_topic: ``osc_controller`` EE state topic (``nav_msgs/Odometry``).
         task_wrench_topic: ``osc_controller`` task wrench topic (``WrenchStamped``).
+        contact_limit_topic: ``osc_controller``'s contact force limiter event count (``UInt32``,
+            latched, reset to 0 when the controller is activated), logged in
+            [contact_limit_log][FR3Plant.contact_limit_log]. ``None`` does not subscribe.
         sample_period_s: keep at most one sample per this many seconds of controller time,
             to emulate a slower plant. 0 keeps every controller tick.
         interface_limits: ``(low, high)`` bounds on the commanded interface coordinate [m],
@@ -133,6 +137,7 @@ class FR3Plant:
         hold_pose: Pose | None = None,
         ee_state_topic: str = "/fr3/osc/ee_state",
         task_wrench_topic: str = "/fr3/osc/task_wrench",
+        contact_limit_topic: str | None = None,
         sample_period_s: float = 0.0,
         interface_limits: tuple[float, float] | None = None,
         record: bool = False,
@@ -157,6 +162,8 @@ class FR3Plant:
         """Every target published, when ``record`` is set: ``(time.monotonic(), haptic tick, position
         (3,) base frame, x, v, f_ff)``; the tick is the haptic tick the target came from, -1 for a
         freeze or an unknown one."""
+        self.contact_limit_log: list[tuple[float, int]] = []
+        """Every message on ``contact_limit_topic``: ``(time.monotonic(), event count)``."""
         self.sample: tuple[int, FR3PlantSample] | None = None
         """Latest ``(updates, sample)``, replaced whole; ``None`` before the first one."""
         self.last_target: tuple[int, np.ndarray, np.ndarray, np.ndarray, np.ndarray | None] | None = None
@@ -189,6 +196,9 @@ class FR3Plant:
             node.create_subscription(Odometry, ee_state_topic, self._on_ee_state, qos),
             node.create_subscription(WrenchStamped, task_wrench_topic, self._on_task_wrench, qos),
         ]
+        if contact_limit_topic:
+            latched = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE, durability=DurabilityPolicy.TRANSIENT_LOCAL)
+            self._subs.append(node.create_subscription(UInt32, contact_limit_topic, self._on_contact_limit, latched))
         if self._spin_thread is not None:
             self._spin_thread.start()
 
@@ -425,6 +435,21 @@ class FR3Plant:
         except Exception:  # noqa: BLE001 - the context is shut down under a spinning executor at exit
             if rclpy.ok():
                 raise
+
+    def _on_contact_limit(self, msg: UInt32) -> None:
+        self.contact_limit_log.append((time.monotonic(), int(msg.data)))
+
+    def contact_limit_events(self, since_s: float) -> list[float]:
+        """``time.monotonic()`` of each contact force limiter event after ``since_s``: each rise of
+        the controller's event count. The first message (a count latched from an earlier
+        activation) and the reset to 0 on activation are not events."""
+        times: list[float] = []
+        prev = None
+        for t, n in self.contact_limit_log:
+            if prev is not None and n > prev and t >= since_s:
+                times += [t] * (n - prev)
+            prev = n
+        return times
 
     def close(self) -> None:
         """Destroy the subscriptions (and the plant's own node), and leave streaming mode."""

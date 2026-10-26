@@ -29,6 +29,7 @@ BASE = {
     "home": True,
     "start_position": START,
     "device": "scripted",
+    "chatter_hz": 0,  # no chatter guard: no device feels the force; on 5G it zeroed f for 3 s (E1, ZOH)
     "script": "line",
     "script_line_end": LINE_END,
     "script_speed": SPEED,

@@ -12,9 +12,8 @@ used in the talk) and rotation free (the plain arm reduction), to show what hold
 
 from __future__ import annotations
 
-from common import Condition, mass_along, parse, run_experiment, start_inertia
-
 import exp_metrics
+from common import Condition, mass_along, parse, run_experiment, start_inertia
 
 METHODS = ["proxy-god-object", "proxy-fixed-mass", "proxy-rim"]
 RTTS = [0, 2600]  # [ms]
@@ -29,6 +28,7 @@ BASE = {
     "home": True,
     "start_position": START,
     "device": "scripted",
+    "chatter_hz": 0,  # no chatter guard: no device feels the force; on 5G it zeroed f for 3 s (E1, ZOH)
     "script": "circle",
     "script_surface_z": CIRCLE_Z + 0.01,  # the circle runs at surface - depth
     "script_depth": 0.01,
@@ -42,7 +42,9 @@ def conditions() -> list[Condition]:
     lam0 = start_inertia(START)
     out = []
     for m in METHODS:
-        flags = {"proxy_mass": round(mass_along(lam0["Lambda_rim"], [0.0, 1.0, 0.0]), 3)} if m == "proxy-fixed-mass" else {}
+        flags = (
+            {"proxy_mass": round(mass_along(lam0["Lambda_rim"], [0.0, 1.0, 0.0]), 3)} if m == "proxy-fixed-mass" else {}
+        )
         if m == "proxy-rim":
             out += [Condition(m, rtt, {"rim_hold_orientation": True}, "held") for rtt in RTTS]
             out += [Condition(m, rtt, {"no_rim_hold_orientation": True}, "free") for rtt in RTTS]
