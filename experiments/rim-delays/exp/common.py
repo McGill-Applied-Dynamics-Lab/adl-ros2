@@ -26,7 +26,8 @@ Delays are round trips (``rtt_ms``), split evenly between the links, with one se
 condition so every method sees the same delay sequence. ``"5g"`` replays the lab's 5G trace.
 
 Common flags of every script: ``--sim``, ``--dry-run`` (print the commands), ``--yes``, ``--rerun``,
-``--only-method m …``, ``--only-rtt r …``, ``--analyse <run dir> …`` (re-run the analysis only).
+``--only-method m …``, ``--only-rtt r …``, ``--analyse <run dir> …`` (re-run the analysis only),
+``--no-save`` (try it out: nothing saved, analysed or skipped as done).
 """
 
 from __future__ import annotations
@@ -201,15 +202,20 @@ def mass_along(lam: np.ndarray, n) -> float:
 # ------------------------------------------------------------------ running
 
 
-def parse(description: str, argv=None) -> argparse.Namespace:
+def parse(description: str, argv=None, extra=None) -> argparse.Namespace:
+    """The common flags (module docstring); ``extra(parser)`` adds a script's own."""
     p = argparse.ArgumentParser(description=description)
     p.add_argument("--sim", action="store_true", help="simulated FR3 (sim_teleop.py)")
     p.add_argument("--dry-run", action="store_true", help="print the commands, run nothing")
     p.add_argument("--yes", action="store_true", help="do not ask before each robot run")
     p.add_argument("--rerun", action="store_true", help="run every condition, even those already done")
+    p.add_argument("--no-save", action="store_true",
+                   help="try it out (e.g. a visitor): nothing is saved or analysed, and no condition is skipped as done")
     p.add_argument("--only-method", nargs="+", default=None)
     p.add_argument("--only-rtt", nargs="+", default=None, help="round trips [ms], or 5g")
     p.add_argument("--analyse", type=Path, nargs="+", default=None, help="re-run the analysis of these runs only")
+    if extra is not None:
+        extra(p)
     return p.parse_args(argv)
 
 
@@ -350,8 +356,10 @@ def run_experiment(exp: str, conditions: list[Condition], base_flags: dict, anal
     single = session is not None  # called once per run: the caller numbers and reports
     session = session or out_dir / "sessions" / f"{datetime.datetime.now():%Y%m%d_%H%M%S}.txt"
     exe = [sys.executable, str(RIM / "sim_teleop.py")] if args.sim else ["fr3_teleop"]
+    no_save = bool(getattr(args, "no_save", False))
     if not single:
-        print(f"[exp] {exp}: {len(todo)} runs -> {out_dir}  (session list: {session})")
+        print(f"[exp] {exp}: {len(todo)} runs, NOT SAVED (--no-save)" if no_save
+              else f"[exp] {exp}: {len(todo)} runs -> {out_dir}  (session list: {session})")
     done: list[Path] = []
     home = bool(base_flags.get("home")) if home is None else home  # the first run only (and after a server crash)
     for i, c in enumerate(todo, 1):
@@ -363,7 +371,7 @@ def run_experiment(exp: str, conditions: list[Condition], base_flags: dict, anal
             label = rtt_label(c.rtt)
             rtt_s = (TRACE_RTT_MS[label] if label in TRACE_RTT_MS else float(c.rtt)) / 1e3
             flags["seconds"] = round(script_s + rtt_s + margin_s, 1)
-        prior = None if args.rerun else previous_run(out_dir, exp, c, flags)
+        prior = None if args.rerun or no_save else previous_run(out_dir, exp, c, flags)
         if prior is not None:
             print(f"[exp] {progress or f'{i}/{len(todo)}'} {c.name(exp)}: done before ({prior.name}), skipped")
             if not args.dry_run:
@@ -386,8 +394,9 @@ def run_experiment(exp: str, conditions: list[Condition], base_flags: dict, anal
         auto_retries = 0
         while True:
             name = f"{datetime.datetime.now():%Y%m%d_%H%M%S}_{c.name(exp)}"
-            cmd = exe + ["--conf", str(CONF)] + to_argv(flags) + [
-                "--save", "--output-dir", str(out_dir), "--run-name", name, "--notes", f"{exp} {c.name(exp)}"]
+            cmd = exe + ["--conf", str(CONF)] + to_argv(flags) + ["--notes", f"{exp} {c.name(exp)}"]
+            if not no_save:
+                cmd += ["--save", "--output-dir", str(out_dir), "--run-name", name]
             code, err = run_teleop(cmd)
             if code in (START_SKIPPED, START_QUIT):  # the operator, at fr3_teleop's start prompt
                 break
@@ -421,6 +430,9 @@ def run_experiment(exp: str, conditions: list[Condition], base_flags: dict, anal
             home = False  # the robot did move to the start
             continue
         home = False
+        if no_save:  # nothing to analyse or list; a failed run does not end the session
+            print(f"[exp] {c.name(exp)}: {'done' if code == 0 else f'fr3_teleop exit {code}'} (not saved)")
+            continue
         saved = reason is not None
         if code != 0 or not saved:
             if saved:  # keep what was recorded before the failure

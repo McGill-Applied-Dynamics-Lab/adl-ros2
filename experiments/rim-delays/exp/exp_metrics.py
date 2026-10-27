@@ -22,6 +22,8 @@ import metrics as M  # noqa: E402
 from runs import surface_of  # noqa: E402
 
 CONTACT_N = 1.0  # felt force above its pre-contact level that counts as contact onset [N]
+ARRIVE_M = 5e-4  # the felt anchor (proxy / robot as received) within this of the table: contact has arrived [m]
+FREE_M = 2e-3  # free motion: above the table by more than this [m]
 
 
 def _segment(run, kind: str):
@@ -498,17 +500,96 @@ def e6(run, lift_s: float = 0.3, hf_skip_s: float = 0.15) -> dict:
     The hold force is taken ``lift_s`` before the leader left (clear of the lift); the HF RMS starts
     ``hf_skip_s`` after the onset (after the impact). ``felt_mean``: the share of contacts whose
     force reached the operator before the lift. With an operator guide (``--guide``), also per kind
-    of contact (taps, holds) and how closely the hand followed it ([_guided][])."""
+    of contact (taps, holds) and how closely the hand followed it ([_guided][]).
+
+    ``felt`` / onset count a rise of the felt force, which M1's drag under delay fakes: read
+    ``contact_arrival_ms`` and ``felt_fraction`` ([_arrivals][]) for when the table reached the hand.
+    Tracking in free motion: [_tracking][]."""
     c = _common(run)
     starts, ends = _leader_episodes(run)
     rows = contacts(run, starts, ends=ends, lift_s=lift_s, hf_skip_s=hf_skip_s)
     _contact_limited(run, rows)
+    _arrivals(run, rows)
     limit = run["meta"].get("contact_limit") or {}
     out = {**_summarize(rows), "E_end_J": c["E_end_J"], "E_min_J": c["E_min_J"],
-           "contact_limit_events": limit.get("events")}
+           "contact_limit_events": limit.get("events"), **_tracking(run)}
     guide = _guide_of(run)
     if guide is not None:
         out.update(_guided(run, guide, rows))
+    return out
+
+
+def _anchor(run) -> np.ndarray:
+    """What the hand is pulled toward, z [m] per haptic tick: the proxy for a proxy method, the robot
+    as last received (``x_i``) otherwise."""
+    h = run["haptic"]
+    proxy = "proxy_x_2" in h and np.isfinite(h.proxy_x_2.to_numpy(float)).any()
+    return (h.proxy_x_2 if proxy else h.x_i_2).to_numpy(float)
+
+
+def _arrivals(run, rows: list[dict]) -> None:
+    """Per contact, when the table reached the hand: ``contact_arrival_ms``, from the leader's
+    crossing to the anchor ([_anchor][]) reaching the table (within ``ARRIVE_M``), NaN if it never
+    did; ``felt_fraction``, the share of the contact (crossing to the leader leaving) the hand felt
+    it. A contact's window ends one measured round trip after the next crossing (or a round trip +
+    1 s after its own), and each anchor contact goes to one leader contact only: under a long delay
+    the robot's last tap arrives during the next contact, and is the tap's, not the next one's."""
+    t = run["haptic"].ts.to_numpy(float)
+    s = surface_of(run["meta"])
+    at = _anchor(run) <= s + ARRIVE_M
+    downs = t[1:][~at[:-1] & at[1:]]
+    rtt = 2.0 * float(np.nanmedian(M.unfelt_force(run)["lag"]))  # the command lag, both ways
+    used: set[int] = set()
+    for i, r in enumerate(rows):
+        tc, end = r["t_cross"], r["t_cross"] + r["contact_s"]
+        stop = tc + rtt + 1.0
+        if i + 1 < len(rows):
+            stop = min(stop, rows[i + 1]["t_cross"] + rtt)
+        k = next((k for k, td in enumerate(downs) if tc - 0.02 <= td <= stop and k not in used), None)
+        if k is None:
+            r["contact_arrival_ms"], r["felt_fraction"] = float("nan"), 0.0
+            continue
+        used.add(k)
+        r["contact_arrival_ms"] = float(1e3 * (downs[k] - tc))
+        r["felt_fraction"] = float(max(0.0, end - downs[k]) / max(r["contact_s"], 1e-9))
+
+
+def _tracking(run) -> dict:
+    """Tracking in free motion (above the table by ``FREE_M``), z only, RMS [mm]:
+
+    - ``robot_cmd_rms_mm``: the robot against the command as it reached it (the target at the
+      robot), both on the robot's clock: how well it follows what it is sent (a massless god-object
+      proxy asks for motion the arm cannot make; M1's command is the hand);
+    - ``robot_hand_rms_mm``: the robot when the operator's action reached it against the hand, and
+      ``robot_hand_lag_ms`` the shift on top of the command delay that best aligns them: how
+      closely the robot reproduces the hand;
+    - ``anchor_hand_rms_mm``: the proxy (M1: the robot as received) against the hand, on the
+      haptic clock: how far the hand is from what it pulls on."""
+    s = surface_of(run["meta"])
+    z_l = M.haptic_side(run)["x_l"][:, 2]
+    out = {}
+    r, tg = run["robot"], run["target"]
+    if r is not None and tg is not None and len(tg):
+        tr, zr = r.ts.to_numpy(float), r.z.to_numpy(float)
+        zc = np.interp(tr, tg.ts.to_numpy(float), tg.position_2.to_numpy(float), left=np.nan, right=np.nan)
+        free = (zr > s + FREE_M) & (zc > s + FREE_M) & np.isfinite(zc)
+        out["robot_cmd_rms_mm"] = float(1e3 * np.sqrt(np.mean((zr[free] - zc[free]) ** 2))) if free.any() else float("nan")
+        t_apply = M.apply_times(run)
+
+        def robot_hand_rms(lag: float) -> float:
+            zra = M.robot_at(run, t_apply + lag)["x"][:, 2]
+            ok = (z_l > s + FREE_M) & (zra > s + FREE_M) & np.isfinite(zra)
+            return float(1e3 * np.sqrt(np.mean((zra[ok] - z_l[ok]) ** 2))) if ok.sum() > 100 else float("nan")
+
+        out["robot_hand_rms_mm"] = robot_hand_rms(0.0)
+        lags = np.round(np.arange(-0.3, 0.3001, 0.005), 3)  # the robot's own lag on top of the command delay
+        rms = np.array([robot_hand_rms(lag) for lag in lags])
+        k = int(np.nanargmin(rms)) if np.isfinite(rms).any() else 0
+        out["robot_hand_lag_ms"] = float(1e3 * lags[k])
+        out["robot_hand_rms_aligned_mm"] = float(rms[k])
+    za = _anchor(run)
+    ok = (z_l > s + FREE_M) & (za > s + FREE_M)
+    out["anchor_hand_rms_mm"] = float(1e3 * np.sqrt(np.mean((za[ok] - z_l[ok]) ** 2))) if ok.any() else float("nan")
     return out
 
 

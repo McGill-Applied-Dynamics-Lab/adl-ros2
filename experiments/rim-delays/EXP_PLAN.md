@@ -211,7 +211,7 @@ Leave with every run on disk and analysed, and the talk figures (FIGURES\_PLAN.m
 **Experiments (Inverse3, ~1 h 15 min)**
 
 - [ ] **E5 dropped** (~15 min): `exp/e5_kmax.py` runs only the new ladders: M5 at 2.6 s, K = 1000, then M1 at 850 ms and 2.6 s, down from 1000. Hands off after the release; flip the verdict if you had to catch the handle. Film the M1 and M5 runs at 2.6 s, K = 1000: they are the stability clip.
-- [ ] **E6 guided taps** (~45 min): `exp/e6_taps.py`, 14 runs left (M1 at T = 0 and 5G are done, 16:47–16:49). Check `track_rms_mm` and `missed` after each run; redo a run where the hand missed a contact.
+- [x] **E6 guided taps** (~45 min): `exp/e6_taps.py`, 14 runs left (M1 at T = 0 and 5G are done, 16:47–16:49). Check `track_rms_mm` and `missed` after each run; redo a run where the hand missed a contact.
 - [ ] **E6 video** (with the runs above): the three `VIDEO` conditions (M1 at T = 0, M1 and M5 at 2.6 s), filmed from the side; note each clip's file name against its run.
 - [ ] **Backup copy** of `~/data/franka/rim-delays/robot/` (E1–E6) and the video files off the lab PC before leaving.
 

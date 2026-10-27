@@ -18,10 +18,14 @@ every contact lands on the same spot, and a light spring centres the handle ther
 stays xyz, so the methods and M5's 3-D model are unchanged: the proxy's x, y are held by the
 coupling to the fixed leader, and any sideways motion the arm's coupled inertia causes is predicted.
 
-Video: only the conditions in ``VIDEO`` are filmed (the prompt says when to start the camera). Render
+Video: ``--video`` runs the conditions in ``VIDEO`` only, with a prompt to start the camera, saved as
+their own experiment (``e6_video``: its own runs and sessions, so the E6 data and its notebook are
+untouched; a take already done is skipped, ``--rerun`` for another). Render
 the leader / proxy / robot positions next to or over the clip with ``tools/contact_video.py``.
 
     pixi run -e humble python experiments/rim-delays/exp/e6_taps.py [--only-method ...] [--only-rtt ...]
+
+To let someone try it, nothing saved: ``--no-save`` (e.g. ``--no-save --only-rtt 2600``).
 """
 
 from __future__ import annotations
@@ -33,6 +37,7 @@ from fr3_haptic.guide import Guide, GuideConfig
 METHODS = ["zoh", "proxy-god-object", "proxy-fixed-mass", "proxy-rim"]
 RTTS = [0, "5g", 850, 2600]  # [ms]
 VIDEO = {("zoh", 0), ("zoh", 2600), ("proxy-rim", 2600)}  # (method, rtt) filmed for the talk
+VIDEO_EXP = "e6_video"  # --video: the camera takes, in their own folder and sessions (the E6 data untouched)
 GUIDE = "tap,hold,tap,hold,tap,hold"
 HOLD_S = 4.0  # at depth, for a hold: M1 at 2.6 s still feels ~1.4 s of it (at 2 s it never did) [s]
 DEPTH_MM = 10.0  # below the table: ~10 N at K = 1000 [mm]
@@ -56,7 +61,7 @@ BASE = {
     "free_axis_stiffness": CENTER_K,
     "free_axis_damping": CENTER_D,
     "contact_surface": SURFACE,
-    "home": False,
+    "home": True,  # start with the robot at the home pose (the handle is at the start position)
     "start_position": START,
     "device": "inverse3",
     "force": True,
@@ -87,21 +92,26 @@ def seconds(rtt) -> float:
     return round(GUIDE_S + one_way + TAIL_S, 1)
 
 
-def conditions() -> list[Condition]:
+def conditions(video: bool = False) -> list[Condition]:
+    """Every method × delay; ``video``: the ``VIDEO`` ones only, with the camera prompt."""
     # M4's best case where the contact happens: at the table under the start position
     m4 = round(mass_along(start_inertia([START[0], START[1], SURFACE])["Lambda_rim"], [0.0, 0.0, 1.0]), 3)
     out = []
     for m in METHODS:
         for rtt in RTTS:
+            if video and (m, rtt) not in VIDEO:
+                continue
             flags = {"proxy_mass": m4} if m == "proxy-fixed-mass" else {}
             flags["seconds"] = seconds(rtt)
             flags["start_prompt"] = INSTRUCTIONS.format(
-                method=m, rtt=rtt if rtt == "5g" else f"{rtt} ms", camera=CAMERA if (m, rtt) in VIDEO else ""
+                method=m, rtt=rtt if rtt == "5g" else f"{rtt} ms", camera=CAMERA if video else ""
             )
             out.append(Condition(m, rtt, flags, "guided"))
     return out
 
 
 if __name__ == "__main__":
-    args = parse(__doc__.split("\n")[0])
-    run_experiment("e6", [] if args.analyse else conditions(), BASE, exp_metrics.e6, args)
+    args = parse(__doc__.split("\n")[0], extra=lambda p: p.add_argument(
+        "--video", action="store_true", help=f"the camera takes: the VIDEO conditions, saved under {VIDEO_EXP}/"))
+    exp = VIDEO_EXP if args.video else "e6"
+    run_experiment(exp, [] if args.analyse else conditions(video=args.video), BASE, exp_metrics.e6, args)
