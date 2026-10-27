@@ -60,6 +60,8 @@ RUN_ENDED = "run ended"  # the stop reason of a run that went to its end
 HAPTIC_ERROR = "haptic process error"  # the stop reason when the haptic loop crashed (no haptic log)
 AUTO_RETRIES = 2  # a crashed haptic process is retried this many times before asking
 QUIET = {"print_every_s": 0}  # no haptic status lines
+# fr3_teleop's exit codes when the operator skips / quits at its --start-prompt (nothing saved)
+START_SKIPPED, START_QUIT = 10, 11
 
 
 @dataclass
@@ -250,7 +252,7 @@ def stop_reason(run_dir: Path) -> str | None:
 def same_flags(a: dict, b: dict) -> bool:
     """Whether two runs' flags are the same condition (``home`` and output flags aside, floats to 1e-6)."""
     def norm(f):
-        text = json.dumps({k: v for k, v in f.items() if k not in ("home", *QUIET)}, default=float)
+        text = json.dumps({k: v for k, v in f.items() if k not in ("home", "start_prompt", *QUIET)}, default=float)
         return json.loads(text, parse_float=lambda x: round(float(x), 6))
 
     return norm(a) == norm(b)
@@ -322,8 +324,17 @@ def write_condition(run_dir: Path, exp: str, c: Condition, flags: dict) -> None:
 
 
 def run_experiment(exp: str, conditions: list[Condition], base_flags: dict, analyse=None, args=None,
-                   margin_s: float = 3.0) -> list[Path]:
-    """Run (or ``--analyse``) the conditions; see the module docstring. Returns the run directories."""
+                   margin_s: float = 3.0, home: bool | None = None, session: Path | None = None,
+                   progress: str | None = None) -> list[Path]:
+    """Run (or ``--analyse``) the conditions; see the module docstring. Returns the run directories.
+
+    For a script that calls it once per run (E5's ladders): ``home`` whether the first run homes
+    (default: the base flags' ``home``), ``session`` the session file to append to (default: a new
+    one), ``progress`` the step label for the header (default ``i/n`` of these conditions).
+
+    A condition with a ``start_prompt`` flag shows it in fr3_teleop once the robot is ready, and
+    waits for Enter before the forces start (instead of the "ready?" prompt before launching); a skip
+    there skips the condition, a quit ends the session."""
     args = args or parse(exp)
     if args.analyse:
         for run_dir in args.analyse:
@@ -336,11 +347,13 @@ def run_experiment(exp: str, conditions: list[Condition], base_flags: dict, anal
             and (not args.only_rtt or rtt_label(c.rtt) in {rtt_label(r) for r in args.only_rtt})]
     backend = "sim" if args.sim else "robot"
     out_dir = OUT / backend / exp
-    session = out_dir / "sessions" / f"{datetime.datetime.now():%Y%m%d_%H%M%S}.txt"
+    single = session is not None  # called once per run: the caller numbers and reports
+    session = session or out_dir / "sessions" / f"{datetime.datetime.now():%Y%m%d_%H%M%S}.txt"
     exe = [sys.executable, str(RIM / "sim_teleop.py")] if args.sim else ["fr3_teleop"]
-    print(f"[exp] {exp}: {len(todo)} runs -> {out_dir}  (session list: {session})")
+    if not single:
+        print(f"[exp] {exp}: {len(todo)} runs -> {out_dir}  (session list: {session})")
     done: list[Path] = []
-    home = bool(base_flags.get("home"))  # the first run only (and after a server crash)
+    home = bool(base_flags.get("home")) if home is None else home  # the first run only (and after a server crash)
     for i, c in enumerate(todo, 1):
         flags = {**RATES, **QUIET, **base_flags, **c.flags, "method": c.method, **delay_flags(c.rtt), "home": home}
         if "seconds" not in flags:
@@ -352,19 +365,19 @@ def run_experiment(exp: str, conditions: list[Condition], base_flags: dict, anal
             flags["seconds"] = round(script_s + rtt_s + margin_s, 1)
         prior = None if args.rerun else previous_run(out_dir, exp, c, flags)
         if prior is not None:
-            print(f"[exp] {i}/{len(todo)} {c.name(exp)}: done before ({prior.name}), skipped")
+            print(f"[exp] {progress or f'{i}/{len(todo)}'} {c.name(exp)}: done before ({prior.name}), skipped")
             if not args.dry_run:
                 session.parent.mkdir(parents=True, exist_ok=True)
                 with session.open("a") as fh:
                     fh.write(f"{prior}\n")
             done.append(prior)
             continue
-        header(f"[exp] {i}/{len(todo)} {c.name(exp)}  ({flags['seconds']:.0f} s)")
+        header(f"[exp] {progress or f'{i}/{len(todo)}'} {c.name(exp)}  ({flags['seconds']:.0f} s)")
         if args.dry_run:
             print("  " + " ".join(exe + ["--conf", str(CONF)] + to_argv(flags)))
             home = False
             continue
-        if flags.get("device") != "scripted" and not args.sim and not args.yes:
+        if flags.get("device") != "scripted" and not flags.get("start_prompt") and not args.sim and not args.yes:
             answer = ask("[exp] ready?", ["run", "skip", "quit"])
             if answer == "quit":
                 break
@@ -376,6 +389,8 @@ def run_experiment(exp: str, conditions: list[Condition], base_flags: dict, anal
             cmd = exe + ["--conf", str(CONF)] + to_argv(flags) + [
                 "--save", "--output-dir", str(out_dir), "--run-name", name, "--notes", f"{exp} {c.name(exp)}"]
             code, err = run_teleop(cmd)
+            if code in (START_SKIPPED, START_QUIT):  # the operator, at fr3_teleop's start prompt
+                break
             run_dir = out_dir / name
             reason = stop_reason(run_dir)
             stopped = reason is not None and WATCHDOG in reason
@@ -399,6 +414,12 @@ def run_experiment(exp: str, conditions: list[Condition], base_flags: dict, anal
             if ask("[exp]", ["retry", "quit"]) == "quit":
                 raise SystemExit(f"[exp] stopped at {i}/{len(todo)} {c.name(exp)}; session list: {session}")
             flags["home"] = bool(base_flags.get("home"))  # the server restarted: home again
+        if code == START_QUIT:  # ends the whole session, also for a caller looping over runs (E5)
+            raise SystemExit(f"[exp] quit at {c.name(exp)}; session list: {session}")
+        if code == START_SKIPPED:
+            print(f"[exp] {c.name(exp)}: skipped")
+            home = False  # the robot did move to the start
+            continue
         home = False
         saved = reason is not None
         if code != 0 or not saved:
@@ -420,7 +441,7 @@ def run_experiment(exp: str, conditions: list[Condition], base_flags: dict, anal
         with session.open("a") as fh:
             fh.write(f"{run_dir}\n")
         done.append(run_dir)
-    if done:
+    if done and not single:
         print(f"\n[exp] {len(done)} runs; the notebook input: {session}")
     return done
 

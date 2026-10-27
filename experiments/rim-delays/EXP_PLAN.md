@@ -1,6 +1,6 @@
 # Delayed RIM Teleoperation — Talk Experiment Plan
 
-Oct 23, 2026 · @Charles
+Oct 23, 2026 · @Charles · merged on Oct 27 with the online plan of Oct 23 (its lab-session checklist dropped)
 
 ## Goal and message
 
@@ -23,7 +23,7 @@ Four methods, read as a ladder: M1 shows the delay problem, and M3 → M4 → M5
 
 M4 is tuned to its best case: m equals the effective mass along the initial motion direction at the start configuration, nᵀΛ₀n. Any gap to M5 then comes from Λ changing, not from a poorly chosen m.
 
-**M5's inertia: orientation held.** The OSC holds the end effector's orientation, and at the experiments' frequencies (below its rotational modes, ~3.6 Hz and up) the arm moves as if the orientation were fixed: on the E2 circle the free-rotation Λ was ~7× too light along x (radial gap +7.4 N, +1.2 N with the held reduction). M5 therefore reduces with the orientation held (`rim_hold_orientation: true` in `teleop.yaml`, `--no-rim-hold-orientation` for the free reduction), and M4's m is taken from the same held Λ₀ (`tools/lambda_map.py`, `Lambda_held`) so the comparison stays fair. The frequency-dependent version (a 6-D proxy held by the OSC's own orientation gains, free at impacts and held in slow pushes) is future work (M6, FORMULATION.md).
+**M5's inertia: orientation held.** The OSC holds the end effector's orientation, and at the experiments' frequencies (below its rotational modes: 3.6, 4.7 and 11.4 Hz with the tool point imposed at the start, 2.6 Hz lowest at the E6 contact; FORMULATION.md §3) the arm moves as if the orientation were fixed: on the E2 circle the free-rotation Λ was ~7× too light along x (radial gap +7.4 N, +1.2 N with the held reduction). M5 therefore reduces with the orientation held (`rim_hold_orientation: true` in `teleop.yaml`, `--no-rim-hold-orientation` for the free reduction), and M4's m is taken from the same held Λ₀ (`tools/lambda_map.py`, `Lambda_held`) so the comparison stays fair. The frequency-dependent version (a 6-D proxy held by the OSC's own orientation gains, free at impacts and held in slow pushes) is future work (M6, FORMULATION.md).
 
 Delay conditions (round trip T, split evenly T\_c = T\_f = T/2): 0, 5g, 850 ms, 2.6 s. Model-based methods are expected to be flat in T, so their free-motion runs need only T = 0 and 2.6 s; M1 needs all four.
 
@@ -81,8 +81,8 @@ A scripted leader gives every method the identical trajectory, so differences co
 Shows that model-based transparency is flat in delay and improves with model fidelity.
 
 - **Protocol:** sinusoids of about 5 cm amplitude, along the heaviest and the lightest eigenvectors of Λ at the start configuration. Report the eigenvalue ratio on the slide. M4's m is retuned per direction (nᵀΛ₀n along each), its best case, so E2 and E4 carry M4 vs M5.
-- **Conditions:** M1, M3, M4, M5; frequencies 0.5, 1 and 2 Hz; delays as in Methods and conditions.
-- **Plots:** RMS e\_F vs T, and RMS e\_F vs frequency.
+- **Conditions:** M1, M3, M4, M5; frequencies 0.25, 0.5 and 1 Hz, inside the held-rotation model's validity; delays as in Methods and conditions.
+- **Plots:** RMS e\_F vs T, and RMS e\_F vs frequency. Optional slide: the apparent mass fitted across frequencies, including the earlier 2–4 Hz runs (T1). It moves from Λ\_6,vv toward the free-rotation Λ: a controlled arm's inertia depends on frequency and on its controller.
 - **Expected:** M1 grows with T; M3 grows as ω²; M5 stays low. With m retuned per direction, M4 should match M5 in the two directions. On hardware, M5's residual is likely dominated by joint friction at low speed: keep it, it is the honest floor of the method.
 
 ### E2 — Horizontal circle (anisotropy)
@@ -92,7 +92,7 @@ Shows that a fixed mass cannot follow an inertia that varies with the direction 
 - **Protocol:** a horizontal circle at constant speed: radius 10 cm, period 2 s (v ≈ 0.31 m/s, a ≈ 0.99 m/s²), centered at (0.5, 0, 0.25) m. The centripetal acceleration rotates through every direction of the plane.
 - **Start position (E2 only):** (0.5, 0, 0.3) m, not the common start: centered on (0.4, 0, 0.16) the near side folds the arm until joint 4 is at −3.03 rad, where libfranka's position-dependent velocity limit stops even a 3 s circle (joint 4 at ~100 % of its limit; a 1.5 s circle aborted with `joint_velocity_violation`). At (0.5, 0, 0.25) the 2 s circle uses ~52 % of the limit. Compute Λ at this start for M4's mass.
 - **Conditions:** M4 and M5 (M3 for reference), at T = 0 and 2.6 s.
-- **Plots:** e\_F against circle phase; the angle between force and acceleration, for f and for −F\_osc.
+- **Plots:** e\_F against circle phase, and its lap-averaged split into a radial part (inertia, where the methods differ) and a tangential part (friction, common to all model-based methods); the angle between force and acceleration, for f and for −F\_osc. The split is approximate (anisotropic Λ leaks inertia tangentially, joint friction is not along −v); the exact separation runs each circle both ways (Appendix).
 - **Expected:** M4's e\_F oscillates at twice the circle frequency while M5 stays flat. With off-diagonal coupling, the robot's force is not parallel to its acceleration; M5 reproduces that sideways component, M4 cannot.
 
 ### E3 — Contact onset over approach velocity
@@ -127,16 +127,20 @@ Shows hard-contact rendering: the stiffest coupling each method sustains, as a f
 - **Conditions:** M1 and M5 (plus one of M3 or M4 as a check); all four delays; two grips: held, and released (the handle dropped onto the wall, the worst case).
 - **Instability criterion, fixed before running:** RMS force above about 8 Hz exceeding a threshold, or a sustained oscillation after release.
 - **Plot:** K\_max vs T, one line per method and grip.
+- **Run as E5-lite (2026-10-26):** K and D frozen (1000, 70), so only M1's ladders at 850 ms and 2.6 s (down from 1000) and M5 at 2.6 s (up to 2000), 20 s per step. Result: held, M1 was stable at K = 1000 at both delays; M5 stable at 2000 held, unstable at 2000 released (HF RMS 1.27 N, 3 guard trips). No K\_max(T) trend: the hand damps P-P's slow oscillation (~1/(2T), 0.2 Hz at 2.6 s), and the HF criterion (> 8 Hz) cannot see it.
+- **Dropped grip (added 2026-10-27):** the worst case, hands off. The operator brings the handle onto the table, lets go within 1 s of touching it and does not touch it again for the rest of a 30 s run (about 5 periods of 1/(2T) at 2.6 s), catching it only at the workspace edge. Criterion, added to the HF one: unstable if, from 2 s after the first touch to the end, the loop threw the free handle more than 10 mm above the table (`rebound_mm`; also logged: `rebounds`, `depth_max_mm`). Ladders: M5 at 2.6 s, K = 1000 (the reference); M1 at 850 ms and 2.6 s, down from 1000 (1000, 500, 250, 125). About 15 min. The first session's `released` runs (dropped and picked up 3 times) stay in `kmax.csv` but are not comparable: the hand was back on the handle between drops. **Velocity filter 50 Hz for the dropped grip** (`--vel-filter-hz 50`, `VEL_FILTER_HZ` in the script; frozen 8 Hz elsewhere): the first dropped run (M5, 2.6 s, 8 Hz, 17:51) rang at ~18 Hz as soon as the handle was let go, before any contact. The 8 Hz filter delays the velocity ~100° at 17 Hz, so D acts on the free handle (~0.06 kg) as a ~560 N/m spring with slightly negative damping: phase margin ~0° with the device's ~2–3 ms latency, ~30° at 50 Hz (velocity noise at the handle 0.022 → 0.037 N). It is a device-side mode, independent of the method and the delay, which the hand damps in held runs. An M5 dropped step at T = 0 runs first, to check the free handle before any delay.
+- **Plots (`e5_kmax.ipynb`):** K\_max vs T per method and grip (▽ where no step of the ladder was stable), and the talk's figure: the dropped handle's height and felt force from its first touch, M1 vs M5 at K = 1000, per delay.
+- **Expected (dropped):** M5's handle rests on its local wall at every delay. M1's wall is the delayed robot: it pushes a round trip late, and keeps pushing a round trip after the handle has left, so the loop throws the handle; likely unstable at every K of the ladder at 2.6 s.
 - **Expected:** a flat line for the model-based methods, set by the Inverse3 and the 1 kHz loop, and a falling line for M1, since P-P under delay needs damping that grows with K T. M3–M5 should give nearly the same K\_max: in static contact each reduces to the device against the coupling spring K. That is the expected result and is worth stating; this experiment separates P-P from model-based, not the models from each other.
 
 ### E6 — Contact taps and holds, with video
 
 Shows contact quality when the handle is held, and produces the talk video.
 
-- **Protocol:** the operator holds the handle and performs taps and holds on the table, a fixed number per condition.
-- **Conditions:** all methods, all four delays.
-- **Metrics:** the E3 contact metrics plus bounce count, settling time, high-frequency force energy and the energy balance E.
-- **Video:** record every run side by side (device, robot, force overlay). One clip per method at 2.6 s is enough for the talk, and it addresses the reviewer's video request for the paper.
+- **Protocol:** the operator holds the handle and follows a guide window (`fr3_teleop --guide`, `fr3_haptic/guide.py`): a reference height scrolling in from the right, over the table, the hand and (M3–M5) the proxy, all local and undelayed. Per run: tap, hold, tap, hold, tap, hold (taps at 8 cm/s with a 0.3 s touch, holds at 5 cm/s with 4 s at 10 mm below the table, ≈ 10 N for every method), hovering 30 mm above the table in between; a 34 s guide, runs of 35–36.5 s (3–4.3 s after the last lift). Taps at 20 cm/s were too fast to follow on the Inverse3 (the hand peaked at 7–8 cm/s, reached 2 and 8 mm of the 10, missed one; 2026-10-27). The guide window must not load the haptic loop: OpenCV on one thread, nice 10, 30 fps (with its 32-thread pool at 60 fps, 11 % of the 1 kHz ticks were over 2 ms). Only z is teleoperated (2026-10-27): the leader's x, y are locked at the start (`--lock-axes xy`), with a light centring spring on the handle (150 N/m, 10 N·s/m world; 30 N/m, 2 N·s/m at the handle); the interface and M5's 3-D model are unchanged, the proxy's x, y held by the coupling to the fixed leader. Unlocked, the hand drifted 14–29 mm in x and 23–78 mm in y and M1 rendered 2–7 N sideways in contact. Every condition gets the same motion; the metrics are split per kind (`tap_*`, `hold_*`), with how closely the hand followed (`track_rms_mm`). Without the guide (pilot, 2026-10-27, M1 at T = 0) the hand pressed 36–61 mm deep, 35–50 N, at the handle clamp. A contact runs from the leader's crossing to when it leaves the table; the hold force is the median over the 0.5 s before the lift, the HF RMS starts 150 ms after the onset (the impact is broadband), and the robot's force is read when the command reached it (T\_c later).
+- **Conditions:** all methods, all four delays. M1 uses the frozen K at every delay (E5 not run): an unstable M1 run is a result, kept. M4's m is nᵀΛ₀n along z at the contact, (0.4, 0, 0.083): 12.64 kg.
+- **Metrics:** the E3 contact metrics, plus whether the force reached the operator before the lift (M1 under delay) plus bounce count, settling time, high-frequency force energy and the energy balance E.
+- **Video:** three clips, not sixteen: M1 at T = 0 (the reference), M1 and M5 at 2.6 s (`VIDEO` in `e6_taps.py`). Film the arm from the side; `tools/contact_video.py` renders the hand, proxy and robot positions next to the clip (`--mode side`) or over it (`--mode overlay`, two clicked calibration points), synced on the robot's first table contact.
 
 ## Protocol details
 
@@ -182,8 +186,8 @@ Reported 5G figures vary widely: an RTT of about 6.5 ms in a field trial ([sourc
 | D\_r | auto: 2 ζ √(K\_r Λ\_ii), ζ = 0.7 | N·s/m | ζ ≥ 0.7 at λ\_max | M3–M5; M1 uses D. `gains.d_pos_* = -1`, `damping_ratio_pos` 0.7; per axis on the controller's live Λ\_ii, not a fixed value |
 | K | 1000 | N/m | 70% of K\_max at T = 0 | `teleop.yaml` `kv` |
 | D | 70 | N·s/m | ζ ≈ 0.7 on m\_d, buzz-capped | `teleop.yaml` `dv` |
-| K for M1 (per T) | 1000 (common K) | N/m | common K, else 70% of M1's K\_max(T) | device runs only; `K_M1` in `e6_taps.py` is empty |
-| m (M4) | E1 14.46 (heavy) / 4.79 (light); E2 4.73 (+y); E3 11.73 (z, start (0.4, 0, 0.12)); E5, E6 9.08 (z); E4 15.95 (z, at the line's start (0.30, 0, 0.15)) | kg | nᵀΛ₀n | held Λ₀ (`rim_hold_orientation`), IK from home to each start; computed by the scripts per run |
+| K for M1 (per T) | 1000 (common K) | N/m | common K at every delay | device runs only; E5-lite (2026-10-26): stable held at 850 ms and 2.6 s, so no per-delay K. The dropped ladders (2026-10-27) do not change it: E6 holds the handle |
+| m (M4) | E1 14.46 (heavy) / 4.79 (light); E2 4.73 (+y); E3 11.73 (z, start (0.4, 0, 0.12)); E5 9.08 (z); E6 12.64 (z, at the contact (0.4, 0, 0.083)); E4 15.95 (z, at the line's start (0.30, 0, 0.15)) | kg | nᵀΛ₀n | held Λ₀ (`rim_hold_orientation`), IK from home to each start; computed by the scripts per run |
 | f\_t | 1000 | Hz | = f\_h | `teleop.yaml` `command_hz` |
 | f\_m, robot state (M1) | 500 | Hz | ZOH ripple K\|v\|/f\_m ≤ 1 N | pilot (fm\_circle2): 0.72 N at p95 speed, 1 ms mean hold |
 | f\_m, RIM model (M5) | 25 | Hz | Λ change ≤ 3 % per update, holding ≤ 0.5 N | pilot (fm\_circle2): 2.1 % p95, 0.12 N RMS |
@@ -194,15 +198,71 @@ Reported 5G figures vary widely: an RTT of about 6.5 ms in a field trial ([sourc
 
 Freeze the parameters first (Parameter selection, which starts with E5 at T = 0), then run in this order; each step leaves a usable slide if time runs out after it.
 
-- [ ] E1 (2 directions × 2 frequencies) and E2: scripted, cheap, and they carry the model-fidelity message
-- [ ] E3 with the velocity sweep: scripted
-- [ ] E5 on the Inverse3: M1 vs M5, both grips
-- [ ] E4
-- [ ] E6, recorded as video at the same time
+- [x] E1 (2 directions × 3 frequencies, 60 runs) and E2 (8 runs), 2026-10-26
+- [x] E3 with the velocity sweep and the steady-approach sweep, 2026-10-26
+- [x] E5-lite, held and released (6 steps), 2026-10-26
+- [x] E4 (`zdither`, 4 runs), 2026-10-26
+- [ ] E5 dropped grip and E6 (today)
+
+### To finish today (2026-10-27): all the data and the figures
+
+Leave with every run on disk and analysed, and the talk figures (FIGURES\_PLAN.md) rendered. Experiments first, while the robot and the Inverse3 are set up; the figures need no hardware.
+
+**Experiments (Inverse3, ~1 h 15 min)**
+
+- [ ] **E5 dropped** (~15 min): `exp/e5_kmax.py` runs only the new ladders: M5 at 2.6 s, K = 1000, then M1 at 850 ms and 2.6 s, down from 1000. Hands off after the release; flip the verdict if you had to catch the handle. Film the M1 and M5 runs at 2.6 s, K = 1000: they are the stability clip.
+- [ ] **E6 guided taps** (~45 min): `exp/e6_taps.py`, 14 runs left (M1 at T = 0 and 5G are done, 16:47–16:49). Check `track_rms_mm` and `missed` after each run; redo a run where the hand missed a contact.
+- [ ] **E6 video** (with the runs above): the three `VIDEO` conditions (M1 at T = 0, M1 and M5 at 2.6 s), filmed from the side; note each clip's file name against its run.
+- [ ] **Backup copy** of `~/data/franka/rim-delays/robot/` (E1–E6) and the video files off the lab PC before leaving.
+
+**Optional, if the robot is still free (~30 min, scripted)**
+
+- [ ] E2 counter-clockwise, to separate inertia from friction exactly (Appendix): M4 and M5 held at T = 0 and 2.6 s, 4 runs. Needs a reverse-direction option for the `circle` script in `fr3_haptic/scripted.py` first. Higher value than the repeats below: it is E2's missing result.
+- [ ] Repeats for the error bars: E4 M4 and M5 at 2.6 s (×2), E1 heavy 0.25 Hz at every delay for M1 and at 0 / 2.6 s for M3–M5 (×2).
+
+**Analysis and figures (~2 h, no hardware)**
+
+- [ ] Re-run every notebook top to bottom (E1–E6) on the final sessions, outputs saved.
+- [ ] E3: add the steady-sweep session to `RUNS` (the saved outputs have 28 of 37 runs), so the steady plots and time series are not empty.
+- [ ] E5: read the dropped runs: M1's K\_max per delay, and whether M1 was thrown where M5 rested. If M1 was stable dropped, use the fallback sentence in FIGURES\_PLAN.md.
+- [ ] E6: fix `%autoreload 2  # …` in `e6_taps.ipynb` (the inline comment is a UsageError), then write the discussion cell (tap/hold metrics per method and delay, M1's force arriving after the lift).
+- [ ] Render the talk figures F1–F7 (and F6b if E5 delivers) at slide size into `experiments/rim-delays/figures/`: one message per figure, ≥ 14 pt, the method colours of `plots.py`, as listed in FIGURES\_PLAN.md.
+- [ ] `tools/contact_video.py` on the three E6 clips and the E5 stability clip.
+- [ ] Commit the scripts, notebooks (with outputs) and figures.
 
 Risks to plan for:
 
-- **Small inertial forces:** if Λ a is only a few newtons at the chosen frequencies, model differences disappear in noise. Check the magnitude at 2 Hz on the first run and raise the frequency or amplitude if needed, within the OSC and device limits.
-- **Friction floor:** on hardware, joint friction may dominate M5's residual and set M5's floor in E1. E2 and E4 are less sensitive, because they depend on how the inertia changes, not on its size.
+- **Small inertial forces:** if Λ a is only a few newtons at the chosen frequencies, model differences disappear in noise. Check the magnitude at 1 Hz on the first run and raise the frequency or amplitude if needed, within the OSC and device limits.
+- **Friction floor:** on hardware, joint friction may dominate M5's residual and set M5's floor in E1. E2 and E4 are less sensitive, because they depend on how the inertia changes, not on its size. First circle: about 10.7 N against the motion at 0.32 m/s, the same for every model-based method, so it is reported as the tangential part of the gap.
 - **Identical K\_max across M3–M5:** expected, not a failure; frame E5 as model-based vs P-P.
 - **Frictionless models:** the operator feels no tangential friction in M3–M5 while the real robot does. It does not affect E1–E5, but be ready for the question.
+
+## Appendix — Separating model error from friction
+
+The radial/tangential split used in E2 is an approximation; this is the rigorous version and the experiment that makes it exact.
+
+**Why the split is approximate.** On a circle at constant speed, velocity is tangential and acceleration radial, so an inertia error would be purely radial and friction purely tangential, if Λ were isotropic and friction acted exactly along −v. Neither holds. With ΔΛ = diag(δ\_x, δ\_y), centripetal acceleration A and position θ on the circle, the inertia error has components
+
+```latex
+\text{radial: } A\big[\tfrac12(\delta_x + \delta_y) + \tfrac12(\delta_x - \delta_y)\cos 2\theta\big],\qquad \text{tangential: } \tfrac12 A\,(\delta_x - \delta_y)\sin 2\theta
+```
+
+The tangential leak averages to zero over a lap. Joint Coulomb friction is dissipative but not aligned with −v at the tool, so part of it appears radially (on the robot, ~8.5 N of radial 2f, E2 notebook).
+
+**Energy argument.** The tangential component times the speed is the power of the gap force. Inertia errors do no net work over a closed periodic motion; for a constant symmetric error:
+
+```latex
+\oint v^\top \Delta\Lambda\, a\,dt = \Big[\tfrac12 v^\top \Delta\Lambda\, v\Big]_{\text{start}}^{\text{end}} = 0
+```
+
+The same holds approximately for slowly varying Λ, and for gravity errors (conservative). So the lap-averaged tangential gap times the speed is the power dissipated by forces the model lacks: on the first circle, 10.7 N over 2.42 m gives 26 J, against a 27.7 J deficit.
+
+**Exact separation: run each circle both ways.** Reversing the direction leaves a(θ) unchanged (centripetal, still inward), and the Coriolis terms are quadratic in v, so everything the model represents is even in velocity; Coulomb and viscous friction are odd. Aligned by position θ, not by time:
+
+```latex
+e_{model}(\theta) = \tfrac12\big(\mathrm{gap}_{cw}(\theta) + \mathrm{gap}_{ccw}(\theta)\big),\qquad e_{friction}(\theta) = \tfrac12\big(\mathrm{gap}_{cw}(\theta) - \mathrm{gap}_{ccw}(\theta)\big)
+```
+
+This captures friction in any direction, including its radial leak, and attributes the full anisotropic inertia error to the model. Cost: one extra run per condition.
+
+**E1 and E4 (motion on a line).** v and a are collinear, so there is no geometric split; the same principle works through phase. Project the gap onto the acceleration waveform (the even, inertial part) and onto the velocity waveform, 90° out of phase (the odd, friction part): the phase-separated masses of the Metrics section.

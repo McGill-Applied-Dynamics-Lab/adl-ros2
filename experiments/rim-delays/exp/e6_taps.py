@@ -1,12 +1,25 @@
 r"""E6 — Contact taps and holds on the Inverse3 (and the talk video).
 
-You hold the handle and tap and hold on the table, ``TAPS`` times, during ``SECONDS``. Reports the
-contact metrics per tap (onset latency, penetration at onset, felt overshoot, settling, bounces,
-robot peak table force, HF force RMS) averaged per run, and the energy balance. Start the camera by
-hand before each run.
+You hold the handle and follow the guide window (``fr3_teleop --guide``): a reference height that
+scrolls in from the right, over the table, your hand and (M3–M5) the proxy, all local and undelayed.
+``GUIDE`` alternates taps (fast, no hold) and holds (``HOLD_S`` at ``DEPTH_MM`` below the table, about
+K × depth of force for every method), so every condition gets the same motion. Reports the contact
+metrics per contact (from the leader's crossing to when it left the table: onset latency,
+penetration at onset, time to the hold force, felt overshoot, settling, bounces, robot peak table
+force, HF force RMS after the impact, whether the force arrived before the lift), averaged per run
+and per kind (``tap_*``, ``hold_*``), how closely the hand followed the guide, and the energy balance.
 
-M1 uses the common coupling K; where it is unstable, set its K per delay in ``K_M1`` (70 % of its
-K_max(T) from E5) and report it.
+Every method uses the frozen coupling (K 1000, D 70), M1 at every delay too: an unstable M1 run is
+a result, kept. M4's mass is nᵀΛ₀n along z at the contact (the table under the start position), as
+in E3. The run starts with the hand at the guide's hover height (the start position).
+
+Only z is teleoperated: the leader's x, y are locked at the start (``fr3_teleop --lock-axes xy``), so
+every contact lands on the same spot, and a light spring centres the handle there. The interface
+stays xyz, so the methods and M5's 3-D model are unchanged: the proxy's x, y are held by the
+coupling to the fixed leader, and any sideways motion the arm's coupled inertia causes is predicted.
+
+Video: only the conditions in ``VIDEO`` are filmed (the prompt says when to start the camera). Render
+the leader / proxy / robot positions next to or over the clip with ``tools/contact_video.py``.
 
     pixi run -e humble python experiments/rim-delays/exp/e6_taps.py [--only-method ...] [--only-rtt ...]
 """
@@ -15,33 +28,77 @@ from __future__ import annotations
 
 import exp_metrics
 from common import Condition, mass_along, parse, run_experiment, start_inertia
+from fr3_haptic.guide import Guide, GuideConfig
 
 METHODS = ["zoh", "proxy-god-object", "proxy-fixed-mass", "proxy-rim"]
 RTTS = [0, "5g", 850, 2600]  # [ms]
-K_M1 = {}  # e.g. {2600: 300}: M1's coupling K per delay where the common K is unstable [N/m]
-TAPS = 5
-SECONDS = 60.0
-START = [0.4, 0.0, 0.2]
+VIDEO = {("zoh", 0), ("zoh", 2600), ("proxy-rim", 2600)}  # (method, rtt) filmed for the talk
+GUIDE = "tap,hold,tap,hold,tap,hold"
+HOLD_S = 4.0  # at depth, for a hold: M1 at 2.6 s still feels ~1.4 s of it (at 2 s it never did) [s]
+DEPTH_MM = 10.0  # below the table: ~10 N at K = 1000 [mm]
+HOVER_MM = 30.0  # between contacts; the start height [mm]
+TAP_CMS = 8.0  # descent of a tap: what an Inverse3 hand follows (20 cm/s was too fast) [cm/s]
+TAP_DWELL_S = 0.3  # at depth, for a tap [s]
+# shown once the robot is ready, before the forces start (fr3_teleop --start-prompt)
+INSTRUCTIONS = (
+    "E6 {method}, T = {rtt} — follow the guide window: taps and holds, handle held\n"
+    "{camera}Keep the blue dot (your hand) on the green line; the next seconds come in from the right.\n"
+    "Same grip for every condition. Click back on this terminal, then Enter."
+)
+CAMERA = "START THE CAMERA (side view: the tool and the table in frame).\n"
+SURFACE = 0.083  # table height [m]
+START = [0.4, 0.0, SURFACE + 1e-3 * HOVER_MM]
+TAIL_S = 1.0  # after the guide (its last 2 s pause included) and the command delay [s]
+CENTER_K, CENTER_D = 150.0, 10.0  # handle spring on x, y [world N/m, N·s/m]: 30 N/m, 2 N·s/m at the handle (β 0.2)
 BASE = {
     "interface_axis": "xyz",
-    "contact_surface": 0.083,
-    "home": True,
+    "lock_axes": "xy",  # the leader stays at the start in x, y: taps on one spot, z only commanded
+    "free_axis_stiffness": CENTER_K,
+    "free_axis_damping": CENTER_D,
+    "contact_surface": SURFACE,
+    "home": False,
     "start_position": START,
     "device": "inverse3",
     "force": True,
-    "seconds": SECONDS,
+    "guide": GUIDE,
+    "guide_hold_s": HOLD_S,
+    "guide_depth_mm": DEPTH_MM,
+    "guide_hover_mm": HOVER_MM,
+    "guide_tap_cms": TAP_CMS,
+    "guide_tap_dwell_s": TAP_DWELL_S,
 }
+GUIDE_S = Guide(
+    GuideConfig(
+        pattern=tuple(GUIDE.split(",")),
+        hold_s=HOLD_S,
+        depth=1e-3 * DEPTH_MM,
+        hover=1e-3 * HOVER_MM,
+        tap_speed=1e-2 * TAP_CMS,
+        tap_dwell_s=TAP_DWELL_S,
+    ),
+    SURFACE,
+).duration_s
+
+
+def seconds(rtt) -> float:
+    """Run length: the guide, then the robot's last lift (``T_c`` later) and ``TAIL_S``; the hand
+    waits 3-4.3 s after its last lift."""
+    one_way = 0.0 if rtt == "5g" else float(rtt) / 2e3  # 5G: ~20 ms
+    return round(GUIDE_S + one_way + TAIL_S, 1)
 
 
 def conditions() -> list[Condition]:
-    m4 = round(mass_along(start_inertia(START)["Lambda_rim"], [0.0, 0.0, 1.0]), 3)
+    # M4's best case where the contact happens: at the table under the start position
+    m4 = round(mass_along(start_inertia([START[0], START[1], SURFACE])["Lambda_rim"], [0.0, 0.0, 1.0]), 3)
     out = []
     for m in METHODS:
         for rtt in RTTS:
             flags = {"proxy_mass": m4} if m == "proxy-fixed-mass" else {}
-            if m == "zoh" and rtt in K_M1:
-                flags["kv"] = K_M1[rtt]
-            out.append(Condition(m, rtt, flags, f"{TAPS}taps"))
+            flags["seconds"] = seconds(rtt)
+            flags["start_prompt"] = INSTRUCTIONS.format(
+                method=m, rtt=rtt if rtt == "5g" else f"{rtt} ms", camera=CAMERA if (m, rtt) in VIDEO else ""
+            )
+            out.append(Condition(m, rtt, flags, "guided"))
     return out
 
 

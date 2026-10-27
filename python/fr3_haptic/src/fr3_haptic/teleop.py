@@ -65,6 +65,7 @@ from utilities import apply_yaml_config
 
 from .adapters import RobotModelAdapter
 from .config import ModelConfig
+from .guide import Guide, GuideWindow
 from .links import Links, LinksConfig, load_delay_trace
 from .live import LiveView, live_logger
 from .plant import FR3Plant, FR3System
@@ -74,6 +75,7 @@ from .scripted import PROFILES, SURFACE_PROFILES, HandConfig, Script, ScriptConf
 from .session import PROXY_METHODS, CommandLoop, CommandLoopConfig, RimModelLoop
 
 TAG = "[fr3_teleop]"
+START_SKIPPED, START_QUIT = 10, 11  # exit codes: the operator skipped / quit at --start-prompt (nothing saved)
 CONTROLLER_HZ = 1000.0  # osc_controller publishes ee_state / task_wrench every tick
 METHODS = (
     "zoh",
@@ -112,6 +114,12 @@ def parse_interface_axes(spec: str) -> str:
     if not spec or any(a not in AXES for a in spec) or len(set(spec)) != len(spec):
         raise argparse.ArgumentTypeError(f"--interface-axis takes distinct axes among x, y, z, got {spec!r}")
     return spec
+
+
+def parse_lock_axes(spec: str) -> str:
+    """``""`` (none), ``"xy"``…: interface axes whose leader stays at the start, each once."""
+    spec = spec.strip().lower()
+    return parse_interface_axes(spec) if spec else ""
 
 
 def interface_basis(axes: str) -> tuple[np.ndarray, int]:
@@ -192,6 +200,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     g.add_argument("--free-axis-stiffness", type=float, default=0.0, help="handle spring on the free axes [world N/m]")
     g.add_argument("--free-axis-damping", type=float, default=0.0, help="handle damper on the free axes [world N·s/m]")
+    g.add_argument(
+        "--lock-axes",
+        type=parse_lock_axes,
+        default="",
+        help="interface axes whose leader stays at the start (e.g. xy with --interface-axis xyz): the robot is not "
+        "commanded along them, the interface and the RIM keep their dimension, and the free-axis spring holds "
+        "the handle there",
+    )
 
     g = p.add_argument_group("inverse3")
     g.add_argument("--uri", default="ws://localhost:10001", help="Inlet service address")
@@ -339,6 +355,23 @@ def build_parser() -> argparse.ArgumentParser:
 
     g = p.add_argument_group("run")
     g.add_argument("--seconds", type=float, default=60.0, help="run length [s]")
+    g.add_argument(
+        "--start-prompt",
+        default=None,
+        help="once the robot is ready, print this and wait for Enter before the haptic loop (and the forces) "
+        f"start; s skips (exit {START_SKIPPED}), q quits (exit {START_QUIT}), nothing saved",
+    )
+    g.add_argument(
+        "--guide",
+        default=None,
+        help="operator guide window: a reference height to follow, contacts as a comma list of tap / hold "
+        "(e.g. tap,hold,tap,hold); needs --contact-surface (guide.py)",
+    )
+    g.add_argument("--guide-hold-s", type=float, default=4.0, help="guide: time at depth of a hold [s]")
+    g.add_argument("--guide-depth-mm", type=float, default=10.0, help="guide: depth below the table [mm]")
+    g.add_argument("--guide-hover-mm", type=float, default=30.0, help="guide: height between contacts [mm]")
+    g.add_argument("--guide-tap-cms", type=float, default=8.0, help="guide: descent speed of a tap [cm/s]")
+    g.add_argument("--guide-tap-dwell-s", type=float, default=0.3, help="guide: time at depth of a tap [s]")
     g.add_argument("--print-every-s", type=float, default=1.0, help="haptic status line period [s]; 0 disables")
     g.add_argument("--save", action="store_true", help="write an MCAP run")
     g.add_argument("--output-dir", default="data/fr3_haptic", help="where --save writes runs")
@@ -351,6 +384,24 @@ def build_parser() -> argparse.ArgumentParser:
         help="record robot state, commanded torques, task error/wrench and EE state at this rate [Hz]; 0 disables",
     )
     return p
+
+
+class _NotStarted(Exception):
+    """The operator skipped or quit at ``--start-prompt``: the run never started."""
+
+
+def operator_start(prompt: str) -> str:
+    """Show ``prompt`` (the run's instructions) and wait: ``start``, ``skip`` or ``quit``."""
+    bar = "=" * 78
+    print(f"\n{TAG} {bar}\n" + "\n".join(f"{TAG}   {line}" for line in prompt.splitlines()) + f"\n{TAG} {bar}", flush=True)
+    while True:
+        answer = input(f"{TAG} [Enter] start (forces on) | (s)kip | (q)uit > ").strip().lower()
+        if answer in ("", "start"):  # not "s": that is skip
+            return "start"
+        if answer in ("s", "skip"):
+            return "skip"
+        if answer in ("q", "quit"):
+            return "quit"
 
 
 def resolve_rates(args: argparse.Namespace) -> tuple[float, float, float]:
@@ -593,6 +644,8 @@ def main(argv: list[str] | None = None) -> None:
     axes, signs = args.axes
     signs = np.asarray(signs)
     basis, contact_axis = interface_basis(args.interface_axis)
+    if any(a not in args.interface_axis for a in args.lock_axes):
+        raise SystemExit(f"{TAG} --lock-axes {args.lock_axes}: only axes of --interface-axis {args.interface_axis}")
     frame = InterfaceFrame(basis)
     dim = frame.dim
     model_update_hz, rim_update_hz, command_hz = resolve_rates(args)
@@ -708,6 +761,7 @@ def main(argv: list[str] | None = None) -> None:
             guard_cooldown_s=args.guard_cooldown_s,
             free_axis_stiffness=args.free_axis_stiffness,
             free_axis_damping=args.free_axis_damping,
+            locked_axes=tuple(AXES.index(a) for a in args.lock_axes),
         ),
         safety=safety,
         max_i3_force=args.max_i3_force,
@@ -807,10 +861,26 @@ def main(argv: list[str] | None = None) -> None:
         )
         live.start()
         print(f"{TAG} live view: Foxglove → ws://localhost:{args.live_port}, {args.live_hz:g} Hz")
+    guide_window = None
+    if args.guide:
+        guide = Guide.from_args(args)
+        if guide is None:
+            raise SystemExit(f"{TAG} --guide needs --contact-surface")
+        if args.seconds < guide.duration_s:
+            print(f"{TAG} WARNING: --seconds {args.seconds:g} ends the run before the guide ({guide.duration_s:.1f} s)")
+        guide_window = GuideWindow(guide, haptic_state, frame.basis, args.method in PROXY_METHODS,
+                                   f"{args.method}, {args.notes}" if args.notes else args.method)
+        guide_window.start()
+        print(f"{TAG} guide: {args.guide} ({guide.duration_s:.1f} s), window open")
     haptic = HapticProcess(spec)
     result = HapticResult(error="not started")
     t0 = time.monotonic()
+    not_started = None
     try:
+        if args.start_prompt:
+            choice = operator_start(args.start_prompt)
+            if choice != "start":
+                raise _NotStarted(choice)
         drain = links_cfg.drain_s()
         if drain > 0:
             # Setup is done: let one full feedback delay pass, so a gap a setup step left in the
@@ -819,6 +889,8 @@ def main(argv: list[str] | None = None) -> None:
             time.sleep(drain)
         haptic.start()  # the child opens and zeroes the device, then its loop starts
         t0 = time.monotonic()
+        if guide_window is not None:
+            guide_window.begin(t0)  # the reference runs on the haptic log's clock
         running = lambda: not loop.stopped and haptic.running  # noqa: E731
         # robot -> haptic: the RIM model, on its own thread and rate
         if rim_loop is not None:
@@ -835,6 +907,9 @@ def main(argv: list[str] | None = None) -> None:
     except KeyboardInterrupt:
         print(f"\n{TAG} interrupted")
         loop.request_stop("interrupted")
+    except _NotStarted as e:
+        not_started = str(e)
+        loop.request_stop(f"not started: {not_started}")
     finally:
         loop.request_stop(loop.shared.stop_reason or "run ended")  # also ends the RIM thread
         gc.enable()
@@ -847,9 +922,19 @@ def main(argv: list[str] | None = None) -> None:
         links.stop()
         if live is not None:
             live.stop()
+        if guide_window is not None:
+            guide_window.stop()
         if recorder is not None:
             recorder.close()
         plant.close()
+
+    if not_started is not None:  # nothing ran: nothing to report or save
+        for box in boxes:
+            box.close()
+            box.unlink()
+        robot.shutdown()
+        print(f"{TAG} not started ({not_started}): nothing saved")
+        raise SystemExit(START_SKIPPED if not_started == "skip" else START_QUIT)
 
     # -- report and log --------------------------------------------------------------------
     stop_reason = loop.shared.stop_reason or result.stop_reason
