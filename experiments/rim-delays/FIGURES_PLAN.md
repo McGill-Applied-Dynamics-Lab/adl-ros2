@@ -1,6 +1,6 @@
 # Delayed RIM Teleoperation — Talk Figures
 
-Oct 27, 2026 · from the E1–E5 notebooks (2026-10-26 sessions); E6 pending.
+Oct 27, 2026 · from the E1–E4 (2026-10-26) and E6 (2026-10-27) sessions. Rendered by `figures/talk_figures.ipynb` into `figures/out/` (PDF + PNG); E5 skipped.
 
 ## Verdict
 
@@ -21,9 +21,12 @@ The data carry both halves of the claim, but each half needs the right view.
 | F4 | A fixed mass cannot follow direction-dependent inertia | E2 cell 11 | Felt radial force vs circle phase: M5 held follows u'Λu·a (2f), M4 flat, M5 free ~7× too light, M3 zero | As is; maybe drop M3 (zero line). Optional inset: mean radial e\_F ladder M3 8.3 → M5-free 7.0 → M4 3.6 → M5 0.8 N (T = 0, 2.6 s side by side). |
 | F5 | A mass tuned in one configuration is wrong elsewhere; RIM follows the arm | E4 cell 6 (+ cell 8 left) | Mass along the line: arm measured, M4 rendered (flat 16 kg), M5 rendered, model n'Λn | **The strongest model-fidelity figure.** One panel at T = 2.6 s (T = 0 dashed, or note "same at T = 0"). Optional second panel: m\_err (M4 −1.2 → −9.8 kg, M5 ~−1 kg). |
 | F6 | What the model misses: friction and ~1.4× inertia | E1 cell 15 | Re Z vs ω², heavy and light, model dashed | Annotate fitted m (20.7 vs 14.5 kg; 6.8 vs 4.8 kg) and the Coulomb floor. Frame it as M5's honest floor. |
-| F7 | Demo: contact with the hand in the loop | E6 | Video, 3 clips (M1 T = 0, M1 and M5 at 2.6 s), `tools/contact_video.py --mode side` | After E6 runs. Pair with a small tap/hold metrics table (hold force, time to hold, track\_rms\_mm). |
+| F7 | Hand in the loop: P-P under delay feels the table after the lift | E6 | First tap and hold, M1 vs M5 at 2.6 s: guide, hand, robot; felt vs robot force. Next to the video (3 clips, `tools/contact_video.py --mode side`) | Rendered |
+| F7b | Hand in the loop, every delay | E6 | Taps felt before the lift (M1 33–67 % under delay, M3–M5 100 %); unfelt force during holds (M1 3.3 / 12.3 N at 850 ms / 2.6 s, M3–M5 1.4–2.2 N) | Rendered |
+| F8 | Under delay, a local model still renders a wall; P-P does not | E6 | Felt force against hand depth, M1 and M5 at T = 0 and 2.6 s, with the K line: M3–M5 0.95–1.04 N/mm through zero at every delay; M1 at 2.6 s R² 0.24, 35 N at zero depth | Rendered |
+| F9 | How stiff a wall under delay | E5 guided ladders | Felt stiffness against the set K (200–1600 N/m at the handle), stable filled, unstable open, M5 / M3 / M1 at T = 0 and 2.6 s | After the 2026-10-28 run |
 
-E5 → once the dropped ladders are run: **F6b, "Without a hand, P-P under delay throws the handle; RIM holds it"**, from `e5_kmax.ipynb` (dropped handle, height and felt force from the first touch, M1 vs M5 at K = 1000, 2.6 s), with M1's K\_max per delay as a caption or the K\_max plot as backup. If M1 turns out stable when dropped, fall back to one line: "At the frozen K = 1000 N/m, M5 stays stable at 2.6 s (and at 2000 N/m with the handle held)", and do not claim a K\_max(T) trend.
+E5 was skipped (the dropped handle needs a faster velocity filter, EXP\_PLAN E5). If asked about stability: "at the frozen K = 1000 N/m, M5 stays stable at 2.6 s, and at 2000 N/m with the handle held"; do not claim a K\_max(T) trend.
 
 ## Backup figures
 

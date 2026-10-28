@@ -874,7 +874,7 @@ def main(argv: list[str] | None = None) -> None:
         print(f"{TAG} guide: {args.guide} ({guide.duration_s:.1f} s), window open")
     haptic = HapticProcess(spec)
     result = HapticResult(error="not started")
-    t0 = time.monotonic()
+    t0, t0_wall = time.monotonic(), time.time()
     not_started = None
     try:
         if args.start_prompt:
@@ -888,7 +888,7 @@ def main(argv: list[str] | None = None) -> None:
             print(f"{TAG} draining the feedback link for {drain:.2f} s before starting")
             time.sleep(drain)
         haptic.start()  # the child opens and zeroes the device, then its loop starts
-        t0 = time.monotonic()
+        t0, t0_wall = time.monotonic(), time.time()
         if guide_window is not None:
             guide_window.begin(t0)  # the reference runs on the haptic log's clock
         running = lambda: not loop.stopped and haptic.running  # noqa: E731
@@ -968,6 +968,7 @@ def main(argv: list[str] | None = None) -> None:
         "controller_params": controller_params,  # read back from the controller after setup
         "q0": q0,  # joints at the start of the run [rad]
         "t0_mono_s": t0,  # time.monotonic() at the run start: the haptic log's mono_s minus this is run time
+        "t0_wall_s": t0_wall,  # time.time() at the run start: to find the run in a camera clip
         "command_loop": {k: (v.tolist() if isinstance(v, np.ndarray) else v) for k, v in asdict(loop.cfg).items()},
         "delays": {
             "feedback": LinksConfig.describe(links_cfg.feedback),
@@ -989,6 +990,7 @@ def main(argv: list[str] | None = None) -> None:
         "hold_orientation_xyzw": hold.orientation.as_quat().tolist(),
         "leader_origin": leader_origin.tolist(),
         "stop_reason": stop_reason,
+        "haptic_error": result.error or None,  # the haptic process's traceback, when it crashed
         # osc_controller's contact force limiter: events during the run, run time of each [s]
         # (None: not subscribed)
         "contact_limit": {"events": len(contact_limit_s), "times_s": contact_limit_s} if args.contact_limit_topic else None,

@@ -18,8 +18,9 @@ every contact lands on the same spot, and a light spring centres the handle ther
 stays xyz, so the methods and M5's 3-D model are unchanged: the proxy's x, y are held by the
 coupling to the fixed leader, and any sideways motion the arm's coupled inertia causes is predicted.
 
-Video: ``--video`` runs the conditions in ``VIDEO`` only, with a prompt to start the camera, saved as
-their own experiment (``e6_video``: its own runs and sessions, so the E6 data and its notebook are
+Video: ``--video`` runs the conditions in ``VIDEO`` only, with a prompt to start the camera, as clips
+for the talk rather than data: a shorter guide (``VIDEO_GUIDE``), from higher (``VIDEO_HOVER_MM``, so
+the impacts show), each clip with its own hold; saved as their own experiment (``e6_video``: its own runs and sessions, so the E6 data and its notebook are
 untouched; a take already done is skipped, ``--rerun`` for another). Render
 the leader / proxy / robot positions next to or over the clip with ``tools/contact_video.py``.
 
@@ -36,8 +37,16 @@ from fr3_haptic.guide import Guide, GuideConfig
 
 METHODS = ["zoh", "proxy-god-object", "proxy-fixed-mass", "proxy-rim"]
 RTTS = [0, "5g", 850, 2600]  # [ms]
-VIDEO = {("zoh", 0), ("zoh", 2600), ("proxy-rim", 2600)}  # (method, rtt) filmed for the talk
-VIDEO_EXP = "e6_video"  # --video: the camera takes, in their own folder and sessions (the E6 data untouched)
+# --video: clips cut for the talk, not compared with each other (E6's runs carry the numbers): M1 at
+# 0 and 2.6 s in the intro (the problem), M5 at 2.6 s as the closing demo
+VIDEO = {  # (method, rtt): the hold of its clip [s]
+    ("zoh", 0): 1.5,  # the reference: P-P with no delay
+    ("zoh", 2600): 4.0,  # the problem: the hold must outlast the round trip for the table to be felt at all
+    ("proxy-rim", 2600): 1.5,  # the demo: contact at once despite the delay
+}
+VIDEO_EXP = "e6_video"  # their own folder and sessions (the E6 data untouched)
+VIDEO_GUIDE = "tap,hold,tap"  # shorter
+VIDEO_HOVER_MM = 100.0  # start and hover higher: the descent and the impact show on camera [mm]
 GUIDE = "tap,hold,tap,hold,tap,hold"
 HOLD_S = 4.0  # at depth, for a hold: M1 at 2.6 s still feels ~1.4 s of it (at 2 s it never did) [s]
 DEPTH_MM = 10.0  # below the table: ~10 N at K = 1000 [mm]
@@ -72,28 +81,28 @@ BASE = {
     "guide_tap_cms": TAP_CMS,
     "guide_tap_dwell_s": TAP_DWELL_S,
 }
-GUIDE_S = Guide(
-    GuideConfig(
-        pattern=tuple(GUIDE.split(",")),
-        hold_s=HOLD_S,
-        depth=1e-3 * DEPTH_MM,
-        hover=1e-3 * HOVER_MM,
-        tap_speed=1e-2 * TAP_CMS,
-        tap_dwell_s=TAP_DWELL_S,
-    ),
-    SURFACE,
-).duration_s
 
 
-def seconds(rtt) -> float:
+def guide_seconds(pattern: str = GUIDE, hold_s: float = HOLD_S, hover_mm: float = HOVER_MM) -> float:
+    """How long the guide takes [s]."""
+    cfg = GuideConfig(pattern=tuple(pattern.split(",")), hold_s=hold_s, depth=1e-3 * DEPTH_MM, hover=1e-3 * hover_mm,
+                      tap_speed=1e-2 * TAP_CMS, tap_dwell_s=TAP_DWELL_S)
+    return Guide(cfg, SURFACE).duration_s
+
+
+GUIDE_S = guide_seconds()
+
+
+def seconds(rtt, guide_s: float = GUIDE_S) -> float:
     """Run length: the guide, then the robot's last lift (``T_c`` later) and ``TAIL_S``; the hand
     waits 3-4.3 s after its last lift."""
     one_way = 0.0 if rtt == "5g" else float(rtt) / 2e3  # 5G: ~20 ms
-    return round(GUIDE_S + one_way + TAIL_S, 1)
+    return round(guide_s + one_way + TAIL_S, 1)
 
 
 def conditions(video: bool = False) -> list[Condition]:
-    """Every method × delay; ``video``: the ``VIDEO`` ones only, with the camera prompt."""
+    """Every method × delay; ``video``: the ``VIDEO`` ones only, with the camera prompt and the clip's
+    own guide (``VIDEO_GUIDE``, its hold, from ``VIDEO_HOVER_MM``)."""
     # M4's best case where the contact happens: at the table under the start position
     m4 = round(mass_along(start_inertia([START[0], START[1], SURFACE])["Lambda_rim"], [0.0, 0.0, 1.0]), 3)
     out = []
@@ -103,6 +112,13 @@ def conditions(video: bool = False) -> list[Condition]:
                 continue
             flags = {"proxy_mass": m4} if m == "proxy-fixed-mass" else {}
             flags["seconds"] = seconds(rtt)
+            if video:
+                hold = VIDEO[(m, rtt)]
+                flags.update({
+                    "guide": VIDEO_GUIDE, "guide_hold_s": hold, "guide_hover_mm": VIDEO_HOVER_MM,
+                    "start_position": [START[0], START[1], SURFACE + 1e-3 * VIDEO_HOVER_MM],
+                    "seconds": seconds(rtt, guide_seconds(VIDEO_GUIDE, hold, VIDEO_HOVER_MM)),
+                })
             flags["start_prompt"] = INSTRUCTIONS.format(
                 method=m, rtt=rtt if rtt == "5g" else f"{rtt} ms", camera=CAMERA if video else ""
             )

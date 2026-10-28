@@ -460,9 +460,31 @@ def e4(run, bins: int = 20, mass_bins: int = 7) -> dict:
 # ------------------------------------------------------------------ E5, E6 (Inverse3)
 
 
+def wall(run, min_depth_mm: float = 0.5) -> dict:
+    """The wall the operator felt: the felt force along z against the hand's depth below the table,
+    over every sample in contact (depth > ``min_depth_mm``). A wall is a line through zero of slope K
+    (``wall_slope_N_per_mm``, ``wall_offset_N``, ``wall_r2``); P-P under delay is not a function of the
+    depth (low R², an offset: the delayed robot's drag)."""
+    hs = M.haptic_side(run)
+    depth = 1e3 * (surface_of(run["meta"]) - hs["x_l"][:, 2])
+    f = hs["f"][:, 2]
+    on = depth > min_depth_mm
+    if on.sum() < 30:
+        return {"wall_slope_N_per_mm": float("nan"), "wall_offset_N": float("nan"), "wall_r2": float("nan")}
+    (k, b), res, *_ = np.linalg.lstsq(np.c_[depth[on], np.ones(on.sum())], f[on], rcond=None)
+    ss = np.sum((f[on] - f[on].mean()) ** 2)
+    return {"wall_slope_N_per_mm": float(k), "wall_offset_N": float(b),
+            "wall_r2": float(1 - res[0] / ss) if len(res) and ss > 0 else float("nan")}
+
+
 def e5(run, hf_threshold_n: float, max_rebound_mm: float = 10.0, release_s: float = 2.0) -> dict:
     """One K step: HF force RMS (> 8 Hz) of the felt force while the leader is in contact, and the
     verdict against the thresholds fixed before running.
+
+    With the ``guided`` grip (the E6 guide, handle held, ~10 N holds at every K): the wall the operator
+    felt ([wall][]), E6's contact metrics, and the verdict on the HF RMS after each impact (E6's
+    ``hf_rms_N_mean``: a tap's impact is broadband at any K, so it is skipped; when it is undefined, as
+    for P-P under delay, the HF RMS over the whole contact).
 
     With the ``dropped`` grip (the handle let go of within ~1 s of touching the table, hands off for
     the rest of the run), also what the loop did to the free handle, from ``release_s`` after the
@@ -483,6 +505,16 @@ def e5(run, hf_threshold_n: float, max_rebound_mm: float = 10.0, release_s: floa
     stable = bool(np.isfinite(hf) and hf < hf_threshold_n and trips == 0)
     out = {"K": float(run["meta"]["args"]["kv"]), "grip": grip, "contact_s": float(inside.sum() * np.median(np.diff(t))),
            "hf_rms_N": hf, "hf_threshold_N": hf_threshold_n, "guard_trips": trips, "E_min_J": c["E_min_J"]}
+    if grip == "guided":
+        contact = e6(run)
+        out.update(wall(run))
+        out.update({k: contact.get(k) for k in ("hf_rms_N_mean", "hold_eF_z_mean_mean", "hold_felt_settled_N_mean",
+                                                 "tap_felt_mean", "bounces_mean", "track_rms_mm", "missed")})
+        hf_impact = contact.get("hf_rms_N_mean")  # undefined for P-P under delay (no force onset): keep the in-contact one
+        if hf_impact is not None and np.isfinite(hf_impact):
+            hf = hf_impact
+        out["hf_rms_N"] = hf
+        stable = bool(np.isfinite(hf) and hf < hf_threshold_n and trips == 0)
     if grip == "dropped":
         starts, _ = _leader_episodes(run)
         free = t >= starts[0] + release_s if len(starts) else np.zeros_like(t, bool)  # hands off

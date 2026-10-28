@@ -128,10 +128,12 @@ Shows hard-contact rendering: the stiffest coupling each method sustains, as a f
 - **Instability criterion, fixed before running:** RMS force above about 8 Hz exceeding a threshold, or a sustained oscillation after release.
 - **Plot:** K\_max vs T, one line per method and grip.
 - **Run as E5-lite (2026-10-26):** K and D frozen (1000, 70), so only M1's ladders at 850 ms and 2.6 s (down from 1000) and M5 at 2.6 s (up to 2000), 20 s per step. Result: held, M1 was stable at K = 1000 at both delays; M5 stable at 2000 held, unstable at 2000 released (HF RMS 1.27 N, 3 guard trips). No K\_max(T) trend: the hand damps P-P's slow oscillation (~1/(2T), 0.2 Hz at 2.6 s), and the HF criterion (> 8 Hz) cannot see it.
-- **Dropped grip (added 2026-10-27):** the worst case, hands off. The operator brings the handle onto the table, lets go within 1 s of touching it and does not touch it again for the rest of a 30 s run (about 5 periods of 1/(2T) at 2.6 s), catching it only at the workspace edge. Criterion, added to the HF one: unstable if, from 2 s after the first touch to the end, the loop threw the free handle more than 10 mm above the table (`rebound_mm`; also logged: `rebounds`, `depth_max_mm`). Ladders: M5 at 2.6 s, K = 1000 (the reference); M1 at 850 ms and 2.6 s, down from 1000 (1000, 500, 250, 125). About 15 min. The first session's `released` runs (dropped and picked up 3 times) stay in `kmax.csv` but are not comparable: the hand was back on the handle between drops. **Velocity filter 50 Hz for the dropped grip** (`--vel-filter-hz 50`, `VEL_FILTER_HZ` in the script; frozen 8 Hz elsewhere): the first dropped run (M5, 2.6 s, 8 Hz, 17:51) rang at ~18 Hz as soon as the handle was let go, before any contact. The 8 Hz filter delays the velocity ~100° at 17 Hz, so D acts on the free handle (~0.06 kg) as a ~560 N/m spring with slightly negative damping: phase margin ~0° with the device's ~2–3 ms latency, ~30° at 50 Hz (velocity noise at the handle 0.022 → 0.037 N). It is a device-side mode, independent of the method and the delay, which the hand damps in held runs. An M5 dropped step at T = 0 runs first, to check the free handle before any delay.
+- **Dropped grip (added 2026-10-27):** the worst case, hands off. The operator brings the handle onto the table, lets go within 1 s of touching it and does not touch it again for the rest of a 30 s run (about 5 periods of 1/(2T) at 2.6 s), catching it only at the workspace edge. Criterion, added to the HF one: unstable if, from 2 s after the first touch to the end, the loop threw the free handle more than 10 mm above the table (`rebound_mm`; also logged: `rebounds`, `depth_max_mm`). Ladders: M5 at 2.6 s, K = 1000 (the reference); M1 at 850 ms and 2.6 s, down from 1000 (1000, 500, 250, 125). About 15 min. The first session's `released` runs (dropped and picked up 3 times) stay in `kmax.csv` but are not comparable: the hand was back on the handle between drops. **Velocity filter 50 Hz for the dropped grip** (`--vel-filter-hz 50`, `VEL_FILTER_HZ` in the script; frozen 8 Hz elsewhere): the first dropped run (M5, 2.6 s, 8 Hz, 17:51) rang at ~18 Hz as soon as the handle was let go, before any contact. The 8 Hz filter delays the velocity ~100° at 17 Hz, so D acts on the free handle (~0.06 kg) as a ~560 N/m spring with slightly negative damping: phase margin ~0° with the device's ~2–3 ms latency. It is a device-side mode, independent of the method and the delay, which the hand damps in held runs. **50 Hz did not work:** the M5 check at T = 0 (2026-10-27 19:12) grew at 22–24 Hz while the handle came down, then went to 58 Hz at the 50 N clamp within 3 s (robot at its 80 N OSC limit, watchdog stop). The single-mass model's ~30° margin was optimistic: the Inverse3 has more lag or dynamics above ~20 Hz. Dropped grip skipped.
 - **Plots (`e5_kmax.ipynb`):** K\_max vs T per method and grip (▽ where no step of the ladder was stable), and the talk's figure: the dropped handle's height and felt force from its first touch, M1 vs M5 at K = 1000, per delay.
 - **Expected (dropped):** M5's handle rests on its local wall at every delay. M1's wall is the delayed robot: it pushes a round trip late, and keeps pushing a round trip after the handle has left, so the loop throws the handle; likely unstable at every K of the ladder at 2.6 s.
 - **Expected:** a flat line for the model-based methods, set by the Inverse3 and the 1 kHz loop, and a falling line for M1, since P-P under delay needs damping that grows with K T. M3–M5 should give nearly the same K\_max: in static contact each reduces to the device against the coupling spring K. That is the expected result and is worth stating; this experiment separates P-P from model-based, not the models from each other.
+- **Guided stiffness ladders (added 2026-10-27, to run 2026-10-28; replaces the dropped grip, skipped):** the claim is that a local model renders a stiff wall under delay. E6 already shows the wall at K = 1000 N/m (felt force against depth: M3–M5 0.95–1.04 N/mm through zero at every delay; M1 at 850 ms and 2.6 s R² 0.10–0.24 with 22–35 N at zero depth), but that is only βK = 200 N/m at the handle. Protocol: E6's guide, hand held (tap, hold, tap, hold; 4 s holds), at a depth asking ~10 N at every K (guide depth 10 N / K: 10 mm at 1000 N/m, 1.25 mm at 8000), velocity filter at the frozen 8 Hz (as E6, so its K = 1000 step is E6's configuration), up the ladder until unstable. Ladders: M5 at T = 0 and 2.6 s, and M3 at 2.6 s: K = 1000, 2000, 4000, 8000 N/m (200–1600 N/m at the handle); M1 at T = 0 and 2.6 s: K = 1000, 2000 only, since M1's robot stiffness is K (K\_r := K) and the OSC oscillated at 3000 N/m — a limit of P-P itself. 14 steps of ~25 s, ~30–40 min. Verdict: HF RMS after each impact (E6's), else over the contact, < 0.5 N and no guard trip, confirmed by feel; reported with the felt wall (slope, offset, R², `exp_metrics.wall`). Figure: F9 in `analysis/talk_figures.ipynb`.
+- **Expected (guided):** M5 and M3 feel the K that is set, up to the same K\_max at T = 0 and 2.6 s (the device's limit). M1 matches at T = 0 up to 2000; at 2.6 s it renders no wall at any K (offset, low R²), whatever the verdict.
 
 ### E6 — Contact taps and holds, with video
 
@@ -202,7 +204,13 @@ Freeze the parameters first (Parameter selection, which starts with E5 at T = 0)
 - [x] E3 with the velocity sweep and the steady-approach sweep, 2026-10-26
 - [x] E5-lite, held and released (6 steps), 2026-10-26
 - [x] E4 (`zdither`, 4 runs), 2026-10-26
-- [ ] E5 dropped grip and E6 (today)
+- [x] E6 (2026-10-27, 16 runs + video); E5 dropped grip skipped: the free handle needs a faster velocity filter, not worth the time before the talk
+
+### Tomorrow (2026-10-28): the stiffness ladder
+
+- [ ] **E5 guided stiffness ladders** (~40 min, Inverse3, hand held): `pixi run -e humble python experiments/rim-delays/exp/e5_kmax.py` runs only the guided ladders (the held and released steps are done and skipped). Same grip at every step; flip a verdict by feel if needed.
+- [ ] Re-run `analysis/talk_figures.ipynb`: F9 draws itself from `kmax.csv`.
+- [ ] If time: E7, compliant robot (K\_r 2000 / 500 / 250 N/m, fast reaches, M3–M5): needs a K\_r override for M3–M5, not written yet.
 
 ### To finish today (2026-10-27): all the data and the figures
 
@@ -210,9 +218,9 @@ Leave with every run on disk and analysed, and the talk figures (FIGURES\_PLAN.m
 
 **Experiments (Inverse3, ~1 h 15 min)**
 
-- [ ] **E5 dropped** (~15 min): `exp/e5_kmax.py` runs only the new ladders: M5 at 2.6 s, K = 1000, then M1 at 850 ms and 2.6 s, down from 1000. Hands off after the release; flip the verdict if you had to catch the handle. Film the M1 and M5 runs at 2.6 s, K = 1000: they are the stability clip.
+- [ ] ~~**E5 dropped**~~ skipped (2026-10-27) (~15 min): `exp/e5_kmax.py` runs only the new ladders: M5 at 2.6 s, K = 1000, then M1 at 850 ms and 2.6 s, down from 1000. Hands off after the release; flip the verdict if you had to catch the handle. Film the M1 and M5 runs at 2.6 s, K = 1000: they are the stability clip.
 - [x] **E6 guided taps** (~45 min): `exp/e6_taps.py`, 14 runs left (M1 at T = 0 and 5G are done, 16:47–16:49). Check `track_rms_mm` and `missed` after each run; redo a run where the hand missed a contact.
-- [ ] **E6 video** (with the runs above): the three `VIDEO` conditions (M1 at T = 0, M1 and M5 at 2.6 s), filmed from the side; note each clip's file name against its run.
+- [x] **E6 video** (with the runs above): the three `VIDEO` conditions (M1 at T = 0, M1 and M5 at 2.6 s), filmed from the side; note each clip's file name against its run.
 - [ ] **Backup copy** of `~/data/franka/rim-delays/robot/` (E1–E6) and the video files off the lab PC before leaving.
 
 **Optional, if the robot is still free (~30 min, scripted)**
@@ -224,9 +232,9 @@ Leave with every run on disk and analysed, and the talk figures (FIGURES\_PLAN.m
 
 - [ ] Re-run every notebook top to bottom (E1–E6) on the final sessions, outputs saved.
 - [ ] E3: add the steady-sweep session to `RUNS` (the saved outputs have 28 of 37 runs), so the steady plots and time series are not empty.
-- [ ] E5: read the dropped runs: M1's K\_max per delay, and whether M1 was thrown where M5 rested. If M1 was stable dropped, use the fallback sentence in FIGURES\_PLAN.md.
+- [ ] ~~E5: read the dropped runs~~ (skipped): M1's K\_max per delay, and whether M1 was thrown where M5 rested. If M1 was stable dropped, use the fallback sentence in FIGURES\_PLAN.md.
 - [ ] E6: fix `%autoreload 2  # …` in `e6_taps.ipynb` (the inline comment is a UsageError), then write the discussion cell (tap/hold metrics per method and delay, M1's force arriving after the lift).
-- [ ] Render the talk figures F1–F7 (and F6b if E5 delivers) at slide size into `experiments/rim-delays/figures/`: one message per figure, ≥ 14 pt, the method colours of `plots.py`, as listed in FIGURES\_PLAN.md.
+- [x] Render the talk figures F1–F7b with `figures/talk_figures.ipynb` (outputs in `figures/out/`) at slide size into `experiments/rim-delays/figures/`: one message per figure, ≥ 14 pt, the method colours of `plots.py`, as listed in FIGURES\_PLAN.md.
 - [ ] `tools/contact_video.py` on the three E6 clips and the E5 stability clip.
 - [ ] Commit the scripts, notebooks (with outputs) and figures.
 

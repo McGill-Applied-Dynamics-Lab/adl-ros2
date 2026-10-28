@@ -8,11 +8,21 @@ in one of three modes:
   table, now), their heights over the last ``--window`` seconds, and the felt force against the
   robot's table force.
 - ``side``: the camera clip and the panel side by side (``--video``, synced).
-- ``overlay``: markers drawn on the clip itself, at each one's position (``--video``, synced,
-  ``--calib``), with the table line and a caption.
+- ``overlay``: drawn on the clip itself (``--video``, synced, ``--calib``): the hand to the left of
+  the tool and what it pulls on (the proxy; M1: the robot as felt) to its right, each at its own
+  height with a level line to the tool, the table plane, and a card with the method, the delay and
+  the felt against the robot's force. The robot is the video.
 
-Sync: ``--offset S`` (the video time at run t = 0), or ``--sync-contact V`` (the video time at which
-the robot first touches the table, read off the clip; the robot's contacts in run time are printed).
+Several runs on one clip (one long take): give them all; each gets its own sync, and one output per
+run (``<clip>_<method>_<delay>_<mode>.mp4``, ``--pad`` seconds around it) next to the clip, or in
+``--out`` (a directory).
+
+Sync, per run: ``--offset S ...`` (the video time at run t = 0, one per run), ``--sync-audio`` (the
+impact clicks in the clip's sound, matched to the robot's table contacts, searched ``--audio-window``
+around a guess from the clocks: the clip's creation time and length, the run's start; minus
+``--audio-lead``, the sound running ahead of the picture), or
+``--sync-contact V`` (one run: the video time at which the robot first touches the table, read off
+the clip; the robot's contacts in run time are printed).
 
 Overlay calibration, a side view (camera looking along the base y axis): the tool tip's pixel at two
 or more video times, ``--calib V,U,PX ...`` (video time [s], pixel column, pixel row); the robot's
@@ -26,13 +36,17 @@ it prints the ``--calib`` argument.
     pixi run -e humble python experiments/rim-delays/tools/contact_video.py RUN --video clip.mp4 --sync-contact 7.4 --pick 3 9
     pixi run -e humble python experiments/rim-delays/tools/contact_video.py RUN --mode overlay --video clip.mp4 \
         --sync-contact 7.4 --calib 3,812,240 9,815,402
+    pixi run -e humble python experiments/rim-delays/tools/contact_video.py RUN1 RUN2 RUN3 --mode overlay \
+        --video long.mp4 --sync-audio --calib ...
 
-Output: ``<run>/analysis/contact_<mode>.mp4`` (``--out`` to change it), H.264.
+Output: one run: ``<run>/analysis/contact_<mode>.mp4`` (``--out`` to change it); several: see above. H.264.
 """
 
 from __future__ import annotations
 
 import argparse
+import datetime
+import json
 import shutil
 import subprocess
 import sys
@@ -51,6 +65,10 @@ from run_plots import LEADER, PROXY, ROBOT, TARGET  # noqa: E402
 from runs import GRID, INK, INK_2, INK_3, LABELS, SURFACE, load_run, surface_of  # noqa: E402
 
 TOUCH_M = 0.002  # the robot touches the table when its tool point is this close to it [m]
+REFERENCE = "#1baf7a"  # the guide's reference: the categorical slot after the leader's and the proxy's
+TRAIL_S = 1.5  # overlay: how long the reference and hand trails last before fading out [s]
+TALK_NAMES = {"zoh": "Position-position (no model)", "tdpa-zoh": "TDPA", "proxy-god-object": "God-object",
+              "proxy-fixed-mass": "Fixed-mass proxy", "proxy-rim": "RIM (ours)"}  # overlay card, ASCII
 
 
 # ------------------------------------------------------------------ the signals
@@ -88,6 +106,18 @@ class Signals:
         trace = any((d.get(k) or {}).get("trace") for k in ("feedback", "command")) or meta.get("args", {}).get("delay_trace")
         self.delay = "5G" if trace else f"T = {rtt / 1e3:g} s"
         self.title = f"{LABELS.get(self.method, self.method)} · {self.delay}"
+        self.talk_name = TALK_NAMES.get(self.method, self.method)
+        self.talk_delay = "5G network" if trace else ("no delay" if rtt == 0 else f"{rtt / 1e3:g} s round-trip delay")
+        self.span = (max(self.th[0], self.tr[0]), min(self.th[-1], self.tr[-1]))
+        self.label = f"{self.method}_{'5g' if trace else f'rtt{rtt:g}'}"
+        meta_args = meta.get("args", {})
+        from fr3_haptic.guide import Guide
+
+        self.guide = Guide.from_args(meta_args)  # the reference the operator followed (fr3_teleop --guide), or None
+        self.t0_wall = meta.get("t0_wall_s")  # the run start, wall clock [s since the epoch]; older runs: estimated
+        if self.t0_wall is None and meta.get("created_at"):
+            saved = datetime.datetime.fromisoformat(meta["created_at"]).timestamp()
+            self.t0_wall = saved - float(meta_args.get("seconds", self.span[1])) - 1.0  # metadata written ~1 s after
 
     def at(self, key: str, t) -> np.ndarray:
         """``(len(t), 3)`` position of ``key`` at run times ``t`` (NaN outside its log)."""
@@ -98,6 +128,13 @@ class Signals:
         if x is None or not len(ts):
             return np.full((len(t), 3), np.nan)
         return np.stack([np.interp(t, ts, x[:, k], left=np.nan, right=np.nan) for k in range(3)], 1)
+
+    def reference(self, t) -> np.ndarray:
+        """The guide's reference height [m, base] at run times ``t``; NaN without a guide or outside the run."""
+        t = np.atleast_1d(np.asarray(t, float))
+        if self.guide is None:
+            return np.full(len(t), np.nan)
+        return np.where((t >= self.span[0]) & (t <= self.span[1]), self.guide.z(t), np.nan)
 
     def force(self, key: str, t) -> np.ndarray:
         ts, y = (self.th, self.f_z) if key == "felt" else (self.tr, self.table)
@@ -229,35 +266,139 @@ class Calibration:
         return xz @ self.P[:, :2].T + self.P[:, 2]
 
 
-def draw_overlay(img: np.ndarray, sig: Signals, cal: Calibration, t: float, keys: list[str]) -> np.ndarray:
+def draw_overlay(img: np.ndarray, sig: Signals, cal: Calibration, t: float, keys: list[str],
+                 f_max: float, reference: bool = True) -> np.ndarray:
+    """The hand left of the tool and what it pulls on right of it (``keys`` without the robot: it is
+    the video), each at its own height with a level line to the tool; the table plane; a card with
+    the method, the delay and the felt against the robot's force (bars to ``f_max``)."""
     import cv2
 
     out = img.copy()
     h, w = out.shape[:2]
-    scale = max(h / 720, 0.6)
-    # the table: a line along base x at its height, around the robot
-    xr = np.nanmean(sig.robot[:, 0])
-    a, b = cal.px(np.array([[xr - 0.25, sig.s], [xr + 0.25, sig.s]]))
-    cv2.line(out, tuple(int(v) for v in a), tuple(int(v) for v in b), (200, 200, 200), max(1, int(2 * scale)), cv2.LINE_AA)
-    r = int(10 * scale)
-    lane = 3.2 * r  # markers side by side at their own heights (a tap is vertical): none hides another
-    for i, k in enumerate(keys):
+    sc = h / 1080
+    aa = cv2.LINE_AA
+    robot = sig.at("robot", t)[0]
+    if np.isfinite(robot).all():
+        u_tool, _ = cal.px(robot[[0, 2]])[0]
+    else:
+        u_tool = cal.px(np.array([np.nanmean(sig.robot[:, 0]), sig.s]))[0][0]
+    # the table plane the model uses, around the tool
+    a, b = cal.px(np.array([[np.nanmean(sig.robot[:, 0]) - 0.12, sig.s], [np.nanmean(sig.robot[:, 0]) + 0.12, sig.s]]))
+    _dashed(out, a, b, (235, 235, 235), max(1, int(2 * sc)), int(14 * sc))
+    gap, r = 0.075 * w, int(14 * sc)
+    sides = {"hand": -1, "felt": +1, "command": +2}
+    show_ref = reference and sig.guide is not None
+    if show_ref:  # what the hand was asked to do, in the hand's lane: a ring now, and fading trails
+        _trails(out, sig, cal, t, u_tool - gap, 0.2 * w, sc)
+        z_ref = float(sig.reference(t)[0])
+        if np.isfinite(z_ref):
+            _, v_ref = cal.px(np.array([0.0, z_ref]))[0]
+            ring = (int(round(u_tool - gap)), int(round(v_ref)))
+            _blend_circle(out, ring, int(r * 1.7), _hex_bgr(REFERENCE), 0.35)
+            cv2.circle(out, ring, int(r * 1.7), _hex_bgr(REFERENCE), max(2, int(3 * sc)), aa)
+    for k in keys:
+        if k == "robot":
+            continue
         p = sig.at(k, t)[0]
         if not np.isfinite(p).all():
             continue
-        u, v = cal.px(p[[0, 2]])[0]
-        _marker(out, (int(round(u + (i - (len(keys) - 1) / 2) * lane)), int(round(v))), sig.markers[k],
-                _hex_bgr(sig.colors[k]), r)
-    caption = (f"{sig.title.replace(' · ', ' | ')}   t = {t:5.1f} s   felt {sig.force('felt', t)[0]:5.1f} N   "
-               f"robot {sig.force('robot', t)[0]:5.1f} N")
-    x0, y0 = int(16 * scale), int(36 * scale)
-    _text(out, caption, (x0, y0), 0.75 * scale)
-    # legend, left to right in the markers' lane order
-    for i, k in enumerate(keys):
-        y = y0 + int((34 + 30 * i) * scale)
-        _marker(out, (x0 + r, y), sig.markers[k], _hex_bgr(sig.colors[k]), int(0.8 * r))
-        _text(out, sig.names[k], (x0 + 3 * r, y + int(7 * scale)), 0.6 * scale)
+        side = sides[k]
+        _, v = cal.px(p[[0, 2]])[0]
+        u = u_tool + np.sign(side) * gap * abs(side)
+        color = _hex_bgr(sig.colors[k])
+        tip = u_tool - np.sign(side) * 0.012 * w  # stop the level line short of the tool
+        cv2.line(out, (int(u), int(v)), (int(tip), int(v)), (255, 255, 255), int(5 * sc), aa)
+        cv2.line(out, (int(u), int(v)), (int(tip), int(v)), color, int(3 * sc), aa)
+        _marker(out, (int(round(u)), int(round(v))), sig.markers[k], color, r)
+        if show_ref and side < 0:  # the trails run there; the card's legend names it
+            continue
+        label = sig.names[k]
+        fs = 0.8 * sc
+        (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, fs, 2)
+        x0 = int(u - r - 12 * sc - tw) if side < 0 else int(u + r + 12 * sc)
+        _text(out, label, (x0, int(v + th / 2)), fs)
+    _card(out, sig, t, f_max, sc, keys, show_ref)
     return out
+
+
+def _trails(img, sig: Signals, cal: Calibration, t: float, u0: float, length: float, sc: float) -> None:
+    """The reference's and the hand's last ``TRAIL_S``, drifting left from ``u0`` over ``length``
+    pixels and fading out: the reference thicker and fainter, the hand on top."""
+    import cv2
+
+    taus = np.linspace(0.0, TRAIL_S, 46)
+    us = u0 - length * taus / TRAIL_S
+    alpha = (1.0 - taus / TRAIL_S) ** 1.5
+    z_ref = sig.reference(t - taus)
+    z_hand = sig.at("hand", t - taus)[:, 2]
+    for z, color, thick, peak in ((z_ref, REFERENCE, 7, 0.55), (z_hand, LEADER, 3, 0.8)):
+        vs = np.array([cal.px(np.array([0.0, zz]))[0][1] if np.isfinite(zz) else np.nan for zz in z])
+        layer, weight = np.zeros_like(img), np.zeros(img.shape[:2], np.float32)
+        for k in range(len(taus) - 1, 0, -1):  # oldest first, the newest on top
+            if not (np.isfinite(vs[k]) and np.isfinite(vs[k - 1])):
+                continue
+            p, q = (int(us[k]), int(vs[k])), (int(us[k - 1]), int(vs[k - 1]))
+            cv2.line(layer, p, q, _hex_bgr(color), int(thick * sc), cv2.LINE_AA)
+            cv2.line(weight, p, q, float(peak * alpha[k - 1]), int(thick * sc), cv2.LINE_AA)
+        wgt = weight[..., None]
+        np.copyto(img, (img * (1.0 - wgt) + layer * wgt).astype(np.uint8), where=wgt > 0)
+
+
+def _blend_circle(img, center, r: int, color, alpha: float) -> None:
+    import cv2
+
+    x0, y0 = max(center[0] - r - 2, 0), max(center[1] - r - 2, 0)
+    x1, y1 = min(center[0] + r + 3, img.shape[1]), min(center[1] + r + 3, img.shape[0])
+    if x1 <= x0 or y1 <= y0:
+        return
+    roi = img[y0:y1, x0:x1]
+    disk = roi.copy()
+    cv2.circle(disk, (center[0] - x0, center[1] - y0), r, color, -1, cv2.LINE_AA)
+    roi[:] = (roi * (1 - alpha) + disk * alpha).astype(np.uint8)
+
+
+def _card(img, sig: Signals, t: float, f_max: float, sc: float, keys: list[str], show_ref: bool) -> None:
+    """Top left: the method, the delay, the felt and robot forces as bars, and the legend."""
+    import cv2
+
+    x0, y0, wd, ht = int(30 * sc), int(30 * sc), int(560 * sc), int(300 * sc)
+    patch = img[y0:y0 + ht, x0:x0 + wd]
+    patch[:] = (0.35 * patch + 0.65 * np.array([25, 25, 25])).astype(np.uint8)
+    _text(img, sig.talk_name, (x0 + int(20 * sc), y0 + int(50 * sc)), 1.15 * sc, thick=2)
+    _text(img, sig.talk_delay, (x0 + int(20 * sc), y0 + int(95 * sc)), 0.9 * sc)
+    bar_x, bar_w = x0 + int(150 * sc), int(300 * sc)
+    for i, (name, key, color) in enumerate((("felt", "felt", LEADER), ("robot", "robot", ROBOT))):
+        f = float(sig.force(key, t)[0])
+        y = y0 + int((140 + 52 * i) * sc)
+        _text(img, name, (x0 + int(20 * sc), y + int(12 * sc)), 0.8 * sc)
+        cv2.rectangle(img, (bar_x, y - int(14 * sc)), (bar_x + bar_w, y + int(14 * sc)), (70, 70, 70), -1)
+        if np.isfinite(f):
+            n = int(bar_w * np.clip(abs(f) / f_max, 0.0, 1.0))
+            cv2.rectangle(img, (bar_x, y - int(14 * sc)), (bar_x + n, y + int(14 * sc)), _hex_bgr(color), -1)
+        _text(img, f"{f:4.1f} N" if np.isfinite(f) else "  -", (bar_x + bar_w + int(12 * sc), y + int(12 * sc)), 0.8 * sc)
+    # legend: the reference (a ring), then the markers drawn
+    y, x = y0 + int(262 * sc), x0 + int(20 * sc)
+    items = ([("reference", None)] if show_ref else []) + [(k, k) for k in keys if k not in ("robot",)]
+    for label, k in items:
+        if k is None:
+            cv2.circle(img, (x + int(10 * sc), y - int(7 * sc)), int(10 * sc), _hex_bgr(REFERENCE), max(2, int(3 * sc)),
+                       cv2.LINE_AA)
+            name = "reference"
+        else:
+            _marker(img, (x + int(10 * sc), y - int(7 * sc)), sig.markers[k], _hex_bgr(sig.colors[k]), int(9 * sc))
+            name = sig.names[k]
+        _text(img, name, (x + int(28 * sc), y), 0.65 * sc)
+        x += int(28 * sc) + cv2.getTextSize(name, cv2.FONT_HERSHEY_SIMPLEX, 0.65 * sc, 1)[0][0] + int(26 * sc)
+
+
+def _dashed(img, a, b, color, thick: int, dash: int) -> None:
+    import cv2
+
+    a, b = np.asarray(a, float), np.asarray(b, float)
+    n = max(1, int(np.linalg.norm(b - a) / dash))
+    for i in range(0, n, 2):
+        p, q = a + (b - a) * i / n, a + (b - a) * min(i + 1, n) / n
+        cv2.line(img, (int(p[0]), int(p[1])), (int(q[0]), int(q[1])), color, thick, cv2.LINE_AA)
 
 
 def _marker(img, center, marker: str, color, r: int) -> None:
@@ -275,11 +416,12 @@ def _marker(img, center, marker: str, color, r: int) -> None:
         cv2.fillPoly(img, [np.array([(u + rr * dx, v + rr * dy) for dx, dy in pts], np.int32)], col, cv2.LINE_AA)
 
 
-def _text(img, text, org, fs):
+def _text(img, text, org, fs, thick: int = 1):
     import cv2
 
-    cv2.putText(img, text, org, cv2.FONT_HERSHEY_SIMPLEX, fs, (20, 20, 20), 4, cv2.LINE_AA)
-    cv2.putText(img, text, org, cv2.FONT_HERSHEY_SIMPLEX, fs, (255, 255, 255), 1, cv2.LINE_AA)
+    org = (int(org[0]), int(org[1]))
+    cv2.putText(img, text, org, cv2.FONT_HERSHEY_SIMPLEX, fs, (20, 20, 20), thick + 3, cv2.LINE_AA)
+    cv2.putText(img, text, org, cv2.FONT_HERSHEY_SIMPLEX, fs, (255, 255, 255), thick, cv2.LINE_AA)
 
 
 # ------------------------------------------------------------------ video I/O
@@ -357,59 +499,156 @@ def pick(path: Path, times: list[float]) -> list[tuple[float, int, int]]:
     return points
 
 
+# ------------------------------------------------------------------ sync
+
+
+def clip_start_wall(path: Path) -> float | None:
+    """The clip's first frame, wall clock [s since the epoch]: its creation time (a phone stamps the
+    end of the recording) minus its length; ``None`` without a creation time."""
+    ffprobe = shutil.which("ffprobe")
+    if ffprobe is None:
+        return None
+    info = json.loads(subprocess.run([ffprobe, "-v", "error", "-show_entries", "format=duration:format_tags=creation_time",
+                                      "-of", "json", str(path)], capture_output=True, text=True).stdout or "{}")
+    fmt = info.get("format", {})
+    created = (fmt.get("tags") or {}).get("creation_time")
+    if not created:
+        return None
+    end = datetime.datetime.fromisoformat(created.replace("Z", "+00:00")).timestamp()
+    return end - float(fmt.get("duration", 0.0))
+
+
+def impact_clicks(path: Path) -> np.ndarray:
+    """Times of the clip's impact clicks [s]: peaks of its sound above 300 Hz (10 ms envelope),
+    louder than 6 × the median, 0.25 s apart at least."""
+    from scipy.io import wavfile
+    from scipy.signal import butter, filtfilt, find_peaks
+
+    ffmpeg = shutil.which("ffmpeg")
+    wav = subprocess.run([ffmpeg, "-v", "error", "-i", str(path), "-vn", "-ac", "1", "-ar", "8000", "-f", "wav", "-"],
+                         capture_output=True).stdout
+    import io
+    import warnings
+
+    with warnings.catch_warnings():  # a piped WAV has no length in its header: harmless
+        warnings.simplefilter("ignore")
+        fs, a = wavfile.read(io.BytesIO(wav))
+    a = a.astype(float) / max(np.abs(a).max(), 1.0)
+    b, c = butter(4, 300 / (fs / 2), "high")
+    env = np.convolve(np.abs(filtfilt(b, c, a)), np.ones(int(0.01 * fs)) / int(0.01 * fs), "same")
+    peaks, _ = find_peaks(env, height=6 * np.median(env), distance=int(0.25 * fs))
+    return peaks / fs
+
+
+def audio_offset(contacts: np.ndarray, clicks: np.ndarray, guess: float, window: float, tol: float = 0.06):
+    """The offset (video time - run time) that puts the most robot contacts on a click (within
+    ``tol``), then the smallest gaps, searched ``guess ± window``; ``(offset, matched)``."""
+    best = (-1, 0.0, guess)
+    for off in np.arange(guess - window, guess + window, 0.005):
+        gaps = np.array([np.min(np.abs(clicks - (c + off))) for c in contacts]) if len(clicks) else np.full(len(contacts), 1.0)
+        score = (int(np.sum(gaps < tol)), -float(np.mean(np.minimum(gaps, tol))), off)
+        if score[:2] > best[:2]:
+            best = score
+    return best[2], best[0]
+
+
 # ------------------------------------------------------------------ main
 
 
 def main(argv=None) -> None:
     p = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    p.add_argument("run", type=Path)
+    p.add_argument("runs", type=Path, nargs="+", help="the run(s); several: on one clip, one output each")
     p.add_argument("--mode", choices=("panel", "side", "overlay"), default="panel")
     p.add_argument("--video", type=Path, help="the camera clip (side, overlay, --pick)")
-    p.add_argument("--offset", type=float, help="video time at run t = 0 [s]")
-    p.add_argument("--sync-contact", type=float, help="video time of the robot's first touch of the table [s]")
+    p.add_argument("--offset", type=float, nargs="+", help="video time at run t = 0 [s], one per run")
+    p.add_argument("--sync-audio", action="store_true", help="sync each run on the clip's impact clicks")
+    p.add_argument("--audio-window", type=float, default=15.0, help="--sync-audio: search ± this around the clocks' guess [s]")
+    p.add_argument("--audio-lead", type=float, default=0.16,
+                   help="--sync-audio: how far the clip's sound runs ahead of its picture [s] (the phone: 0.14-0.19 s, "
+                        "from the tool's motion against the robot's log on two clips)")
+    p.add_argument("--sync-contact", type=float, help="one run: video time of the robot's first touch of the table [s]")
     p.add_argument("--calib", nargs="+", default=None, help="overlay: V,U,PX per point (video time, pixel column, row)")
     p.add_argument("--x-sign", type=float, default=1.0, help="overlay, two points: +1 if base +x points right in the image")
     p.add_argument("--pick", type=float, nargs="+", help="click the tool tip at these video times, print --calib")
-    p.add_argument("--t0", type=float, help="start [run time, s]")
-    p.add_argument("--t1", type=float, help="end [run time, s]")
+    p.add_argument("--t0", type=float, help="one run: start [run time, s]")
+    p.add_argument("--t1", type=float, help="one run: end [run time, s]")
+    p.add_argument("--pad", type=float, default=2.0, help="video kept before and after each run [s]")
     p.add_argument("--window", type=float, default=5.0, help="history shown in the panel's traces [s]")
     p.add_argument("--command", action="store_true", help="also show the command as it reached the robot")
+    p.add_argument("--no-reference", action="store_true", help="overlay: leave out the guide's reference and the trails")
     p.add_argument("--fps", type=float, default=30.0, help="panel mode frame rate")
     p.add_argument("--height", type=int, default=720, help="panel mode height [px]")
-    p.add_argument("--out", type=Path)
+    p.add_argument("--out", type=Path, help="one run: the output file; several: the output directory")
     a = p.parse_args(argv)
 
-    run = load_run(a.run.expanduser())
-    if run is None or run.get("haptic") is None or run.get("robot") is None:
-        raise SystemExit(f"{a.run}: no complete run")
-    sig = Signals(run)
-    touches = sig.robot_contacts()
-    print(f"[contact_video] {sig.title}: robot table contacts at run t = {np.round(touches, 2).tolist()} s")
+    sigs = []
+    for path in a.runs:
+        run = load_run(path.expanduser())
+        if run is None or run.get("haptic") is None or run.get("robot") is None:
+            raise SystemExit(f"{path}: no complete run")
+        sigs.append(Signals(run))
+    for sig in sigs:
+        print(f"[contact_video] {sig.title}: robot table contacts at run t = {np.round(sig.robot_contacts(), 2).tolist()} s")
+    single = len(sigs) == 1
 
-    offset = a.offset
-    if a.sync_contact is not None:
+    # sync: one offset per run (video time = run time + offset)
+    offsets: list[float | None] = [None] * len(sigs)
+    if a.offset is not None:
+        if len(a.offset) != len(sigs):
+            raise SystemExit(f"--offset: one per run ({len(sigs)}), got {len(a.offset)}")
+        offsets = list(a.offset)
+    elif a.sync_contact is not None:
+        if not single:
+            raise SystemExit("--sync-contact takes one run; use --offset or --sync-audio for several")
+        touches = sigs[0].robot_contacts()
         if not len(touches):
             raise SystemExit("--sync-contact: the robot never touched the table")
-        offset = a.sync_contact - float(touches[0])
+        offsets = [a.sync_contact - float(touches[0])]
+    elif a.sync_audio:
+        if a.video is None:
+            raise SystemExit("--sync-audio needs --video")
+        clicks, start = impact_clicks(a.video), clip_start_wall(a.video)
+        print(f"[contact_video] {len(clicks)} impact clicks in the clip")
+        for i, sig in enumerate(sigs):
+            if start is None or sig.t0_wall is None:
+                raise SystemExit("--sync-audio: no clock to start from (clip creation time, run start); use --offset")
+            guess = sig.t0_wall - start
+            touches = sig.robot_contacts()
+            offsets[i], matched = audio_offset(touches, clicks, guess, a.audio_window)
+            offsets[i] -= a.audio_lead  # on the clicks, the picture is this much later
+            print(f"[contact_video] {sig.label}: offset {offsets[i]:.3f} s (clocks said {guess:.1f}), "
+                  f"{matched}/{len(touches)} contacts on a click")
+            if matched < max(2, (len(touches) + 1) // 2):  # quiet first impacts: more than half, two at least
+                raise SystemExit(f"--sync-audio: {sig.label} matched too few contacts; give --offset")
     needs_video = a.mode != "panel" or a.pick
-    if needs_video and (a.video is None or offset is None):
-        raise SystemExit("--video and --offset or --sync-contact are needed for side, overlay and --pick")
-    if needs_video:
-        print(f"[contact_video] video time = run time + {offset:.3f} s")
+    if needs_video and (a.video is None or any(o is None for o in offsets)):
+        raise SystemExit("--video and a sync (--offset, --sync-audio or --sync-contact) are needed for side, overlay "
+                         "and --pick")
+    for sig, off in zip(sigs, offsets):
+        if off is not None:
+            print(f"[contact_video] {sig.label}: video time = run time + {off:.3f} s "
+                  f"(video {sig.span[0] + off:.1f}-{sig.span[1] + off:.1f} s)")
+
+    def covering(tv: float) -> int | None:
+        """The run whose span (padded) holds video time ``tv``."""
+        for i, (sig, off) in enumerate(zip(sigs, offsets)):
+            if sig.span[0] + off - a.pad <= tv <= sig.span[1] + off + a.pad:
+                return i
+        return None
 
     if a.pick:
         pts = pick(a.video, a.pick)
         print("--calib " + " ".join(f"{tv:g},{u},{v}" for tv, u, v in pts))
         return
 
-    span = (max(sig.th[0], sig.tr[0]), min(sig.th[-1], sig.tr[-1]))
-    t0 = a.t0 if a.t0 is not None else span[0]
-    t1 = a.t1 if a.t1 is not None else span[1]
-    out = a.out or a.run.expanduser() / "analysis" / f"contact_{a.mode}.mp4"
-    out.parent.mkdir(parents=True, exist_ok=True)
-    keys = sig.keys(a.command)
-
     if a.mode == "panel":
+        if not single:
+            raise SystemExit("--mode panel takes one run")
+        sig = sigs[0]
+        t0 = a.t0 if a.t0 is not None else sig.span[0]
+        t1 = a.t1 if a.t1 is not None else sig.span[1]
+        out = a.out or a.runs[0].expanduser() / "analysis" / "contact_panel.mp4"
+        out.parent.mkdir(parents=True, exist_ok=True)
         panel = Panel(sig, a.height, a.window, a.command, (t0, t1))
         times = np.arange(t0, t1, 1.0 / a.fps)
         first = panel.frame(times[0])
@@ -422,44 +661,60 @@ def main(argv=None) -> None:
 
     import cv2
 
-    cap, fps, n = open_video(a.video)
-    v0 = max(0.0, t0 + offset)
-    v1 = min(n / fps, t1 + offset)
-    if v1 <= v0:
-        raise SystemExit(f"the clip ({n / fps:.1f} s) and the run [{t0:.1f}, {t1:.1f}] s do not overlap with this sync")
-    cap.set(cv2.CAP_PROP_POS_FRAMES, int(round(v0 * fps)))
     cal = None
     if a.mode == "overlay":
         if not a.calib:
             raise SystemExit("--mode overlay needs --calib (get it with --pick)")
         pts = np.array([[float(x) for x in c.split(",")] for c in a.calib])
-        rob = np.array([sig.at("robot", tv - offset)[0][[0, 2]] for tv in pts[:, 0]])
+        rob = []
+        for tv in pts[:, 0]:
+            i = covering(tv)
+            rob.append(sigs[i].at("robot", tv - offsets[i])[0][[0, 2]] if i is not None else [np.nan, np.nan])
+        rob = np.array(rob)
         if not np.isfinite(rob).all():
-            raise SystemExit(f"--calib: video times {pts[~np.isfinite(rob).all(1), 0].tolist()} are outside the robot log "
-                             f"(video {sig.tr[0] + offset:.1f}-{sig.tr[-1] + offset:.1f} s)")
+            raise SystemExit(f"--calib: video times {pts[~np.isfinite(rob).all(1), 0].tolist()} are outside every robot log")
         cal = Calibration(rob, pts[:, 1:], a.x_sign)
-    panel, w = None, None
-    k0 = int(round(v0 * fps))
-    for k in range(k0, int(v1 * fps)):
-        ok, img = cap.read()
-        if not ok:
-            break
-        t = k / fps - offset
-        if a.mode == "overlay":
-            frame = cv2.cvtColor(draw_overlay(img, sig, cal, t, keys), cv2.COLOR_BGR2RGB)
+
+    _, fps, n = open_video(a.video)
+    for i, (sig, off) in enumerate(zip(sigs, offsets)):
+        t0 = a.t0 if (single and a.t0 is not None) else sig.span[0] - a.pad
+        t1 = a.t1 if (single and a.t1 is not None) else sig.span[1] + a.pad
+        v0, v1 = max(0.0, t0 + off), min(n / fps, t1 + off)
+        if v1 <= v0:
+            print(f"[contact_video] {sig.label}: not in the clip ({n / fps:.1f} s) with this sync, skipped")
+            continue
+        if single:
+            out = a.out or a.runs[0].expanduser() / "analysis" / f"contact_{a.mode}.mp4"
         else:
-            if panel is None:
-                panel = Panel(sig, img.shape[0], a.window, a.command, (t0, t1))
-            right = panel.frame(t)
-            right = cv2.resize(right, (int(right.shape[1] * img.shape[0] / right.shape[0]), img.shape[0]))
-            frame = np.hstack([cv2.cvtColor(img, cv2.COLOR_BGR2RGB), right])
-        if w is None:
-            w = Writer(out, (frame.shape[1], frame.shape[0]), fps)
-        w.write(frame)
-    cap.release()
-    if w is not None:
-        w.close()
-    print(f"[contact_video] {a.mode} -> {out}")
+            out = (a.out or a.video.parent) / f"{a.video.stem}_{sig.label}_{a.mode}.mp4"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        ts = np.arange(sig.span[0], sig.span[1], 0.01)
+        f_max = float(np.nanpercentile(np.r_[sig.force("felt", ts), sig.force("robot", ts)], 99.5)) * 1.1
+        cap, _, _ = open_video(a.video)
+        cap.set(cv2.CAP_PROP_POS_FRAMES, int(round(v0 * fps)))
+        panel, w = None, None
+        keys = sig.keys(a.command)
+        for k in range(int(round(v0 * fps)), int(v1 * fps)):
+            ok, img = cap.read()
+            if not ok:
+                break
+            t = k / fps - off
+            if a.mode == "overlay":
+                frame = cv2.cvtColor(draw_overlay(img, sig, cal, t, keys, max(f_max, 5.0), not a.no_reference),
+                                     cv2.COLOR_BGR2RGB)
+            else:
+                if panel is None:
+                    panel = Panel(sig, img.shape[0], a.window, a.command, (t0, t1))
+                right = panel.frame(t)
+                right = cv2.resize(right, (int(right.shape[1] * img.shape[0] / right.shape[0]), img.shape[0]))
+                frame = np.hstack([cv2.cvtColor(img, cv2.COLOR_BGR2RGB), right])
+            if w is None:
+                w = Writer(out, (frame.shape[1], frame.shape[0]), fps)
+            w.write(frame)
+        cap.release()
+        if w is not None:
+            w.close()
+        print(f"[contact_video] {sig.label}: {a.mode} -> {out}")
 
 
 if __name__ == "__main__":
