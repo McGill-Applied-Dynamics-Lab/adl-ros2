@@ -27,7 +27,15 @@ from pathlib import Path
 import numpy as np
 from sensor import PLOT_STYLE, PlotStyle, _PlotTools
 from touch import TouchFrame, TouchSource
-from wg_body_demo import DIRECTIONS, BodyDemoConfig, DemoMonitor, DirectionCalibration, HoleMapping, hole_vectors, save_mapping
+from wg_body_demo import (
+    DIRECTIONS,
+    BodyDemoConfig,
+    DemoMonitor,
+    DirectionCalibration,
+    HoleMapping,
+    hole_vectors,
+    save_mapping,
+)
 
 # Okabe-Ito (colorblind-safe); -z is a darker yellow, readable on white
 DIRECTION_COLORS = {
@@ -110,7 +118,12 @@ def show(
     idle_rgb, touch_rgb = tools.rgb(c["hole_idle"]), tools.rgb(c["touch"])
     names = list(DIRECTIONS)
     state_colors = dict(
-        starting=c["muted"], idle=c["muted"], moving=c["command"], stop=c["touch"], box=c["reference"], nodata=c["muted"]
+        starting=c["muted"],
+        idle=c["muted"],
+        moving=c["command"],
+        stop=c["touch"],
+        box=c["reference"],
+        nodata=c["muted"],
     )
     errors = []
 
@@ -332,7 +345,9 @@ def show(
             calibration.add(names[session["step"]], TouchFrame())  # The direction exists even if nothing is touched
             return
         direction_holes = calibration.direction_holes()
-        warnings = [f"hole {h} touched for {', '.join(ds)}: most frequent kept" for h, ds in calibration.conflicts().items()]
+        warnings = [
+            f"hole {h} touched for {', '.join(ds)}: most frequent kept" for h, ds in calibration.conflicts().items()
+        ]
         warnings += [f"no hole for {name}" for name, hs in direction_holes.items() if not hs]
         backup = save_mapping(HoleMapping(direction_holes, session["rotation"]), cfg.calibration_path, backup=True)
         monitor.set_mapping(direction_holes)
@@ -429,7 +444,9 @@ def show(
                 else:
                     colors.append(idle_rgb)
             show_holes(np.round(colors).astype(int), covered)
-            set_status(f"Touch all the {name} holes, then Space  ({session['step'] + 1}/{len(names)})", DIRECTION_COLORS[name])
+            set_status(
+                f"Touch all the {name} holes, then Space  ({session['step'] + 1}/{len(names)})", DIRECTION_COLORS[name]
+            )
             info_label.setText(
                 f"<b>{name}</b>: holes {', '.join(f'{a}' if a == b else f'{a}-{b}' for a, b in runs(current)) or '-'}"
                 "<br>Space: next direction · Backspace: redo · Esc: cancel"

@@ -33,6 +33,11 @@ the sensor and the plot on the bench.
     pixi run -e wg python experiments/waveguide/wg_body_demo.py --calibrate        # calibrate the hole -> direction mapping first
     pixi run -e wg python experiments/waveguide/wg_body_demo.py --input terminal   # covered holes typed in the terminal
     pixi run -e wg python experiments/waveguide/wg_body_demo.py --live-plot --no-robot --input terminal   # no arm, no sensor
+    pixi run -e wg python experiments/waveguide/wg_body_demo.py --live-plot --record --notes "take 2"     # records the run
+
+`--record` saves the Teensy results, the raw frames if the Teensy's USB cable is plugged in, the end-effector
+state, the demo events (moving, stop, box, ...) and the mappings, to ~/data/waveguide/body/<date-time> (see
+`recording.py`; plot it with `plot_run.py`).
 """
 
 import argparse
@@ -45,7 +50,17 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 import numpy as np
-from touch import TeensyTouchSource, TerminalTouchSource, TouchFrame, TouchSource, add_teensy_args, teensy_config
+from touch import (
+    TeensyTouchSource,
+    TerminalTouchSource,
+    TouchFrame,
+    TouchSource,
+    add_record_args,
+    add_teensy_args,
+    start_demo_recording,
+    stop_demo_recording,
+    teensy_config,
+)
 
 DIRECTIONS = {
     "+x": np.array([1.0, 0.0, 0.0]),
@@ -441,19 +456,23 @@ def run(
     link: LinkOrientation | None = None,
     calibration_rotation: np.ndarray | None = None,
     monitor: DemoMonitor | None = None,
+    recorder=None,
 ) -> None:
     """Jog until Ctrl+C (or `q` in the terminal input, or `monitor.stop_event`).
 
     `link`: prints its drift; with `fixed_mapping=False`, needed with its orientation at the calibration,
     `calibration_rotation` (base <- link, 3x3). `monitor`: the live plot's view of the loop, and its controls.
+    `recorder` (`recording.DemoRecorder`): records the state changes and the new mappings.
     """
     if not cfg.fixed_mapping and (link is None or calibration_rotation is None):
         raise ValueError("fixed_mapping=False needs the link and its orientation at the calibration")
 
-    def say(state: str, message: str) -> None:
+    def say(state: str, message: str, holes=()) -> None:
         print(message)
         if monitor is not None:
             monitor.set_state(state, message)
+        if recorder is not None:
+            recorder.event(state, message, holes, position=position, velocity=logic.velocity)
 
     lower, upper = np.array(cfg.box_lower), np.array(cfg.box_upper)
     logic = JogLogic(cfg)
@@ -480,6 +499,8 @@ def run(
             if mapping is not None:  # Calibrated from the plot
                 logic = JogLogic(replace(cfg, direction_holes=mapping))
                 position = jogger.hard_stop()
+                if recorder is not None:
+                    recorder.mapping(mapping, cfg.calibration_path, "calibrated from the plot")
                 say("idle", f"New hole mapping: {mapping}")
             if monitor.paused.is_set():
                 if np.any(logic.velocity):
@@ -503,14 +524,16 @@ def run(
         moving, was_stopped = bool(np.any(logic.velocity)), logic.stopped
         if logic.update(dt, frame.covered, rotation):
             position = jogger.hard_stop()
-            say("stop", f"STOP (touched holes {logic.touched(frame.covered)}) at {np.round(position, 3)}")
+            touched = logic.touched(frame.covered)
+            say("stop", f"STOP (touched holes {touched}) at {np.round(position, 3)}", touched)
             continue
         if was_stopped and not logic.stopped:
             say("idle", "Released: ready")
         if not np.any(logic.velocity):
             continue
         if not moving:
-            say("moving", f"Moving: holes {logic.touched(frame.covered)}, v = {np.round(logic.velocity, 3)}")
+            touched = logic.touched(frame.covered)
+            say("moving", f"Moving: holes {touched}, v = {np.round(logic.velocity, 3)}", touched)
 
         new_position = position + logic.velocity * dt
         clipped = np.clip(new_position, lower, upper)
@@ -518,7 +541,7 @@ def run(
             logic.stop()
             jogger.step(clipped, np.zeros(3))
             position = clipped
-            say("box", f"Bounding box reached at {np.round(position, 3)}: stopped")
+            say("box", f"Bounding box reached at {np.round(position, 3)}: stopped", frame.covered)
             continue
         position = new_position
         jogger.step(position, logic.velocity)
@@ -539,16 +562,18 @@ def run_with_live_plot(
     link: LinkOrientation | None,
     calibration_rotation: np.ndarray | None,
     sensor_calibration: Path,
+    monitor: DemoMonitor,
+    recorder=None,
 ) -> None:
     """`run` in a background thread, with the live plot (`body_live_plot.show`) in this one (Qt needs the main
     thread). Ends when the window is closed (or Ctrl+C) or `run` ends."""
     import body_live_plot  # Qt, only needed here
 
-    monitor, errors = DemoMonitor(), []
+    errors = []
 
     def control() -> None:
         try:
-            run(jogger, touch, cfg, link, calibration_rotation, monitor)
+            run(jogger, touch, cfg, link, calibration_rotation, monitor, recorder)
         except Exception as e:  # noqa: BLE001, raised again below
             errors.append(e)
         finally:
@@ -578,6 +603,7 @@ def main():
     parser.add_argument("--calibrate", action="store_true", help="Calibrate the hole -> direction mapping first")
     parser.add_argument("--live-plot", action="store_true", help="Live plot, with the mapping calibration (⚙ tab)")
     parser.add_argument("--no-robot", action="store_true", help="No arm (no ROS): its motion is simulated")
+    add_record_args(parser, "body")
     args = parser.parse_args()
     if args.calibrate and args.input != "waveguide":
         parser.error("--calibrate needs --input waveguide")
@@ -593,13 +619,17 @@ def main():
     elif not args.calibrate:
         print(f"No calibration at {cfg.calibration_path} (--calibrate): using the placeholder mapping")
 
+    # Started before the sensor, so the raw frames (USB cable plugged in) include its background
+    logger, recorder, frames = start_demo_recording(args, "body", {"body_demo": cfg})
     if args.input == "waveguide":
         try:
-            touch = TeensyTouchSource(teensy_config(args))
+            touch = TeensyTouchSource(teensy_config(args), recorder)
         except (FileNotFoundError, ValueError) as e:
+            stop_demo_recording(logger, frames)
             parser.exit(1, f"Error: {e}\n")
     else:
         touch = TerminalTouchSource(aliases=cfg.direction_holes)
+    monitor = DemoMonitor() if args.live_plot or recorder is not None else None
 
     robot, link = None, None
     if args.no_robot:
@@ -610,6 +640,7 @@ def main():
         robot = Robot(namespace="fr3")
         robot.wait_until_ready()
         jogger = OscJogger(robot)
+    state_recorder = None
     try:
         if robot is not None:
             print("Going to home position...")
@@ -626,10 +657,31 @@ def main():
             # Placeholder or calibrated without the link orientation: assume it was at home, as now
             print(f"No {cfg.link_name} orientation in the calibration: using the current one (at home)")
             calibration_rotation = link.start_rotation()
+        if recorder is not None:
+            import recording
+
+            recorder.mapping(cfg.direction_holes, cfg.calibration_path if mapping is not None else None, "start")
+
+            def state():  # End-effector, and what the loop commands (its last published values)
+                snapshot = monitor.snapshot()
+                if robot is not None:
+                    pose = robot.end_effector_pose
+                    position, orientation = pose.position, pose.orientation.as_quat()
+                else:
+                    position, orientation = snapshot["position"], np.full(4, np.nan)
+                if position is None:
+                    return None
+                extra = {"velocity": snapshot["velocity"], "state": snapshot["state"]}
+                return position, orientation, snapshot["position"], extra
+
+            state_recorder = recording.RobotRecorder(logger, state)
+            state_recorder.start()
         if args.live_plot:
-            run_with_live_plot(jogger, touch, cfg, link, calibration_rotation, args.sensor_calibration)
+            run_with_live_plot(
+                jogger, touch, cfg, link, calibration_rotation, args.sensor_calibration, monitor, recorder
+            )
         else:
-            run(jogger, touch, cfg, link, calibration_rotation)
+            run(jogger, touch, cfg, link, calibration_rotation, monitor, recorder)
     except KeyboardInterrupt:
         print()
     except (RuntimeError, TimeoutError) as e:
@@ -638,6 +690,9 @@ def main():
         if robot is not None and jogger.orientation is not None:
             jogger.hard_stop()  # The robot holds this target
         touch.close()
+        if state_recorder is not None:
+            state_recorder.stop()
+        stop_demo_recording(logger, frames)
         if robot is not None:
             robot.shutdown()
 

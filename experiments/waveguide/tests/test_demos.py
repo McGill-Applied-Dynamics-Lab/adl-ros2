@@ -461,3 +461,52 @@ def test_hole_colors_and_runs():
     np.testing.assert_allclose(colors[10], hex_rgb(DIRECTION_COLORS["+y"]))
     np.testing.assert_allclose(colors[12], (hex_rgb(DIRECTION_COLORS["+y"]) + hex_rgb(DIRECTION_COLORS["+z"])) / 2)
     assert runs([5, 1, 2, 3, 7, 8]) == [(1, 3), (5, 5), (7, 8)]
+
+
+# --- Recording of the demos
+class _FakeLogger:
+    def __init__(self, run_dir):
+        self.run_dir, self.samples = run_dir, []
+
+    def log_sample(self, stream, values, ts):
+        self.samples.append((stream, values))
+
+
+def test_demo_recorder(tmp_path):
+    import json
+
+    from recording import DemoRecorder
+
+    logger = _FakeLogger(tmp_path)
+    recorder = DemoRecorder(logger)
+    result = dict(detected=True, hole=3, hole2=4, distance_cm=26.2, amplitude=80.0, echo_time_ms=None, ratio=2.5,
+                  sequence=7, time_ms=1234, method="multi")
+    recorder.result(1.0, result)
+    recorder.result(1.05, {**result, "detected": False, "hole2": None})
+    recorder.calibration(Path(__file__).resolve().parents[1] / "calibration" / "calibration_dummy.npz", {"method": "multi"})
+    mapping = tmp_path / "map.json"
+    save_mapping(HoleMapping({"+x": (1, 2)}), mapping)
+    recorder.mapping({"+x": (1, 2)}, mapping, "start")
+    recorder.event("contact", "Contact", {5}, width=np.float64(0.05), holes_seen=np.array([5]))
+
+    streams = [stream for stream, _ in logger.samples]
+    assert streams == ["sensor/result", "sensor/result", "sensor/calibration", "demo/event", "demo/event"]
+    hit, miss = logger.samples[0][1], logger.samples[1][1]
+    assert (hit["hole"], hit["hole2"], hit["sequence"]) == (3, 4, 7)
+    assert miss["hole"] is None and miss["distance_cm"] is None
+    calibration = logger.samples[2][1]
+    assert calibration["file"] == "sensor_calibration.npz" and (tmp_path / "sensor_calibration.npz").exists()
+    assert calibration["method"] == "multi" and calibration["hole_ids"][0] == 1
+    event = logger.samples[3][1]
+    assert event["kind"] == "mapping" and json.loads(event["data"])["direction_holes"] == {"+x": [1, 2]}
+    assert (tmp_path / "mapping_1.json").exists()
+    contact = logger.samples[4][1]
+    assert contact["holes"] == [5] and json.loads(contact["data"]) == {"width": 0.05, "holes_seen": [5]}
+
+
+def test_robot_recorder_extra_fields():
+    from recording import RobotRecorder
+
+    values = RobotRecorder._state_values(None, ([1, 2, 3], [0, 0, 0, 1], None, {"velocity": [0.1, 0, 0], "state": "moving"}))
+    np.testing.assert_allclose(values["velocity"], [0.1, 0, 0])
+    assert values["state"] == "moving" and values["target"] is None

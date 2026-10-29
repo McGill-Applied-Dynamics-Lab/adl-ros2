@@ -23,6 +23,11 @@ The Teensy (TEENSY_BLUETOOTH firmware) is reached over BLE by default (`--link s
     pixi run -e wg python experiments/waveguide/wg_gripper_demo.py --squeeze-mm 2
     pixi run -e wg python experiments/waveguide/wg_gripper_demo.py --mode amplitude --amplitude-rise 50
     pixi run -e wg python experiments/waveguide/wg_gripper_demo.py --sensor-calibration calibration/gripper.npz --upload
+    pixi run -e wg python experiments/waveguide/wg_gripper_demo.py --record --notes "egg 3"   # records the run
+
+`--record` saves the Teensy results, the raw frames if the Teensy's USB cable is plugged in, the end-effector and
+gripper width (50 Hz) and the demo phases (contact width and amplitude, squeeze, ...), to
+~/data/waveguide/gripper/<date-time> (see `recording.py`; plot it with `plot_run.py`).
 """
 
 import argparse
@@ -33,7 +38,16 @@ from dataclasses import dataclass
 import numpy as np
 from arm_client.gripper.franka_hand import Gripper
 from arm_client.robot import Pose, Robot
-from touch import TeensyTouchSource, TouchFrame, TouchSource, add_teensy_args, teensy_config
+from touch import (
+    TeensyTouchSource,
+    TouchFrame,
+    TouchSource,
+    add_record_args,
+    add_teensy_args,
+    start_demo_recording,
+    stop_demo_recording,
+    teensy_config,
+)
 
 # --- Update as desired
 EGG_POSITION = np.array([0.45, 0.0, 0.05])  # m, base frame: end-effector (TCP) position to grasp the egg. TODO: measure
@@ -64,8 +78,19 @@ CFG = GripperDemoConfig()
 
 
 class EggGrasp:
-    def __init__(self, robot: Robot, gripper: Gripper, touch: TouchSource, cfg: GripperDemoConfig = CFG):
-        self.robot, self.gripper, self.touch, self.cfg = robot, gripper, touch, cfg
+    """`recorder` (`recording.DemoRecorder`, optional): records each phase (`_event`)."""
+
+    def __init__(
+        self, robot: Robot, gripper: Gripper, touch: TouchSource, cfg: GripperDemoConfig = CFG, recorder=None
+    ):
+        self.robot, self.gripper, self.touch, self.cfg, self.recorder = robot, gripper, touch, cfg, recorder
+
+    def _event(self, kind: str, message: str, **data) -> None:
+        """Print `message`; with a recorder, also record it (`demo/event`) with the covered holes and `data`."""
+        print(message)
+        if self.recorder is not None:
+            frame = self._frame()
+            self.recorder.event(kind, message.strip(), frame.covered, amplitude=frame.amplitude, **data)
 
     def _frame(self) -> TouchFrame:
         frame = self.touch.latest()
@@ -110,39 +135,60 @@ class EggGrasp:
         cfg = self.cfg
 
         # 2. Fast close, the egg must not be touched yet
-        print(f"\tFast closing to {cfg.fast_close_width * 1e3:.1f} mm at {cfg.fast_speed * 1e3:.1f} mm/s")
+        self._event(
+            "fast_close", f"\tFast closing to {cfg.fast_close_width * 1e3:.1f} mm at {cfg.fast_speed * 1e3:.1f} mm/s"
+        )
         self.gripper.set_target(cfg.fast_close_width, speed=cfg.fast_speed, block=True)
         if self._frame().covered:
             raise RuntimeError(f"Holes {sorted(self._frame().covered)} covered before the contact search")
 
         # 3. Close until contact
-        print(f"\tClosing until contact (holes covered) at {cfg.contact_speed * 1e3:.1f} mm/s")
+        self._event("contact_search", f"\tClosing until contact (holes covered) at {cfg.contact_speed * 1e3:.1f} mm/s")
         contact, frame = self.close_until(cfg.min_width, cfg.contact_speed, lambda f: bool(f.covered))
         if not contact:
             raise RuntimeError(f"No contact down to {cfg.min_width * 1e3:.0f} mm: is the egg there?")
         contact_width, contact_amplitude = self.width(), frame.amplitude
-        print(
-            f"Contact at {contact_width * 1e3:.1f} mm: holes {sorted(frame.covered)}, amplitude {contact_amplitude:.1f}"
+        self._event(
+            "contact",
+            f"Contact at {contact_width * 1e3:.1f} mm: holes {sorted(frame.covered)}, amplitude {contact_amplitude:.1f}",
+            width=contact_width,
+            contact_amplitude=contact_amplitude,
+            contact_holes=sorted(frame.covered),
         )
 
         # 4. Squeeze
-        print(f"\tSqueezing in {mode} mode, amplitude rise {amplitude_rise}, max {cfg.max_squeeze_mm:.1f} mm")
         limit_mm = min(squeeze_mm, cfg.max_squeeze_mm) if mode == "squeeze" else cfg.max_squeeze_mm
         target = max(contact_width - limit_mm * 1e-3, cfg.min_width)
+        self._event(
+            "squeeze",
+            f"\tSqueezing in {mode} mode, amplitude rise {amplitude_rise}, max {cfg.max_squeeze_mm:.1f} mm",
+            mode=mode,
+            squeeze_mm=squeeze_mm,
+            amplitude_rise=amplitude_rise,
+            target_width=target,
+        )
         if mode == "squeeze":
             self.gripper.set_target(target, speed=cfg.squeeze_speed, block=True)
-            print(f"Squeezed {(contact_width - self.width()) * 1e3:.1f} mm")
+            width = self.width()
+            self._event(
+                "squeezed",
+                f"Squeezed {(contact_width - width) * 1e3:.1f} mm",
+                width=width,
+                squeezed_mm=(contact_width - width) * 1e3,
+            )
         else:
             rose, frame = self.close_until(
                 target, cfg.squeeze_speed, lambda f: f.amplitude - contact_amplitude >= amplitude_rise
             )
-            squeezed_mm = (contact_width - self.width()) * 1e3
+            width = self.width()
+            squeezed_mm = (contact_width - width) * 1e3
             if rose:
-                print(
+                message = (
                     f"Amplitude {frame.amplitude:.1f} (+{frame.amplitude - contact_amplitude:.1f}): squeezed {squeezed_mm:.1f} mm"
                 )
             else:
-                print(f"Amplitude rise not reached after {squeezed_mm:.1f} mm (max_squeeze_mm), holding there")
+                message = f"Amplitude rise not reached after {squeezed_mm:.1f} mm (max_squeeze_mm), holding there"
+            self._event("squeezed", message, width=width, squeezed_mm=squeezed_mm, rise_reached=rose)
 
     def run(self, mode: str, squeeze_mm: float, amplitude_rise: float) -> None:
         cfg = self.cfg
@@ -159,25 +205,30 @@ class EggGrasp:
         # )
 
         # 1. Move to the egg
-        print(f"Moving to the egg at {EGG_POSITION} m, approach height {cfg.approach_height} m")
+        self._event("approach", f"Moving to the egg at {EGG_POSITION} m, approach height {cfg.approach_height} m")
         above = Pose(EGG_POSITION + [0.0, 0.0, cfg.approach_height], orientation)
         self.robot.move_to(pose=above, speed=cfg.move_speed)
         time.sleep(0.5)  # Wait for the robot to settle before going down
 
-        print(f"Going down to the egg")
+        self._event("down", "Going down to the egg")
         self.robot.move_to(pose=Pose(EGG_POSITION, orientation), speed=cfg.move_speed)
 
         print("Grasping...")
         self.grasp(mode, squeeze_mm, amplitude_rise)
 
         # 5. Lift, hold, put down, release
+        self._event("lift", f"Lifting by {cfg.lift_height} m")
         self.robot.move_to(pose=Pose(EGG_POSITION + [0.0, 0.0, cfg.lift_height], orientation), speed=cfg.move_speed)
-        print(f"Holding for {cfg.hold_s} s, amplitude {self._frame().amplitude:.1f}")
+        self._event("hold", f"Holding for {cfg.hold_s} s, amplitude {self._frame().amplitude:.1f}")
         time.sleep(cfg.hold_s)
+        self._event("put_down", "Putting the egg down")
         self.robot.move_to(pose=Pose(EGG_POSITION, orientation), speed=cfg.move_speed)
+        self._event("release", "Releasing")
         self.gripper.set_target(cfg.open_width, speed=cfg.fast_speed, block=True)
         self.robot.move_to(pose=above, speed=cfg.move_speed)
+        self._event("home", "Going home")
         self.robot.home()
+        self._event("done", "Done")
 
 
 def main():
@@ -186,15 +237,21 @@ def main():
     parser.add_argument("--squeeze-mm", type=float, default=1.0, help="squeeze mode: closing after the contact [mm]")
     parser.add_argument("--amplitude-rise", type=float, default=None, help="amplitude mode: rise to stop at")
     add_teensy_args(parser)
+    add_record_args(parser, "gripper")
     args = parser.parse_args()
     if args.mode == "amplitude" and args.amplitude_rise is None:
         parser.error("--mode amplitude needs --amplitude-rise")
     if args.squeeze_mm > CFG.max_squeeze_mm:
         parser.error(f"--squeeze-mm is limited to {CFG.max_squeeze_mm} mm (GripperDemoConfig.max_squeeze_mm)")
 
+    # Started before the sensor, so the raw frames (USB cable plugged in) include its background
+    logger, recorder, frames = start_demo_recording(args, "gripper", {"gripper_demo": CFG})
+    if recorder is not None:
+        recorder.event("config", "EGG_POSITION", egg_position=EGG_POSITION)
     try:
-        touch = TeensyTouchSource(teensy_config(args))
+        touch = TeensyTouchSource(teensy_config(args), recorder)
     except (FileNotFoundError, ValueError) as e:
+        stop_demo_recording(logger, frames)
         parser.exit(1, f"Error: {e}\n")
 
     robot = Robot(namespace="fr3")
@@ -202,16 +259,33 @@ def main():
     robot.wait_until_ready()
     gripper.wait_until_ready()
 
+    state_recorder = None
     try:
+        if logger is not None:
+            import recording
+
+            def state():
+                pose = robot.end_effector_pose
+                return pose.position, pose.orientation.as_quat(), None, {"gripper_width": gripper.value}
+
+            state_recorder = recording.RobotRecorder(logger, state)
+            state_recorder.start()
         touch.start()
-        EggGrasp(robot, gripper, touch).run(args.mode, args.squeeze_mm, args.amplitude_rise)
+        EggGrasp(robot, gripper, touch, recorder=recorder).run(args.mode, args.squeeze_mm, args.amplitude_rise)
     except KeyboardInterrupt:
         print()
+        if recorder is not None:
+            recorder.event("interrupted", "Ctrl+C")
     except (RuntimeError, TimeoutError) as e:
         print(f"Stopping: {e}")
+        if recorder is not None:
+            recorder.event("error", str(e))
     finally:
         # The robot holds the last target, the gripper its width
         touch.close()
+        if state_recorder is not None:
+            state_recorder.stop()
+        stop_demo_recording(logger, frames)
         robot.shutdown()
 
 

@@ -1,4 +1,5 @@
-"""Read and plot a waveguide run recorded with `--record` (wg_teleop.py or sensor.py).
+"""Read and plot a waveguide run recorded with `--record` (wg_teleop.py, sensor.py, wg_body_demo.py or
+wg_gripper_demo.py).
 
 Standalone: needs only numpy, matplotlib and mcap (`pip install numpy matplotlib mcap`), not this repository.
 
@@ -7,13 +8,17 @@ Standalone: needs only numpy, matplotlib and mcap (`pip install numpy matplotlib
     python plot_run.py RUN_DIR --start 10 --end 40        # seconds from the start of the run
     python plot_run.py RUN_DIR --save run.png --no-show
 
-The figure, against the time from the start of the run [s]:
-1. Echo: |averaged frame - background| over the echo time (darker: larger change), with the detected echo times
-2. Detected hole of every frame, and the swipes (arrow from the start to the end hole; green: sent as a command,
-   grey: ignored)
-3. Echo amplitude of every frame, against the detection threshold
+The figure, against the time from the start of the run [s] (a panel only if its data was recorded):
+1. Echo: |averaged frame - background| over the echo time (darker: larger change), with the detected echo times.
+   Demos: the raw frames (USB cable plugged in), against the mean of those before the first result (the Teensy's
+   background)
+2. Detected hole of every frame (demos: every Teensy result), and the swipes (arrow from the start to the end
+   hole; green: sent as a command, grey: ignored)
+3. Echo amplitude, against the detection threshold
 4. End-effector position (x, y, z, relative to the start) and its commanded target (dashed); the executed
    commands are the ticks at the top (wg_teleop runs only)
+5. Gripper width (wg_gripper_demo)
+The demo events (`demo/event`: stops, bounding box, contact, squeeze, ...) are vertical lines over all panels.
 
 To use the data in your own code:
 
@@ -26,7 +31,9 @@ Each sample is a dict: `ts` (wall time [s]) and the recorded fields. Streams: `s
 `sensor/detection` (t_mono, detected, hole, hole2, distance_cm, amplitude, echo_time_ms, pressed),
 `sensor/background` (t_mono, frame), `sensor/calibration` (t_mono, file, threshold, hole_ids), `sensor/swipe`
 (t_mono, kind, start_hole, end_hole, duration_s, axis, distance, speed, ignored_reason), `robot/command` (t_mono,
-status, detail, axis, distance, speed, t_created, target), `robot/state` (t_mono, position, orientation, target).
+status, detail, axis, distance, speed, t_created, target), `robot/state` (t_mono, position, orientation, target;
+body demo: velocity, state; gripper demo: gripper_width). Demos: `sensor/result` (as `sensor/detection`, plus
+ratio, sequence, time_ms, method), `demo/event` (t_mono, kind, message, holes, data: JSON text).
 """
 
 import argparse
@@ -43,6 +50,20 @@ DATA_DIR = Path.home() / "data" / "waveguide"
 BLUE, VERMILLION, GREEN, ORANGE, PURPLE, SKY = "#0072B2", "#D55E00", "#009E73", "#E69F00", "#CC79A7", "#56B4E9"
 GREY, INK, MUTED = "#8C8C8C", "#222222", "#6B6B6B"
 AXIS_COLORS = {"x": BLUE, "y": ORANGE, "z": GREEN}
+# Demo events drawn (others, e.g. "idle", are not)
+EVENT_COLORS = {
+    "stop": VERMILLION,
+    "box": ORANGE,
+    "nodata": GREY,
+    "moving": GREEN,
+    "mapping": SKY,
+    "contact": GREEN,
+    "squeezed": PURPLE,
+    "lift": MUTED,
+    "release": MUTED,
+    "error": VERMILLION,
+    "interrupted": VERMILLION,
+}
 
 
 # --- Reading
@@ -79,8 +100,13 @@ def latest_run(data_dir: Path = DATA_DIR) -> Path:
     return runs[-1].parent
 
 
+def detections_of(run: dict[str, list[dict]]) -> list[dict]:
+    """The detection of every frame: `sensor/detection` (computer), or the Teensy results (demos)."""
+    return run.get("sensor/detection") or run.get("sensor/result", [])
+
+
 def summary(run: dict[str, list[dict]]) -> str:
-    detections = run.get("sensor/detection", [])
+    detections = detections_of(run)
     lines = [f"{name}: {len(samples)} samples" for name, samples in sorted(run.items())]
     if detections:
         t = stack(detections, "t_mono")
@@ -97,6 +123,10 @@ def summary(run: dict[str, list[dict]]) -> str:
         lines.append(
             f"  {swipe['kind']} {swipe['start_hole']} -> {swipe['end_hole']} ({swipe['duration_s']:.2f} s): {what}"
         )
+    events = run.get("demo/event", [])
+    if events:
+        t0 = min(s["t_mono"] for samples in run.values() for s in samples if s.get("t_mono") is not None)
+        lines += [f"  {e['t_mono'] - t0:7.2f} s  {e['kind']}: {e['message']}" for e in events]
     return "\n".join(lines)
 
 
@@ -137,27 +167,45 @@ def plot_run(
     """The figure of a run (module docstring); `start`/`end` limit the time axis [s from the start]. `debounce_s`
     (the run's GestureConfig.debounce_s) places the swipes: they are stamped when the touch ended, after it."""
     t0 = min(s["t_mono"] for samples in run.values() for s in samples if s.get("t_mono") is not None)
-    frames, detections = run.get("sensor/frame", []), run.get("sensor/detection", [])
+    frames, detections = run.get("sensor/frame", []), detections_of(run)
     robot_states, commands = run.get("robot/state", []), run.get("robot/command", [])
-    has_robot = bool(robot_states)
+    has_position = any(np.all(np.isfinite(s.get("position") or [np.nan])) for s in robot_states)
+    has_gripper = any(s.get("gripper_width") is not None for s in robot_states)
 
-    n_panels = 4 if has_robot else 3
+    ratios = {"echo": 2.2, "hole": 1.6, "amplitude": 1.2, "position": 1.6, "gripper": 1.2}
+    names = [
+        name
+        for name, present in (
+            ("echo", bool(frames)),
+            ("hole", True),
+            ("amplitude", True),
+            ("position", has_position),
+            ("gripper", has_gripper),
+        )
+        if present
+    ]
     fig, axes = plt.subplots(
-        n_panels,
+        len(names),
         1,
-        figsize=(11, 2.6 * n_panels + 1),
+        figsize=(11, 2.6 * len(names) + 1),
         sharex=True,
-        gridspec_kw={"height_ratios": [2.2, 1.6, 1.2] + ([1.6] if has_robot else [])},
+        gridspec_kw={"height_ratios": [ratios[name] for name in names]},
     )
+    panel = dict(zip(names, axes))
     plt.rcParams.update({"font.size": 10})
     fig.suptitle(title, x=0.01, ha="left", color=INK, fontsize=12)
 
     # 1. Echo waterfall: |averaged frame - latest background|
-    ax = axes[0]
     if frames:
+        ax = panel["echo"]
         t_frames = stack(frames, "t_mono") - t0
         images = np.array([s["frame"] for s in frames], dtype=float)
         backgrounds = run.get("sensor/background", [])
+        results = run.get("sensor/result", [])
+        if not backgrounds and results:  # Demos: the frames while the Teensy recorded its background
+            before = t_frames < results[0]["t_mono"] - t0
+            if before.sum() >= 3:
+                backgrounds = [{"t_mono": t0, "frame": images[before].mean(axis=0)}]
         if backgrounds:  # Each frame against the latest background recorded before it
             t_bg = stack(backgrounds, "t_mono") - t0
             which = np.clip(np.searchsorted(t_bg, t_frames, side="right") - 1, 0, len(backgrounds) - 1)
@@ -185,10 +233,10 @@ def plot_run(
         ax.plot([], [], color="#4A90C8", lw=6, label="|frame - background| (darker: larger)")
         _legend(ax)
         ax.set_ylim(0, min(echo_ms[-1], 5.0))
-    _style(ax, "Echo time (ms)")
+        _style(ax, "Echo time (ms)")
 
     # 2. Detected hole and swipes
-    ax = axes[1]
+    ax = panel["hole"]
     if detections:
         t_det = stack(detections, "t_mono") - t0
         hole = stack(detections, "hole")
@@ -208,17 +256,18 @@ def plot_run(
         )
         label = f"{swipe['axis']} {swipe['distance'] * 100:+.1f} cm" if swipe["axis"] is not None else "ignored"
         ax.annotate(label, (t_end, swipe["end_hole"]), xytext=(4, 4), textcoords="offset points", color=INK, fontsize=8)
-    ax.plot([], [], color=GREEN, lw=2, label="swipe (command)")
-    ax.plot([], [], color=GREY, lw=2, label="swipe (ignored)")
+    if run.get("sensor/swipe"):
+        ax.plot([], [], color=GREEN, lw=2, label="swipe (command)")
+        ax.plot([], [], color=GREY, lw=2, label="swipe (ignored)")
     _legend(ax)
     _style(ax, "Hole")
 
     # 3. Amplitude against the threshold
-    ax = axes[2]
+    ax = panel["amplitude"]
     if detections:
         t_det = stack(detections, "t_mono") - t0
         ax.plot(t_det, stack(detections, "amplitude"), color=BLUE, lw=1.5, label="amplitude")
-    calibrations = run.get("sensor/calibration", [])
+    calibrations = [c for c in run.get("sensor/calibration", []) if c.get("threshold") is not None]
     if calibrations:  # The threshold of each calibration, from when it was loaded
         t_cal = list(stack(calibrations, "t_mono") - t0)
         last = (t_det[-1] if detections else t_cal[-1]) if t_cal else 0
@@ -237,8 +286,8 @@ def plot_run(
     _style(ax, "Amplitude (ADC)")
 
     # 4. End-effector position and target, relative to the start
-    if has_robot:
-        ax = axes[3]
+    if has_position:
+        ax = panel["position"]
         t_state = stack(robot_states, "t_mono") - t0
         position = np.array([s["position"] for s in robot_states], dtype=float)
         target = np.array([s["target"] if s.get("target") is not None else [np.nan] * 3 for s in robot_states], float)
@@ -259,6 +308,27 @@ def plot_run(
             ax.plot([], [], color=INK, lw=1.5, label="command executed")
         _legend(ax, ncols=5)
         _style(ax, "Position (cm)")
+
+    # 5. Gripper width
+    if has_gripper:
+        ax = panel["gripper"]
+        t_state = stack(robot_states, "t_mono") - t0
+        ax.plot(t_state, stack(robot_states, "gripper_width") * 1000, color=BLUE, lw=1.8, label="gripper width")
+        _legend(ax)
+        _style(ax, "Width (mm)")
+
+    # Demo events: a line over every panel, labelled in the top one
+    for event in run.get("demo/event", []):
+        color = EVENT_COLORS.get(event["kind"])
+        if color is None:
+            continue
+        t = event["t_mono"] - t0
+        for ax in axes:
+            ax.axvline(t, color=color, lw=1.0, ls=":", zorder=0)
+        axes[0].annotate(
+            event["kind"], (t, 1.0), xycoords=("data", "axes fraction"), xytext=(2, -2), textcoords="offset points",
+            rotation=90, va="top", fontsize=7, color=color,
+        )
 
     axes[-1].set_xlabel("Time (s)", color=INK)
     axes[-1].tick_params(axis="x", length=3.5)
@@ -288,7 +358,8 @@ def main():
     print(summary(run))
 
     debounce_s = metadata.get("gesture", {}).get("debounce_s", 0.3)
-    fig = plot_run(run, title=f"{run_dir.name}  {notes}".strip(), start=args.start, end=args.end, debounce_s=debounce_s)
+    title = f"{run_dir.parent.name}/{run_dir.name}  {notes}".strip()
+    fig = plot_run(run, title=title, start=args.start, end=args.end, debounce_s=debounce_s)
     if args.save:
         fig.savefig(args.save, dpi=200)
         print(f"Saved {args.save}")

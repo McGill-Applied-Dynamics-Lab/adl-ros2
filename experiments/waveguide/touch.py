@@ -133,12 +133,15 @@ class TeensyTouchSource(_ThreadedSource):
 
     `start()` (blocking, a minute if the calibration is uploaded over BLE) connects, sets the Teensy up and
     records the background: nothing must touch the waveguide then.
+
+    `recorder` (`recording.DemoRecorder`, optional): records each result and the calibration.
     """
 
     RESULT_TIMEOUT_S = 0.1  # The reader checks the stop event at least this often
 
-    def __init__(self, cfg: TeensyConfig = TeensyConfig()):
+    def __init__(self, cfg: TeensyConfig = TeensyConfig(), recorder=None):
         super().__init__()
+        self.recorder = recorder
         if cfg.link not in ("ble", "serial"):
             raise ValueError(f"Unknown link '{cfg.link}', expected 'ble' or 'serial'")
         if cfg.link == "serial" and not Path(cfg.port).exists():
@@ -166,7 +169,8 @@ class TeensyTouchSource(_ThreadedSource):
         self._teensy.stream(False)  # Still streaming from a previous run: the commands' ACKs get through anyway
 
         status = self._teensy.status()
-        if cfg.force_upload or not (status["config_ok"] and status["templates_ok"]):
+        upload = cfg.force_upload or not (status["config_ok"] and status["templates_ok"])
+        if upload:
             print(f"Uploading the calibration {cfg.calibration_path.name}...")
             self._teensy.upload_calibration(wg_helpers.load_calibration(cfg.calibration_path))
         else:
@@ -177,13 +181,22 @@ class TeensyTouchSource(_ThreadedSource):
         self._teensy.set_average(cfg.average)
         self._teensy.stream(True)
         print(f"Teensy streaming ({cfg.method}, {cfg.average} cycle(s) per result)")
+        if self.recorder is not None:
+            # Without an upload, the Teensy keeps the calibration of an earlier run: assumed to be this one
+            settings = dict(
+                link=cfg.link, method=cfg.method, average=cfg.average, background_cycles=cfg.background_cycles, uploaded=upload
+            )
+            self.recorder.calibration(cfg.calibration_path, settings)
         super().start()
 
     def _run(self) -> None:
         while not self._stop.is_set():
             result = self._link.get("result", timeout=self.RESULT_TIMEOUT_S)
             if result is not None:
-                self._publish(frame_from_result(result))
+                t = time.monotonic()
+                self._publish(frame_from_result(result, t))
+                if self.recorder is not None:
+                    self.recorder.result(t, result)
 
     def close(self) -> None:
         super().close()
@@ -208,6 +221,43 @@ def add_teensy_args(parser: argparse.ArgumentParser, default: TeensyConfig = Tee
     )
     group.add_argument("--upload", action="store_true", help="upload the calibration even if the Teensy has one")
     group.add_argument("--method", default=default.method, help=f"detection method (default: {default.method})")
+
+
+def add_record_args(parser: argparse.ArgumentParser, kind: str) -> None:
+    """--record and --notes, as wg_teleop; `start_demo_recording(args, kind, ...)` reads them back."""
+    parser.add_argument("--record", action="store_true", help=f"Record the run to ~/data/waveguide/{kind}/<date-time>")
+    parser.add_argument("--notes", default="", help="--record: purpose of the run, saved in its metadata")
+
+
+def start_demo_recording(args: argparse.Namespace, kind: str, configs: dict):
+    """With --record: the started logger, a `recording.DemoRecorder` and a started `recording.UsbFrameRecorder`
+    (records the raw frames if the Teensy's USB cable is plugged in); else (None, None, None). `configs`: the demo's
+    config dataclasses, saved in the metadata with the arguments and the Teensy config."""
+    if not getattr(args, "record", False):
+        return None, None, None
+    import json
+    from dataclasses import asdict
+
+    import recording
+
+    configs = {"teensy": teensy_config(args), **configs} if hasattr(args, "link") else configs
+    metadata = {
+        "args": json.loads(json.dumps(vars(args), default=str)),
+        **{name: json.loads(json.dumps(asdict(cfg), default=str)) for name, cfg in configs.items()},
+    }
+    logger = recording.start_logger(kind, args.notes, metadata)
+    frames = recording.UsbFrameRecorder(logger)
+    if frames.start():
+        print(f"Recording the raw frames from {frames.port}")
+    return logger, recording.DemoRecorder(logger), frames
+
+
+def stop_demo_recording(logger, frames) -> None:
+    if frames is not None:
+        frames.stop()
+    if logger is not None:
+        logger.stop()
+        print(f"Recorded to {logger.run_dir}")
 
 
 def teensy_config(args: argparse.Namespace, default: TeensyConfig = TeensyConfig()) -> TeensyConfig:

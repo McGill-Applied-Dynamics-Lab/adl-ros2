@@ -1,7 +1,7 @@
 """Data recording of the waveguide runs (`--record`), with the lab's `experiment_logger`.
 
 A run is a folder `~/data/waveguide/<kind>/<YYYYmmdd-HHMMSS>/` (kind: "teleop" for `wg_teleop.py`, "sensor"
-for `sensor.py`) with `samples.mcap` (Foxglove-openable; `experiment_logger.load_streams(run_dir)` gives one
+for `sensor.py`, "body" for `wg_body_demo.py`, "gripper" for `wg_gripper_demo.py`) with `samples.mcap` (Foxglove-openable; `experiment_logger.load_streams(run_dir)` gives one
 DataFrame per stream), `metadata.json` (git provenance, configs, notes) and a copy of every calibration used.
 The loader spreads lists over numbered columns (`frame_0` ... `frame_1499`, `position_0..2`, `pressed_0`, ...; a
 1-element list is a single column): `df.filter(regex=r"^frame_\d+$").to_numpy()` gives the frames.
@@ -17,8 +17,21 @@ by the sensor and robot processes (the `t_created` of the commands is on the sam
   `axis`, `distance`, `speed` (None if ignored), `ignored_reason`
 - `robot/command` (wg_teleop): each command and what the robot did with it: `status` ("executed",
   "ignored_moving", "invalid", "home"), `detail`, `axis`, `distance`, `speed`, `t_created`, `target` [m]
-- `robot/state` (wg_teleop, `STATE_RATE_HZ`): `position` [m] and `orientation` (xyzw) of the end-effector, and
-  `target` [m], the commanded position
+- `robot/state` (`STATE_RATE_HZ`): `position` [m] and `orientation` (xyzw) of the end-effector, and `target` [m],
+  the commanded position; wg_body_demo adds `velocity` [m/s] (commanded) and `state` (its `DemoMonitor` state),
+  wg_gripper_demo `gripper_width` [m]
+
+Demos with on-board detection (wg_body_demo, wg_gripper_demo; `DemoRecorder`):
+- `sensor/result`: each Teensy result, on receipt: `detected`, `hole`, `hole2`, `distance_cm`, `amplitude`,
+  `echo_time_ms`, `ratio`, `sequence` and `time_ms` (the Teensy's), `method`
+- `sensor/calibration`: the sensor calibration uploaded (or already on the Teensy): `file` (its copy), `source`,
+  `threshold`, `hole_ids`, and the Teensy settings (`link`, `method`, `average`, `background_cycles`, `uploaded`)
+- `sensor/frame`: every raw cycle (`frame`, not averaged), only if the Teensy's USB cable is plugged in
+  (`UsbFrameRecorder`: TEENSY_BLUETOOTH sends them over USB while the port is open). The frames before the first
+  result are the ones of the Teensy's background
+- `demo/event`: what the demo does: `kind` (body: "idle", "moving", "stop", "box", "nodata", "mapping"; gripper:
+  its phases), `message`, `holes` (covered then) and the demo's own fields (`width`, `amplitude`, ...) in `data`
+  (JSON text). Mappings (body) are also copied to the run folder (`mapping_<n>.json`)
 
 Nothing here imports ROS.
 """
@@ -185,10 +198,10 @@ class QueueDrain:
 
 
 class RobotRecorder:
-    """Records the commands and the end-effector state of wg_teleop (see the module docstring).
+    """Records the commands (wg_teleop) and the end-effector state (see the module docstring).
 
-    `state()` returns (position, orientation xyzw, target position) or None if not available yet; it is called
-    from a background thread at `STATE_RATE_HZ`.
+    `state()` returns (position, orientation xyzw, target position[, {extra field: value}]) or None if not
+    available yet; it is called from a background thread at `STATE_RATE_HZ`.
     """
 
     def __init__(self, logger, state: Callable[[], tuple | None], rate_hz: float = STATE_RATE_HZ):
@@ -232,15 +245,139 @@ class RobotRecorder:
                 continue
             if state is None:
                 continue
-            position, orientation, target = state
             t = time.monotonic()
-            self.logger.log_sample(
-                "robot/state",
-                {
-                    "t_mono": t,
-                    "position": np.asarray(position, dtype=float),
-                    "orientation": np.asarray(orientation, dtype=float),
-                    "target": None if target is None else np.asarray(target, dtype=float),
-                },
-                wall_time(t),
-            )
+            self.logger.log_sample("robot/state", {"t_mono": t, **self._state_values(state)}, wall_time(t))
+
+    def _state_values(self, state: tuple) -> dict:
+        position, orientation, target, *extra = state
+        values = {
+            "position": np.asarray(position, dtype=float),
+            "orientation": np.asarray(orientation, dtype=float),
+            "target": None if target is None else np.asarray(target, dtype=float),
+        }
+        for name, value in (extra[0] if extra else {}).items():
+            values[name] = np.asarray(value, dtype=float) if isinstance(value, (list, tuple, np.ndarray)) else value
+        return values
+
+
+class DemoRecorder:
+    """Records a demo with on-board detection (see the module docstring): the Teensy results (from the touch
+    source's thread), the sensor calibration, and the demo events. Thread-safe (the logger is)."""
+
+    def __init__(self, logger):
+        self.logger, self.run_dir = logger, Path(logger.run_dir)
+        self._n_mappings = 0
+
+    def result(self, t_mono: float, result: dict) -> None:
+        """A Teensy result (`TeensyController.results`), received at `t_mono`."""
+        self.logger.log_sample(
+            "sensor/result",
+            {
+                "t_mono": t_mono,
+                "detected": bool(result["detected"]),
+                "hole": int(result["hole"]) if result["detected"] else None,
+                "hole2": None if result.get("hole2") is None else int(result["hole2"]),
+                "distance_cm": _number(result.get("distance_cm")) if result["detected"] else None,
+                "amplitude": _number(result.get("amplitude")),
+                "echo_time_ms": _number(result.get("echo_time_ms")),
+                "ratio": _number(result.get("ratio")),
+                "sequence": int(result["sequence"]),
+                "time_ms": int(result["time_ms"]),
+                "method": str(result.get("method")),
+            },
+            wall_time(t_mono),
+        )
+
+    def calibration(self, path: Path, settings: dict) -> None:
+        """The sensor calibration (.npz) the Teensy uses, and its settings."""
+        t = time.monotonic()
+        path = Path(path)
+        values = {"t_mono": t, "file": None, "source": str(path), "threshold": None, "hole_ids": None, **settings}
+        if path.is_file():
+            copy = self.run_dir / f"sensor_calibration{path.suffix}"
+            shutil.copy2(path, copy)
+            with np.load(path) as data:
+                values.update(file=copy.name, threshold=float(data["threshold"]), hole_ids=data["hole_ids"].astype(int).tolist())
+        self.logger.log_sample("sensor/calibration", values, wall_time(t))
+
+    def event(self, kind: str, message: str = "", holes=(), **data) -> None:
+        """A demo event; `data`: its own fields (JSON-able), stored as JSON text."""
+        import json
+
+        t = time.monotonic()
+        self.logger.log_sample(
+            "demo/event",
+            {
+                "t_mono": t,
+                "kind": kind,
+                "message": message,
+                "holes": sorted(int(h) for h in holes),
+                "data": json.dumps(data, default=_json_default),
+            },
+            wall_time(t),
+        )
+
+    def mapping(self, direction_holes: dict, source: Path | None = None, message: str = "") -> None:
+        """A hole -> direction mapping (wg_body_demo) now used; `source` (its JSON) is copied to the run folder."""
+        copy = None
+        if source is not None and Path(source).is_file():
+            self._n_mappings += 1
+            copy = self.run_dir / f"mapping_{self._n_mappings}.json"
+            shutil.copy2(source, copy)
+        mapping = {d: [int(h) for h in holes] for d, holes in direction_holes.items()}
+        self.event("mapping", message, direction_holes=mapping, file=None if copy is None else copy.name)
+
+
+def _json_default(value):
+    if isinstance(value, np.ndarray):
+        return value.tolist()
+    if isinstance(value, np.generic):
+        return value.item()
+    return str(value)
+
+
+class UsbFrameRecorder:
+    """Records the raw frames the Teensy sends over USB (`sensor/frame`), from a background thread: TEENSY_BLUETOOTH
+    sends them while the port is open, so this works only with its USB cable plugged in. `start()` returns False
+    (and records nothing) if no Teensy sends frames."""
+
+    def __init__(self, logger, port: str = "auto"):
+        self.logger, self.port = logger, port
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._run, name="waveguide_record_usb_frames", daemon=True)
+        self.n_frames = 0
+        self.error: Exception | None = None
+
+    def start(self) -> bool:
+        import sensor  # pyserial; the frame format of TEENSY_FIRMWARE
+
+        try:
+            self.port = sensor.check_port(self.port, sensor.DEFAULT_BAUDRATE)
+        except FileNotFoundError as e:
+            print(f"No raw frames recorded (plug in the Teensy's USB cable to record them): {e}")
+            return False
+        self._thread.start()
+        return True
+
+    def _run(self) -> None:
+        import sensor
+
+        try:
+            with sensor.open_serial(self.port, sensor.DEFAULT_BAUDRATE) as ser:
+                reader = sensor.FrameReader(ser)
+                reader.flush()
+                while not self._stop.is_set():
+                    frame = reader.read_frame()
+                    if frame is None:
+                        continue
+                    t = time.monotonic()
+                    self.logger.log_sample("sensor/frame", {"t_mono": t, "frame": frame}, wall_time(t))
+                    self.n_frames += 1
+        except Exception as e:  # noqa: BLE001, the demo goes on without the frames
+            self.error = e
+            print(f"Raw frame recording stopped: {e!r}")
+
+    def stop(self) -> None:
+        self._stop.set()
+        if self._thread.is_alive():
+            self._thread.join(timeout=1.0)
