@@ -50,45 +50,56 @@ import datetime
 import json
 
 import exp_metrics
-from common import OUT, Condition, ask, parse, run_experiment, rtt_label
-from e6_taps import CENTER_D, CENTER_K, HOVER_MM, SURFACE, TAP_CMS, TAP_DWELL_S
+from common import OUT, Condition, ask, parse, rtt_label, run_experiment
+from e6_taps import CENTER_D, CENTER_K, SURFACE, TAP_CMS, TAP_DWELL_S
 from fr3_haptic.guide import Guide, GuideConfig
 
 PLAN = [
     # (method, round trip [ms], grip, K steps [N/m], search)
-    ("zoh", 850, "held", [1000, 500, 250, 125], "down"),
-    ("zoh", 2600, "held", [1000, 500, 250, 125], "down"),
-    ("proxy-rim", 2600, "held", [1000, 2000], "up"),
-    ("proxy-rim", 2600, "released", [1000, 2000], "up"),  # optional: the worst case
+    # E5-lite (2026-10-26, held and released, no guide): done; its steps stay in kmax.csv as pilots, out of the
+    # plan so a run does not redo them (its runs predate start_prompt, so they no longer match as done)
+    # ("zoh", 850, "held", [1000, 500, 250, 125], "down"),
+    # ("zoh", 2600, "held", [1000, 500, 250, 125], "down"),
+    # ("proxy-rim", 2600, "held", [1000, 2000], "up"),
+    # ("proxy-rim", 2600, "released", [1000, 2000], "up"),
     # dropped (hands off) ladders: skipped (2026-10-27), see the docstring; the grip is kept
     # guided stiffness ladders, hand held: model-based first (the claim), then P-P, then the M3 check
-    ("proxy-rim", 0, "guided", [1000, 2000, 4000, 8000], "up"),
-    ("proxy-rim", 2600, "guided", [1000, 2000, 4000, 8000], "up"),
-    ("zoh", 0, "guided", [1000, 2000], "up"),  # K_r = K: the OSC is not stable much above 2000
+    # 1000-8000 done 2026-10-28, all stable; 12000, 16000 added to find the device's limit (stop at the first buzz)
+    ("proxy-rim", 0, "guided", [1000, 2000, 4000, 8000, 12000, 16000], "up"),
+    ("proxy-rim", 2600, "guided", [1000, 2000, 4000, 8000, 12000, 16000], "up"),
+    # P-P: K_r = K and D_r = D, so 3000 is underdamped (ζ ~0.2 along z) and the OSC oscillated there in E1:
+    # expected to fail at T = 0, the robot's limit, not the delay's
+    ("zoh", 0, "guided", [1000, 2000, 3000, 4000, 5000], "up"),
+    ("zoh", "5g", "guided", [1000, 2000, 4000, 5000], "up"),
+    ("zoh", 850, "guided", [1000, 2000, 4000, 5000], "up"),
     ("zoh", 2600, "guided", [1000, 2000], "up"),
-    ("proxy-god-object", 2600, "guided", [1000, 2000, 4000, 8000], "up"),
+    # ("proxy-god-object", 2600, "guided", [1000, 2000, 4000, 8000], "up"),
 ]
 # shown once the robot is ready, before the forces start (fr3_teleop --start-prompt)
 INSTRUCTIONS = {
     "held": "E5 {method}, T = {rtt} ms, K = {k} N/m — HANDLE HELD\n"
-            "Hold the handle. Tap down onto the table and hold ~3 s, about 3 times in {seconds:.0f} s.\n"
-            "Hold it as you would to work: firm, not stiff. If it starts to oscillate, keep holding ~2 s, then lift.",
+    "Hold the handle. Tap down onto the table and hold ~3 s, about 3 times in {seconds:.0f} s.\n"
+    "Hold it as you would to work: firm, not stiff. If it starts to oscillate, keep holding ~2 s, then lift.",
     "released": "E5 {method}, T = {rtt} ms, K = {k} N/m — HANDLE RELEASED (worst case)\n"
-                "Bring the handle down onto the table, then let go of it, about 3 times in {seconds:.0f} s.\n"
-                "Watch whether it settles on the table or bounces/oscillates; catch it if it runs away.",
+    "Bring the handle down onto the table, then let go of it, about 3 times in {seconds:.0f} s.\n"
+    "Watch whether it settles on the table or bounces/oscillates; catch it if it runs away.",
     "dropped": "E5 {method}, T = {rtt} ms, K = {k} N/m — HANDLE DROPPED, HANDS OFF (worst case)\n"
-               "Bring the handle down onto the table and let go of it ONCE, within 1 s of touching it.\n"
-               "Then hands off for the rest of the {seconds:.0f} s: do not lift it at the end, the run ends by itself.\n"
-               "Keep your hand near it; catch it only if it hits the workspace edge (then flip the verdict to unstable).",
+    "Bring the handle down onto the table and let go of it ONCE, within 1 s of touching it.\n"
+    "Then hands off for the rest of the {seconds:.0f} s: do not lift it at the end, the run ends by itself.\n"
+    "Keep your hand near it; catch it only if it hits the workspace edge (then flip the verdict to unstable).",
     "guided": "E5 {method}, T = {rtt} ms, K = {k} N/m — HANDLE HELD, follow the guide (taps and holds)\n"
-              "Keep the blue dot on the green line; same grip for every step. If it oscillates, keep holding ~2 s, then lift.\n"
-              "Click back on this terminal, then Enter.",
+    "Keep the blue dot on the green line; same grip for every step. If it oscillates, keep holding ~2 s, then lift.\n"
+    "Click back on this terminal, then Enter.",
 }
 HF_THRESHOLD_N = 0.5  # instability: HF RMS (> 8 Hz) of the felt force in contact above this [world N]
 MAX_REBOUND_MM = 10.0  # dropped grip: unstable if the free handle was thrown higher above the table [mm]
 VEL_FILTER_HZ = {"dropped": 50.0}  # leader velocity low-pass per grip [Hz] (default: teleop.yaml's frozen 8 Hz)
 RELEASE_S = 2.0  # dropped grip: hands off from this long after the handle's first touch of the table [s]
-SECONDS = {"held": 20.0, "released": 20.0, "dropped": 30.0}  # guided: from its guide (guided_seconds)  # dropped: ~5 periods of P-P's ~1/(2T) at 2.6 s
+SECONDS = {
+    "held": 20.0,
+    "released": 20.0,
+    "dropped": 30.0,
+}  # guided: from its guide (guided_seconds)  # dropped: ~5 periods of P-P's ~1/(2T) at 2.6 s
 START = [0.4, 0.0, 0.2]
 BASE = {
     "interface_axis": "xyz",
@@ -100,23 +111,41 @@ BASE = {
 }
 
 
+OSC_K_MAX = 5000.0  # osc_controller's bounds on gains.k_pos_* (franka-server): P-P's robot stiffness is K [N/m]
 GUIDE = "tap,hold,tap,hold"
 HOLD_N = 10.0  # each hold asks K × depth = this [robot N]: the guide's depth is HOLD_N / K
+GUIDE_HOVER_MM = (
+    10.0  # hover and start height: lower than E6's 30 mm, so the window zooms and 10 N / K stays visible [mm]
+)
 HOLD_S = 4.0  # at depth, for a hold: as E6 (M1 at 2.6 s feels ~1.4 s of it) [s]
 
 
 def guided_flags(k: float, rtt) -> dict:
     """E6's guide (handle held, x, y locked, one spot), at a depth asking ``HOLD_N`` at stiffness ``k``,
-    from E6's hover height; the run lasts the guide, the command delay and 1 s."""
+    from ``GUIDE_HOVER_MM``; the run lasts the guide, the command delay and 1 s."""
     depth_mm = 1e3 * HOLD_N / k
-    cfg = GuideConfig(pattern=tuple(GUIDE.split(",")), hold_s=HOLD_S, depth=1e-3 * depth_mm, hover=1e-3 * HOVER_MM,
-                      tap_speed=1e-2 * TAP_CMS, tap_dwell_s=TAP_DWELL_S)
+    cfg = GuideConfig(
+        pattern=tuple(GUIDE.split(",")),
+        hold_s=HOLD_S,
+        depth=1e-3 * depth_mm,
+        hover=1e-3 * GUIDE_HOVER_MM,
+        tap_speed=1e-2 * TAP_CMS,
+        tap_dwell_s=TAP_DWELL_S,
+    )
     one_way = 0.0 if rtt_label(rtt) == "5g" else float(rtt) / 2e3
-    return {"guide": GUIDE, "guide_hold_s": HOLD_S, "guide_depth_mm": round(depth_mm, 3), "guide_hover_mm": HOVER_MM,
-            "guide_tap_cms": TAP_CMS, "guide_tap_dwell_s": TAP_DWELL_S, "lock_axes": "xy",
-            "free_axis_stiffness": CENTER_K, "free_axis_damping": CENTER_D,
-            "start_position": [START[0], START[1], SURFACE + 1e-3 * HOVER_MM],
-            "seconds": round(Guide(cfg, SURFACE).duration_s + one_way + 1.0, 1)}
+    return {
+        "guide": GUIDE,
+        "guide_hold_s": HOLD_S,
+        "guide_depth_mm": round(depth_mm, 3),
+        "guide_hover_mm": GUIDE_HOVER_MM,
+        "guide_tap_cms": TAP_CMS,
+        "guide_tap_dwell_s": TAP_DWELL_S,
+        "lock_axes": "xy",
+        "free_axis_stiffness": CENTER_K,
+        "free_axis_damping": CENTER_D,
+        "start_position": [START[0], START[1], SURFACE + 1e-3 * GUIDE_HOVER_MM],
+        "seconds": round(Guide(cfg, SURFACE).duration_s + one_way + 1.0, 1),
+    }
 
 
 def verdicts(table) -> dict[str, bool]:
@@ -140,8 +169,12 @@ def main() -> None:
     table = out / "kmax.csv"
     started = f"{datetime.datetime.now():%Y%m%d_%H%M%S}"
     session = out / "sessions" / f"{started}.txt"  # one for the whole E5 run
-    ladders = [p for p in PLAN if (not args.only_method or p[0] in args.only_method)
-               and (not args.only_rtt or rtt_label(p[1]) in {rtt_label(r) for r in args.only_rtt})]
+    ladders = [
+        p
+        for p in PLAN
+        if (not args.only_method or p[0] in args.only_method)
+        and (not args.only_rtt or rtt_label(p[1]) in {rtt_label(r) for r in args.only_rtt})
+    ]
     total = sum(len(p[3]) for p in ladders)  # at most: a ladder stops early
     step, homed = 0, False
     print(f"[e5] {len(ladders)} ladders, at most {total} runs -> {out}  (session list: {session})")
@@ -149,13 +182,28 @@ def main() -> None:
         print(f"\n[e5] ===== {method}, rtt {rtt}, grip {grip}: K {steps} ({search})")
         k_max = None
         for k in steps:
+            if method == "zoh" and k > OSC_K_MAX:  # P-P sets K_r := K, which osc_controller refuses above its bound
+                print(f"[e5] K = {k}: above osc_controller's {OSC_K_MAX:g} N/m bound for P-P (K_r = K), skipped")
+                break
             step += 1
             prompt = INSTRUCTIONS[grip].format(method=method, rtt=rtt, k=k, seconds=SECONDS.get(grip, 0.0))
-            flags = {"kv": k, "start_prompt": prompt, **(guided_flags(k, rtt) if grip == "guided" else {"seconds": SECONDS[grip]})}
+            flags = {
+                "kv": k,
+                "start_prompt": prompt,
+                **(guided_flags(k, rtt) if grip == "guided" else {"seconds": SECONDS[grip]}),
+            }
             if grip in VEL_FILTER_HZ:
                 flags["vel_filter_hz"] = VEL_FILTER_HZ[grip]
-            runs = run_experiment("e5", [Condition(method, rtt, flags, f"{grip}_K{k}")], BASE,
-                                  analyse, args, home=not homed, session=session, progress=f"{step}/{total} (max)")
+            runs = run_experiment(
+                "e5",
+                [Condition(method, rtt, flags, f"{grip}_K{k}")],
+                BASE,
+                analyse,
+                args,
+                home=not homed,
+                session=session,
+                progress=f"{step}/{total} (max)",
+            )
             homed = homed or any(r.name[:15] >= started for r in runs)  # home on the first run actually launched
             if args.dry_run:
                 continue
@@ -168,14 +216,24 @@ def main() -> None:
                 stable = recorded
             if recorded is None:
                 stable = metrics["stable"]
-                dropped = (f", thrown {metrics['rebound_mm']:.0f} mm above the table (limit {MAX_REBOUND_MM:g}), "
-                           f"{metrics['rebounds']} rebound(s)") if grip == "dropped" else ""
+                dropped = (
+                    (
+                        f", thrown {metrics['rebound_mm']:.0f} mm above the table (limit {MAX_REBOUND_MM:g}), "
+                        f"{metrics['rebounds']} rebound(s)"
+                    )
+                    if grip == "dropped"
+                    else ""
+                )
                 if grip == "guided":
-                    dropped = (f", wall {metrics['wall_slope_N_per_mm']:.2f} N/mm (set {k / 1e3:g}), offset "
-                               f"{metrics['wall_offset_N']:.1f} N, R² {metrics['wall_r2']:.2f}")
-                answer = ask(f"[e5] HF RMS {metrics['hf_rms_N']:.2f} N (limit {HF_THRESHOLD_N}), guard trips {metrics['guard_trips']}, "
-                             f"energy min {metrics['E_min_J']:.1f} J{dropped} -> {'stable' if stable else 'UNSTABLE'}. By feel?",
-                             ["accept", "flip"])
+                    dropped = (
+                        f", wall {metrics['wall_slope_N_per_mm']:.2f} N/mm (set {k / 1e3:g}), offset "
+                        f"{metrics['wall_offset_N']:.1f} N, R² {metrics['wall_r2']:.2f}"
+                    )
+                answer = ask(
+                    f"[e5] HF RMS {metrics['hf_rms_N']:.2f} N (limit {HF_THRESHOLD_N}), guard trips {metrics['guard_trips']}, "
+                    f"energy min {metrics['E_min_J']:.1f} J{dropped} -> {'stable' if stable else 'UNSTABLE'}. By feel?",
+                    ["accept", "flip"],
+                )
                 if answer == "flip":
                     stable = not stable
                 table.parent.mkdir(parents=True, exist_ok=True)
@@ -183,9 +241,34 @@ def main() -> None:
                 with table.open("a", newline="") as fh:
                     w = csv.writer(fh)
                     if new:
-                        w.writerow(["method", "rtt", "grip", "K", "search", "hf_rms_N", "guard_trips", "E_min_J", "stable", "run"])
-                    w.writerow([method, rtt, grip, k, search, metrics["hf_rms_N"], metrics["guard_trips"], metrics["E_min_J"],
-                                stable, runs[0]])
+                        w.writerow(
+                            [
+                                "method",
+                                "rtt",
+                                "grip",
+                                "K",
+                                "search",
+                                "hf_rms_N",
+                                "guard_trips",
+                                "E_min_J",
+                                "stable",
+                                "run",
+                            ]
+                        )
+                    w.writerow(
+                        [
+                            method,
+                            rtt,
+                            grip,
+                            k,
+                            search,
+                            metrics["hf_rms_N"],
+                            metrics["guard_trips"],
+                            metrics["E_min_J"],
+                            stable,
+                            runs[0],
+                        ]
+                    )
             if search == "down" and stable:
                 k_max = k
                 break

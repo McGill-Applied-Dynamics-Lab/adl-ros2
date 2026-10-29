@@ -24,7 +24,7 @@ The data carry both halves of the claim, but each half needs the right view.
 | F7 | Hand in the loop: P-P under delay feels the table after the lift | E6 | First tap and hold, M1 vs M5 at 2.6 s: guide, hand, robot; felt vs robot force. Next to the video (3 clips, `tools/contact_video.py --mode side`) | Rendered |
 | F7b | Hand in the loop, every delay | E6 | Taps felt before the lift (M1 33–67 % under delay, M3–M5 100 %); unfelt force during holds (M1 3.3 / 12.3 N at 850 ms / 2.6 s, M3–M5 1.4–2.2 N) | Rendered |
 | F8 | Under delay, a local model still renders a wall; P-P does not | E6 | Felt force against hand depth, M1 and M5 at T = 0 and 2.6 s, with the K line: M3–M5 0.95–1.04 N/mm through zero at every delay; M1 at 2.6 s R² 0.24, 35 N at zero depth | Rendered |
-| F9 | How stiff a wall under delay | E5 guided ladders | Felt stiffness against the set K (200–1600 N/m at the handle), stable filled, unstable open, M5 / M3 / M1 at T = 0 and 2.6 s | After the 2026-10-28 run |
+| F9 | Under delay, RIM renders the stiffness you set; P-P is stable but renders no wall | E5 guided ladders | Felt stiffness against the set K, 1–8 N/mm (0.2–1.6 kN/m at the handle): M5 on the diagonal at T = 0 and 2.6 s; P-P at 2.6 s R² 0.31 → 0.00, 8 → 22 N at zero depth | Rendered (M3 not run) |
 
 E5 was skipped (the dropped handle needs a faster velocity filter, EXP\_PLAN E5). If asked about stability: "at the frozen K = 1000 N/m, M5 stays stable at 2.6 s, and at 2000 N/m with the handle held"; do not claim a K\_max(T) trend.
 
