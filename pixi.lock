@@ -257,10 +257,7 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/c8/60/4ea0d6df0b497d51bf2ef87eaab0eb26f8bc3b3313c012da5df3383cced9/yourdfpy-0.0.60-py3-none-any.whl
       - pypi: ./
       - pypi: ./external/adl-python/packages/experiment_logger
-      - pypi: ./external/adl-python/packages/haptic_teleop
-      - pypi: ./external/adl-python/packages/pyrim
       - pypi: ./external/adl-python/packages/utilities
-      - pypi: ./python/fr3_haptic
   humble:
     channels:
     - url: https://prefix.dev/robostack-humble/
@@ -2399,10 +2396,7 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/c8/60/4ea0d6df0b497d51bf2ef87eaab0eb26f8bc3b3313c012da5df3383cced9/yourdfpy-0.0.60-py3-none-any.whl
       - pypi: ./
       - pypi: ./external/adl-python/packages/experiment_logger
-      - pypi: ./external/adl-python/packages/haptic_teleop
-      - pypi: ./external/adl-python/packages/pyrim
       - pypi: ./external/adl-python/packages/utilities
-      - pypi: ./python/fr3_haptic
 packages:
 - conda: https://conda.anaconda.org/conda-forge/linux-64/_openmp_mutex-4.5-20_gnu.conda
   build_number: 20
