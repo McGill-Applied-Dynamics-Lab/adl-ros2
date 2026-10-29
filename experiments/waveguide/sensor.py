@@ -43,11 +43,11 @@ class CalibrationConfig:
     """Config for recording the Calibration (`--calibrate`)"""
 
     directory: Path = Path(__file__).resolve().parent / "calibration"
-    filename: str = "calibration_dummy.db"  # Recording (SAVE_TO_SQLITE.py format); the fit is saved next to it (.npz)
+    filename: str = "demo_calibration2.db"  # Recording (SAVE_TO_SQLITE.py format); the fit is saved next to it (.npz)
     n_holes: int = 51
     n_passes: int = 3  # Recordings of every hole, >= 2 for a detection threshold
     first_hole_cm: float = 25.0  # Distance to hole 1
-    hole_spacing_cm: float = 1.0  # Distance between holes
+    hole_spacing_cm: float = 0.6  # Distance between holes
 
     @property
     def db_path(self) -> Path:
@@ -73,10 +73,12 @@ class DetectionConfig:
 class GestureConfig:
     """Gesture processing (layer 2) settings: swipe -> MoveCommand(axis, distance, speed)."""
 
-    hole_idx: int = 25  # Hole where the waveguide bends: swipes starting at holes <= hole_idx are along x, else y
-    x_sign: int = -1  # +1: increasing hole index moves +x; -1 to flip
-    y_sign: int = -1  # +1: increasing hole index moves +y; -1 to flip
-    distance_scale: float = 0.02  # Robot motion [m] per cm of swipe (0.01: 1:1)
+    hole_idx: int = 25  # Hole where the waveguide bends: it splits the swipes in two segments (see segment_axes)
+    # Robot axis of the swipes starting at holes <= hole_idx, and of those after: ("y", "x") swaps them
+    segment_axes: tuple[str, str] = ("y", "x")
+    x_sign: int = -1  # +1: increasing hole index moves +x (whichever segment drives x); -1 to flip
+    y_sign: int = 1  # +1: increasing hole index moves +y (whichever segment drives y); -1 to flip
+    distance_scale: float = 0.005  # Robot motion [m] per cm of swipe (0.01: 1:1)
     max_speed: float = 0.15  # [m/s] Faster swipes are capped (wg_teleop.MAX_SPEED)
     max_distance: float = 0.2  # [m] Longer swipes are capped (wg_teleop.MAX_DISTANCE)
     min_holes: int = 2  # Holes a swipe must span (start and end included); shorter touches send nothing
@@ -84,9 +86,9 @@ class GestureConfig:
 
     # z: hold a z hole; on release, move z by z_speed * hold time, at z_speed. The holes from the lowest to the
     # highest z hole (the z zone, with the bend) are reserved for z: swipes stop before them
-    z_up_holes: tuple[int, ...] = (21, 24)
-    z_down_holes: tuple[int, ...] = (26, 30)
-    z_speed: float = 0.02  # [m/s] z motion per second of hold, and the speed of that motion
+    z_up_holes: tuple[int, ...] = (21, 22, 23, 24)
+    z_down_holes: tuple[int, ...] = (26, 27, 28, 29, 30)
+    z_speed: float = 0.1  # [m/s] z motion per second of hold, and the speed of that motion
     z_min_hold_s: float = 0.2  # Shorter z touches send nothing
 
     @property
@@ -122,10 +124,11 @@ def teensy_ports() -> list[str]:
 
 
 def find_frame_port(baudrate: int) -> str:
-    """The port of the Teensy sending frames (TEENSY_FIRMWARE), among the connected ones.
+    """The port of the Teensy sending frames (TEENSY_FIRMWARE, or TEENSY_BLUETOOTH while its port is open), among
+    the connected ones.
 
-    Another Teensy can be connected too (e.g. the TEENSY_BLUETOOTH one, which sends nothing over USB), and
-    ttyACM0/1 swap with the plug-in order, so each one is listened to for `PORT_PROBE_S`.
+    Another Teensy can be connected too, and ttyACM0/1 swap with the plug-in order, so each one is listened to for
+    `PORT_PROBE_S` (the first one sending frames is used: give --port if both are).
     """
     ports = teensy_ports()
     if not ports:
@@ -307,7 +310,8 @@ class GestureProcessor:
 
     Swipe (first hole outside the z zone). Only its first and last hole count (noisy or skipped holes in
     between do not matter):
-    - axis: x if it starts at or before the bend (`hole_idx`), else y. A swipe stops before the z zone.
+    - axis: `segment_axes[0]` if it starts at or before the bend (`hole_idx`), else `segment_axes[1]`. A swipe
+      stops before the z zone.
     - distance: swipe length [cm, from the calibration] * `distance_scale`, signed by the direction
     - speed: swipe speed (start to reaching the last hole, without the debounce) * `distance_scale`
     Distance and speed are capped at `max_distance` and `max_speed`; swipes shorter than `min_holes` send nothing.
@@ -318,12 +322,14 @@ class GestureProcessor:
     """
 
     def __init__(self, calibration: dict, gesture_cfg: GestureConfig = GESTURE_CFG):
+        if sorted(gesture_cfg.segment_axes) != ["x", "y"]:
+            raise ValueError(f"segment_axes must be ('x', 'y') or ('y', 'x'), got {gesture_cfg.segment_axes}")
         self.cfg = gesture_cfg
         self.hole_ids = np.asarray(calibration["hole_ids"]).astype(int)
         self.hole_cm = dict(zip(self.hole_ids.tolist(), np.asarray(calibration["hole_cm"]).tolist()))
         swipe_holes = self.hole_ids[~np.isin(self.hole_ids, list(gesture_cfg.z_zone))]
-        self._x_holes = swipe_holes[swipe_holes <= gesture_cfg.hole_idx]
-        self._y_holes = swipe_holes[swipe_holes > gesture_cfg.hole_idx]
+        self._before_bend_holes = swipe_holes[swipe_holes <= gesture_cfg.hole_idx]
+        self._after_bend_holes = swipe_holes[swipe_holes > gesture_cfg.hole_idx]
         self._reset()
 
     def _reset(self) -> None:
@@ -377,8 +383,8 @@ class GestureProcessor:
         start, end = self._start_hole, self._last_hole
 
         # Axis from the start hole; a swipe stops at the end of its segment (before the z zone)
-        on_x = start <= cfg.hole_idx
-        segment = self._x_holes if on_x else self._y_holes
+        before_bend = start <= cfg.hole_idx
+        segment = self._before_bend_holes if before_bend else self._after_bend_holes
         end = int(np.clip(end, segment.min(), segment.max()))
 
         # Time to reach the end hole (the last touched one if the end was clipped at the bend and never detected)
@@ -389,7 +395,8 @@ class GestureProcessor:
             print(f"Swipe {start} -> {end}: {reason}, ignored")
             return Swipe(t, start, end, duration, None, reason)
 
-        axis, sign = ("x", cfg.x_sign) if on_x else ("y", cfg.y_sign)
+        axis = cfg.segment_axes[0] if before_bend else cfg.segment_axes[1]
+        sign = cfg.x_sign if axis == "x" else cfg.y_sign
         distance = sign * (self.hole_cm[end] - self.hole_cm[start]) * cfg.distance_scale
         distance = float(np.clip(distance, -cfg.max_distance, cfg.max_distance))
         speed = min(abs(distance) / duration, cfg.max_speed) if duration > 0 else cfg.max_speed
@@ -489,9 +496,7 @@ def run_sensor_loop(
                     on_command(swipe.command)
 
 
-def _process_main(
-    port: str, baudrate: int, commands: mp.Queue, stop_event, plot: bool, samples, run_dir
-) -> None:
+def _process_main(port: str, baudrate: int, commands: mp.Queue, stop_event, plot: bool, samples, run_dir) -> None:
     # Ctrl+C reaches the whole process group: the parent handles it and stops us with stop_event. (In the
     # plot, a KeyboardInterrupt would also be raised inside a Qt callback, which aborts the process.)
     signal.signal(signal.SIGINT, signal.SIG_IGN)
@@ -508,9 +513,7 @@ class SensorProcess:
     into it, through a queue drained by this process.
     """
 
-    def __init__(
-        self, port: str = DEFAULT_PORT, baudrate: int = DEFAULT_BAUDRATE, plot: bool = False, logger=None
-    ):
+    def __init__(self, port: str = DEFAULT_PORT, baudrate: int = DEFAULT_BAUDRATE, plot: bool = False, logger=None):
         # Checked here, not only in the child: there it would just end the process
         port = check_port(port, baudrate)
         if not plot:  # With the plot, it can be calibrated from its panel
@@ -635,7 +638,9 @@ def print_frames_and_holes(port: str, baudrate: int, plot: bool = False, recorde
         print(f"{command.t_created:.3f}  command: {command}")
 
     if plot:
-        run_with_live_plot(port, baudrate, on_holes=on_holes, on_command=on_command, on_frame=on_frame, recorder=recorder)
+        run_with_live_plot(
+            port, baudrate, on_holes=on_holes, on_command=on_command, on_frame=on_frame, recorder=recorder
+        )
     else:
         run_sensor_loop(
             port,
@@ -1002,10 +1007,10 @@ def run_with_live_plot(
     z_up_x = float(np.mean([hole_cm_of[h] for h in cfg.z_up_holes if h in hole_cm_of] or [bend_x]))
     z_down_x = float(np.mean([hole_cm_of[h] for h in cfg.z_down_holes if h in hole_cm_of] or [bend_x]))
     for text, x, anchor, color in (
-        ("◀ x", zone_lo - 0.3, (1.0, 0.0), c["signal"]),
+        (f"◀ {cfg.segment_axes[0]}", zone_lo - 0.3, (1.0, 0.0), c["signal"]),
         ("+z", z_up_x, (0.5, 0.0), c["reference"]),
         ("−z", z_down_x, (0.5, 0.0), c["reference"]),
-        ("y ▶", zone_hi + 0.3, (0.0, 0.0), c["y"]),
+        (f"{cfg.segment_axes[1]} ▶", zone_hi + 0.3, (0.0, 0.0), c["y"]),
     ):
         label = text_item(text, color, anchor=anchor)
         label.setPos(x, -0.55)
@@ -1528,7 +1533,9 @@ def main():
     )
     parser.add_argument("--average", type=int, default=5, help="--live-match: frames averaged (the recordings use 5)")
     parser.add_argument(
-        "--record", action="store_true", help=f"Record the run to {recording.DATA_DIR / 'sensor'}/<date-time> (see recording.py)"
+        "--record",
+        action="store_true",
+        help=f"Record the run to {recording.DATA_DIR / 'sensor'}/<date-time> (see recording.py)",
     )
     parser.add_argument("--notes", default="", help="--record: purpose of the run, saved in its metadata")
     args = parser.parse_args()

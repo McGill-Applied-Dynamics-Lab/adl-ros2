@@ -85,22 +85,34 @@ def summary(run: dict[str, list[dict]]) -> str:
     if detections:
         t = stack(detections, "t_mono")
         detected = stack(detections, "detected", dtype=bool)
-        lines.append(f"{t[-1] - t[0]:.1f} s of frames ({len(t) / max(t[-1] - t[0], 1e-9):.1f}/s), {detected.sum()} detected")
+        lines.append(
+            f"{t[-1] - t[0]:.1f} s of frames ({len(t) / max(t[-1] - t[0], 1e-9):.1f}/s), {detected.sum()} detected"
+        )
     for swipe in run.get("sensor/swipe", []):
         what = (
             f"{swipe['axis']} {swipe['distance'] * 100:+.1f} cm at {swipe['speed'] * 100:.1f} cm/s"
             if swipe["axis"] is not None
             else f"ignored: {swipe['ignored_reason']}"
         )
-        lines.append(f"  {swipe['kind']} {swipe['start_hole']} -> {swipe['end_hole']} ({swipe['duration_s']:.2f} s): {what}")
+        lines.append(
+            f"  {swipe['kind']} {swipe['start_hole']} -> {swipe['end_hole']} ({swipe['duration_s']:.2f} s): {what}"
+        )
     return "\n".join(lines)
 
 
 # --- Plotting
 def _legend(ax, ncols: int = 4) -> None:
     """Above the panel, out of the data."""
-    ax.legend(loc="lower left", bbox_to_anchor=(0, 1.0), ncols=ncols, frameon=False, labelcolor=INK, fontsize=9,
-              borderaxespad=0.2, handlelength=1.8)
+    ax.legend(
+        loc="lower left",
+        bbox_to_anchor=(0, 1.0),
+        ncols=ncols,
+        frameon=False,
+        labelcolor=INK,
+        fontsize=9,
+        borderaxespad=0.2,
+        handlelength=1.8,
+    )
 
 
 def _style(ax, ylabel: str) -> None:
@@ -131,7 +143,10 @@ def plot_run(
 
     n_panels = 4 if has_robot else 3
     fig, axes = plt.subplots(
-        n_panels, 1, figsize=(11, 2.6 * n_panels + 1), sharex=True,
+        n_panels,
+        1,
+        figsize=(11, 2.6 * n_panels + 1),
+        sharex=True,
         gridspec_kw={"height_ratios": [2.2, 1.6, 1.2] + ([1.6] if has_robot else [])},
     )
     plt.rcParams.update({"font.size": 10})
@@ -153,7 +168,13 @@ def plot_run(
         vmax = np.percentile(images, 99.5) if images.size else 1.0
         dt = np.median(np.diff(t_frames)) if len(t_frames) > 1 else 0.05
         ax.imshow(
-            images.T, aspect="auto", origin="lower", cmap="Blues", vmin=0, vmax=vmax, interpolation="nearest",
+            images.T,
+            aspect="auto",
+            origin="lower",
+            cmap="Blues",
+            vmin=0,
+            vmax=vmax,
+            interpolation="nearest",
             extent=(t_frames[0] - dt / 2, t_frames[-1] + dt / 2, echo_ms[0], echo_ms[-1]),
         )
         if detections:
@@ -180,7 +201,9 @@ def plot_run(
         t_end = swipe["t_mono"] - t0 - debounce_s  # Last touch
         color = GREEN if swipe["axis"] is not None else GREY
         ax.annotate(
-            "", xy=(t_end, swipe["end_hole"]), xytext=(t_end - swipe["duration_s"], swipe["start_hole"]),
+            "",
+            xy=(t_end, swipe["end_hole"]),
+            xytext=(t_end - swipe["duration_s"], swipe["start_hole"]),
             arrowprops=dict(arrowstyle="-|>", color=color, lw=2, shrinkA=0, shrinkB=0),
         )
         label = f"{swipe['axis']} {swipe['distance'] * 100:+.1f} cm" if swipe["axis"] is not None else "ignored"
@@ -201,8 +224,15 @@ def plot_run(
         last = (t_det[-1] if detections else t_cal[-1]) if t_cal else 0
         for i, cal in enumerate(calibrations):
             t_next = t_cal[i + 1] if i + 1 < len(t_cal) else last
-            ax.hlines(cal["threshold"], t_cal[i], t_next, colors=VERMILLION, linestyles="--", lw=1.2,
-                      label="threshold" if i == 0 else None)
+            ax.hlines(
+                cal["threshold"],
+                t_cal[i],
+                t_next,
+                colors=VERMILLION,
+                linestyles="--",
+                lw=1.2,
+                label="threshold" if i == 0 else None,
+            )
     _legend(ax)
     _style(ax, "Amplitude (ADC)")
 
@@ -221,8 +251,9 @@ def plot_run(
         if executed:
             t_cmd = stack(executed, "t_mono") - t0
             ax.add_collection(
-                LineCollection([[(t, 0.92), (t, 1.0)] for t in t_cmd], colors=INK, lw=1.5,
-                               transform=ax.get_xaxis_transform())
+                LineCollection(
+                    [[(t, 0.92), (t, 1.0)] for t in t_cmd], colors=INK, lw=1.5, transform=ax.get_xaxis_transform()
+                )
             )
         if executed:
             ax.plot([], [], color=INK, lw=1.5, label="command executed")

@@ -76,6 +76,14 @@ For these demos the Teensy runs the hole detection itself (TEENSY_BLUETOOTH firm
 - Sensor calibration (`--sensor-calibration`, a `wg_helpers.calibrate()` .npz): uploaded when the Teensy has none,
   i.e. after a power cycle (about a minute over BLE); `--upload` replaces it
 - The background is recorded at every start: don't touch the waveguide then
+- Placing the sensor in the waveguide: with the Teensy's USB cable plugged in, `sensor.py --live-match` (and the other
+  `sensor.py` modes) work as with TEENSY_FIRMWARE: the Teensy sends its raw frames over USB while the port is open, the
+  Bluetooth side keeps running
+
+To check the link and the detection alone (the BLE counterpart of `sensor.py`: covered holes and results/s):
+```bash
+    pixi run -e wg python experiments/waveguide/touch.py --sensor-calibration experiments/waveguide/calibration/demo_calibration2.npz
+```
 
 `wg_teleop.py` still reads the raw frames over USB serial (TEENSY_FIRMWARE) and detects the holes on the computer.
 
@@ -96,10 +104,26 @@ touching against the motion stops it, and it stays in an absolute bounding box. 
 Holes between two calibrated ones get an interpolated direction (`interpolate_holes`); with `fixed_mapping=False`
 the directions follow the rotation of link 5 since the calibration (see the `BodyDemoConfig` options).
 
+To run on the robot:
+```bash
+    python wg_body_demo.py --live-plot --method leading_edge --sensor-calibration calibration/calibration_large_w_endcap.npz 
+```
+
+Other examples:
+
 ```bash
     pixi run -e wg python experiments/waveguide/wg_body_demo.py --calibrate        # first: touch the holes of +x, -x, ... in turn (arm at home)
     pixi run -e wg python experiments/waveguide/wg_body_demo.py                    # then: uses calibration/body_direction_holes.json
     pixi run -e wg python experiments/waveguide/wg_body_demo.py --input terminal   # covered holes typed in the terminal ("+x", "3 4", "t -y")
+    pixi run -e wg python experiments/waveguide/wg_body_demo.py --live-plot --sensor-calibration experiments/waveguide/calibration/<file>.npz
+    pixi run -e wg python experiments/waveguide/wg_body_demo.py --live-plot --no-robot   # sensor + plot on the bench, the arm simulated
 ```
+
+`--live-plot` (`body_live_plot.py`, from the Teensy results): the touches against time, the waveguide with each hole
+in the color of its direction (interpolated holes lighter, blended; the names over the calibrated runs; covered holes
+outlined), and the arm in its bounding box (top and side views, velocity). The ⚙ tab (or C) shows the mapping and
+calibrates it: Calibrate, then for each direction touch its holes and press Space (Backspace redoes it, Esc cancels).
+The arm stays stopped meanwhile; the mapping is saved (previous one kept as a backup) and used right away. The holes
+drawn are those of `--sensor-calibration`: give the one of this waveguide.
 
 Tests of the demos logic: `pixi run -e wg pytest experiments/waveguide/tests`

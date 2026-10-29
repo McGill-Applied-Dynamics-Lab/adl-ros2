@@ -28,6 +28,7 @@ import numpy as np
 import recording
 from arm_client.robot import Pose, Robot
 from commands import CommandSource, Control, MoveCommand, TerminalSource, WaveguideSource
+from scipy.spatial.transform import Rotation
 from sensor import DEFAULT_BAUDRATE, DEFAULT_PORT
 
 from arm_client import CONFIG_DIR
@@ -37,27 +38,38 @@ AXES = {"x": 0, "y": 1, "z": 2}
 MAX_SPEED = 0.15  # m/s, average speed of a move (the peak is 1.875x, minimum-jerk profile)
 MAX_DISTANCE = 0.2  # m, per command
 CONTROLLER_MIN_MOVE_TIME = 0.5  # s, fr3_pose_controller stretches shorter moves to this
+CONTROLLER_MAX_ANGULAR_SPEED = 1.0  # rad/s, motion.max_angular_velocity in configs/controllers/fr3_pose/default.yaml
 
-# Workspace box, relative to the home position [m]
-WORKSPACE_LOWER = np.array([-0.15, -0.15, -0.20])
-WORKSPACE_UPPER = np.array([0.15, 0.15, 0.20])
+# Workspace box, in the robot base frame [m] (home is at ~[0.31, 0.0, 0.49])
+WORKSPACE_LOWER = np.array([0.0, -0.25, 0.09])
+WORKSPACE_UPPER = np.array([0.8, 0.25, 0.8])
+
+# The run starts at a random position drawn uniformly in this box (lower, upper), in the robot base frame [m]
+START_POSITION_BOUNDS = np.array([[0.25, -0.10, 0.35], [0.40, 0.10, 0.55]])
+START_ORIENTATION = Rotation.from_quat([1.0, 0.0, 0.0, 0.0])  # Gripper pointing down, the home orientation
+START_SPEED = 0.1  # m/s, move to the start position
 
 POLL_TIMEOUT = 0.1  # s, wait for a command
 
 
 class AxisTeleop:
-    """Moves the end-effector along the base axes with fr3_pose_controller, keeping the home orientation."""
+    """Moves the end-effector along the base axes with fr3_pose_controller, keeping START_ORIENTATION."""
 
-    def __init__(self, robot: Robot):
+    def __init__(self, robot: Robot, rng: np.random.Generator | None = None):
         self.robot = robot
-
-        print("Going to home position...")
-        self.robot.home()
-        self.homing_pose = self.robot.end_effector_pose.copy()
+        current_position = self.robot.end_effector_pose.position.copy()
+        target_position = current_position
+        target_position[2] += 0.1
+        rng = np.random.default_rng() if rng is None else rng
+        start_position = rng.uniform(*START_POSITION_BOUNDS)
         self._switch_to_pose_controller()
 
-        # Commanded position, kept separately from the measured pose so tracking errors don't accumulate
-        self.target_position = self.homing_pose.position.copy()
+        print(f"Going to the start position {np.round(start_position, 3)}...")
+        # Not `robot.move_to`: with fr3_pose_controller it streams interpolated poses through the periodic
+        # republishing, which streaming mode (`_switch_to_pose_controller`) turns off: nothing would be sent
+        self._move_to(target_position, START_SPEED)
+
+        self._move_to(start_position, START_SPEED)
 
     def _switch_to_pose_controller(self):
         self.robot.controller_switcher_client.switch_controller("fr3_pose_controller")
@@ -82,9 +94,7 @@ class AxisTeleop:
 
         new_position = self.target_position.copy()
         new_position[AXES[axis]] += distance
-        clipped = np.clip(
-            new_position, self.homing_pose.position + WORKSPACE_LOWER, self.homing_pose.position + WORKSPACE_UPPER
-        )
+        clipped = np.clip(new_position, WORKSPACE_LOWER, WORKSPACE_UPPER)
         if not np.allclose(clipped, new_position):
             print(f"Target clipped to workspace: {new_position} -> {clipped}")
 
@@ -92,22 +102,36 @@ class AxisTeleop:
             print("Already at the workspace limit, not moving.")
             return
 
-        # fr3_pose_controller moves to a single target pose with a minimum-jerk profile (rest to rest) whose
-        # duration is distance / motion.max_linear_velocity, so set that parameter to the requested speed.
-        # Streaming intermediate poses (`move_to`) instead makes it stop at every one of them, and a
-        # `target_trajectory` is limited to 5 cm/s by the ramp the controller prepends to it.
+        self._move_to(clipped, speed)
+
+    def _move_to(self, position: np.ndarray, speed: float):
+        """Move the end-effector to `position` [m] with START_ORIENTATION, at `speed` [m/s] (blocking).
+
+        fr3_pose_controller moves to a single target pose with a minimum-jerk profile (rest to rest) whose
+        duration is distance / motion.max_linear_velocity (or the rotation / motion.max_angular_velocity if
+        longer), so set that parameter to the requested speed and publish the goal once. Streaming intermediate
+        poses (`move_to`) instead makes it stop at every one of them, and a `target_trajectory` is limited to
+        5 cm/s by the ramp the controller prepends to it.
+        """
         self.robot.fr3_pose_controller_parameters_client.set_parameters([("motion.max_linear_velocity", float(speed))])
         time.sleep(0.01)  # The controller refreshes its parameters on its next update
 
-        duration = max(float(np.linalg.norm(clipped - self.target_position)) / speed, CONTROLLER_MIN_MOVE_TIME)
-        self.robot.publish_target(pose=Pose(clipped, self.homing_pose.orientation))
-        self.target_position = clipped
+        current = self.robot.end_effector_pose
+        rotation = (START_ORIENTATION * current.orientation.inv()).magnitude()  # rad
+        duration = max(
+            float(np.linalg.norm(position - current.position)) / speed,
+            rotation / CONTROLLER_MAX_ANGULAR_SPEED,
+            CONTROLLER_MIN_MOVE_TIME,
+        )
+        self.robot.publish_target(pose=Pose(position, START_ORIENTATION))
+        # Commanded position, kept separately from the measured pose so tracking errors don't accumulate
+        self.target_position = np.asarray(position, dtype=float).copy()
         time.sleep(duration + 0.1)
 
     def go_home(self):
         self.robot.home()
+        self.target_position = self.robot.end_effector_pose.position.copy()
         self._switch_to_pose_controller()
-        self.target_position = self.homing_pose.position.copy()
 
 
 def run(teleop: AxisTeleop, source: CommandSource, recorder: recording.RobotRecorder | None = None):
@@ -170,6 +194,7 @@ def main():
             "args": vars(args),
             "teleop": {"max_speed": MAX_SPEED, "max_distance": MAX_DISTANCE},
             "workspace": {"lower": WORKSPACE_LOWER.tolist(), "upper": WORKSPACE_UPPER.tolist()},
+            "start_position_bounds": START_POSITION_BOUNDS.tolist(),
             **run_metadata(),
         }
         logger = recording.start_logger("teleop", args.notes, metadata)

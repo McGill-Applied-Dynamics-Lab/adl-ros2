@@ -1,10 +1,36 @@
-motion.max_linear_velocity: 0.1  # Maximum linear velocity for trajectory generation (m/s) [0.0, 3.0]
-motion.max_angular_velocity: 1.0  # Maximum angular velocity for trajectory generation (rad/s) [0.0, 2.5]
+# controller: FR3 Pose Controller (fr3_controllers/FR3PoseController)
+# target_pose moves and jogging are generated online with Ruckig (jerk-limited)
+# and replanned from the current state on every new target. All limits are
+# per axis: x/y/z for linear, rotation-vector components for angular.
+
+# -- target_pose moves --
+motion.max_linear_velocity: 0.1  # (m/s) [0.001, 1.7]
+motion.max_angular_velocity: 1.0  # (rad/s) [0.001, 2.5]
+motion.max_linear_acceleration: 1.0  # (m/s^2) [0.01, 13.0]
+motion.max_angular_acceleration: 2.0  # (rad/s^2) [0.01, 25.0]
+motion.max_linear_jerk: 10.0  # (m/s^3) [0.1, 6500.0]
+motion.max_angular_jerk: 20.0  # (rad/s^3) [0.1, 12500.0]
+
+# -- Jog (target_jog, see Robot.jog / stop_jog) --
+jog.max_linear_velocity: 0.1  # (m/s) norm of the commanded linear velocity [0.0, 1.0]
+jog.max_angular_velocity: 0.3  # (rad/s) norm of the commanded angular velocity [0.0, 2.5]
+jog.max_linear_acceleration: 0.2  # (m/s^2) [0.01, 13.0]
+jog.max_angular_acceleration: 1.0  # (rad/s^2) [0.01, 25.0]
+jog.max_linear_jerk: 2.0  # (m/s^3) [0.1, 6500.0]
+jog.max_angular_jerk: 10.0  # (rad/s^3) [0.1, 12500.0]
+jog.timeout: 0.2  # (s) without a jog command before braking to a stop [0.01, 2.0]
+
+# -- Workspace box (EE position, base frame) --
+# target_pose goals are clipped into it; jogging stops `margin` inside it.
+# target_trajectory waypoints are not checked.
+workspace.enabled: true
+workspace.min: [0.2, -0.4, 0.05]  # (m) [x, y, z]
+workspace.max: [0.7, 0.4, 0.7]  # (m) [x, y, z]
+workspace.margin: 0.01  # (m) [0.0, 0.2]
 
 filter.target_pose: 1.0  # Smoothing for single-pose inputs using EMA (0.0: Max filtering, 1.0: No filtering)
 
 log.enabled: true
 log.robot_state: false  #  ee position, velocity, joint states, ...
-log.targets: false  # target pose
+log.targets: true  # target pose, active mode and commanded speed
 log.timing: true
-

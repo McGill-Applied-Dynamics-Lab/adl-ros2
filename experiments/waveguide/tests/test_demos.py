@@ -369,3 +369,95 @@ def test_match_target_round_trip(tmp_path):
     assert sensor.latest_match_target(tmp_path) == newest
     with pytest.raises(FileNotFoundError):
         sensor.latest_match_target(tmp_path / "empty")
+
+
+# --- Live plot support: DemoMonitor, SimJogger, mapping backup, colors
+class _HeldTouch:
+    """Touch source holding `covered`, with a fresh time at each call."""
+
+    def __init__(self):
+        self.covered: set[int] = set()
+
+    def latest(self) -> TouchFrame:
+        return TouchFrame(tuple(HoleTouch(h, 0.0, 1.0) for h in sorted(self.covered)))
+
+
+def _run_in_thread(cfg, touch, monitor):
+    import threading
+
+    from wg_body_demo import SimJogger, run
+
+    jogger = SimJogger(cfg)
+    thread = threading.Thread(target=run, args=(jogger, touch, cfg, None, None, monitor), daemon=True)
+    thread.start()
+    return jogger, thread
+
+
+def _wait(condition, timeout=2.0):
+    t_end = time.monotonic() + timeout
+    while not condition():
+        assert time.monotonic() < t_end, "timed out"
+        time.sleep(0.01)
+
+
+def test_monitor_pause_stops_and_new_mapping_applies():
+    from wg_body_demo import DemoMonitor
+
+    cfg = BodyDemoConfig(direction_holes={"+x": (1,)}, acceleration=1.0)
+    touch, monitor = _HeldTouch(), DemoMonitor()
+    jogger, thread = _run_in_thread(cfg, touch, monitor)
+    touch.covered = {1}
+    _wait(lambda: monitor.snapshot()["state"] == "moving")
+    assert monitor.snapshot()["velocity"][0] > 0
+
+    monitor.paused.set()  # Calibrating: stops, and stays stopped while touched
+    _wait(lambda: not np.any(monitor.snapshot()["velocity"]))
+    x = jogger.position[0]
+    time.sleep(0.1)
+    assert jogger.position[0] == x
+
+    touch.covered = set()
+    monitor.set_mapping({"+y": (1,)})  # Hole 1 now moves along +y
+    monitor.paused.clear()
+    time.sleep(0.05)
+    touch.covered = {1}
+    _wait(lambda: monitor.snapshot()["velocity"][1] > 0)
+    assert monitor.snapshot()["velocity"][0] == 0
+
+    monitor.stop_event.set()
+    thread.join(timeout=1.0)
+    assert not thread.is_alive()
+
+
+def test_monitor_records_stops():
+    from wg_body_demo import DemoMonitor
+
+    cfg = BodyDemoConfig(direction_holes={"+x": (1,), "-x": (2,)}, acceleration=1.0)
+    touch, monitor = _HeldTouch(), DemoMonitor()
+    _, thread = _run_in_thread(cfg, touch, monitor)
+    touch.covered = {1}
+    _wait(lambda: monitor.snapshot()["state"] == "moving")
+    touch.covered = {2}
+    _wait(lambda: monitor.snapshot()["state"] == "stop")
+    assert [kind for _, kind in monitor.snapshot()["events"]] == ["stop"]
+    monitor.stop_event.set()
+    thread.join(timeout=1.0)
+
+
+def test_save_mapping_keeps_a_backup(tmp_path):
+    path = tmp_path / "map.json"
+    assert save_mapping(HoleMapping({"+x": (1,)}), path, backup=True) is None
+    backup = save_mapping(HoleMapping({"+x": (2,)}), path, backup=True)
+    assert load_mapping(backup).direction_holes == {"+x": (1,)}
+    assert load_mapping(path).direction_holes == {"+x": (2,)}
+
+
+def test_hole_colors_and_runs():
+    pytest.importorskip("pyqtgraph")
+    from body_live_plot import DIRECTION_COLORS, hex_rgb, hole_colors, runs
+
+    vectors = hole_vectors({"+y": (10,), "+z": (14,)})
+    colors = hole_colors(vectors)
+    np.testing.assert_allclose(colors[10], hex_rgb(DIRECTION_COLORS["+y"]))
+    np.testing.assert_allclose(colors[12], (hex_rgb(DIRECTION_COLORS["+y"]) + hex_rgb(DIRECTION_COLORS["+z"])) / 2)
+    assert runs([5, 1, 2, 3, 7, 8]) == [(1, 3), (5, 5), (7, 8)]

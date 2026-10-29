@@ -10,6 +10,10 @@ Sources:
 - `TerminalTouchSource`: covered holes typed in the terminal, to test without the waveguide
 
 Nothing here imports ROS.
+
+Standalone, prints what the Teensy reports (the BLE counterpart of sensor.py's default mode):
+    pixi run -e wg python experiments/waveguide/touch.py --sensor-calibration calibration/<file>.npz
+    pixi run -e wg python experiments/waveguide/touch.py --input terminal
 """
 
 import argparse
@@ -266,7 +270,7 @@ class TerminalTouchSource(_ThreadedSource):
         frame = super().latest()
         return None if frame is None else replace(frame, t=time.monotonic())
 
-    def _frame(self, holes: frozenset[int]) -> TouchFrame:
+    def _holes_frame(self, holes: frozenset[int]) -> TouchFrame:
         return TouchFrame(
             tuple(HoleTouch(i, self.TOUCH_DISTANCE_CM, self.TOUCH_AMPLITUDE) for i in sorted(holes)),
         )
@@ -288,7 +292,46 @@ class TerminalTouchSource(_ThreadedSource):
                 self.quit_requested.set()
                 return
             holes, tap = parsed
-            self._publish(self._frame(holes))
+            self._publish(self._holes_frame(holes))
             if tap:
                 time.sleep(self.TAP_S)
                 self._publish(TouchFrame())
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--input", choices=["teensy", "terminal"], default="teensy")
+    add_teensy_args(parser)
+    args = parser.parse_args()
+
+    try:
+        source = TeensyTouchSource(teensy_config(args)) if args.input == "teensy" else TerminalTouchSource()
+    except (FileNotFoundError, ValueError) as e:
+        parser.exit(1, f"Error: {e}\n")
+
+    # A line when the covered holes change, and the result rate every second
+    shown, last, n_frames, t_rate = None, None, 0, time.monotonic()
+    try:
+        source.start()
+        while not getattr(source, "quit_requested", threading.Event()).is_set():
+            frame = source.latest()
+            if frame is not None and frame is not last:
+                last, n_frames = frame, n_frames + 1
+                if frame.covered != shown:
+                    shown = frame.covered
+                    holes = ", ".join(f"{h.idx} ({h.distance_cm:.1f} cm, amplitude {h.amplitude:.0f})" for h in frame.holes)
+                    print(f"[{frame.t:.2f}] {holes or 'nothing covered'}")
+            if args.input == "teensy" and time.monotonic() - t_rate >= 1.0:
+                print(f"  {n_frames / (time.monotonic() - t_rate):.1f} results/s")
+                n_frames, t_rate = 0, time.monotonic()
+            time.sleep(0.005)
+    except KeyboardInterrupt:
+        print()
+    except (RuntimeError, TimeoutError) as e:
+        print(f"Stopping: {e}")
+    finally:
+        source.close()
+
+
+if __name__ == "__main__":
+    main()
