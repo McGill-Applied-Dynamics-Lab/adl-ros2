@@ -237,7 +237,7 @@ Leave with every run on disk and analysed, and the talk figures (FIGURES\_PLAN.m
 - [ ] E3: add the steady-sweep session to `RUNS` (the saved outputs have 28 of 37 runs), so the steady plots and time series are not empty.
 - [ ] ~~E5: read the dropped runs~~ (skipped): M1's K\_max per delay, and whether M1 was thrown where M5 rested. If M1 was stable dropped, use the fallback sentence in FIGURES\_PLAN.md.
 - [ ] E6: fix `%autoreload 2  # …` in `e6_taps.ipynb` (the inline comment is a UsageError), then write the discussion cell (tap/hold metrics per method and delay, M1's force arriving after the lift).
-- [x] Render the talk figures F1–F7b with `figures/talk_figures.ipynb` (outputs in `figures/out/`) at slide size into `experiments/rim-delays/figures/`: one message per figure, ≥ 14 pt, the method colours of `plots.py`, as listed in FIGURES\_PLAN.md.
+- [x] Render the talk figures F1–F7b with `analysis/talk_figures.ipynb` (outputs in `analysis/figures/`) at slide size: one message per figure, ≥ 14 pt, the method colours of `plots.py`, as listed in FIGURES\_PLAN.md.
 - [ ] `tools/contact_video.py` on the three E6 clips and the E5 stability clip.
 - [ ] Commit the scripts, notebooks (with outputs) and figures.
 

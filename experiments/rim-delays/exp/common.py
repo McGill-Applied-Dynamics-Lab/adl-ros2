@@ -48,7 +48,7 @@ RIM = HERE.parent
 sys.path[:0] = [str(RIM), str(RIM / "analysis"), str(RIM / "tools")]
 REPO = RIM.parents[1]
 CONF = REPO / "python/fr3_haptic/configs/teleop.yaml"
-OUT = Path("~/data/franka/rim-delays").expanduser()
+OUT = Path(os.environ.get("RIM_DELAYS_DATA", "~/data/franka/rim-delays")).expanduser()  # the runs; override on another machine
 TRACE_RTT_MS = {"5g": 45.0}  # rough mean round trip of a replayed trace, for the run length [ms]
 # Frozen feedback rates (tools/pilot_fm.py on pilots/fm_circle2): robot state 500 Hz (M1 ripple
 # K|v|/f_m 0.72 N), RIM model 25 Hz (Λ change 2.1 % per update, 0.12 N RMS from holding); targets
@@ -470,6 +470,16 @@ def latest_session(exp: str, backend: str = "robot") -> Path:
     return sessions[-1]
 
 
+def relocate(path) -> Path:
+    """A run path as recorded (absolute, on the machine that ran it), under ``OUT`` when it is not
+    there: session files and ``kmax.csv`` store absolute paths, the data may be copied elsewhere."""
+    path = Path(path).expanduser()
+    if path.exists() or "rim-delays" not in path.parts:
+        return path
+    parts = path.parts
+    return OUT.joinpath(*parts[len(parts) - parts[::-1].index("rim-delays"):])
+
+
 def collect(sources) -> list[Path]:
     """Run directories from a mix of run directories, session files (one run per line) and
     directories of runs."""
@@ -477,7 +487,7 @@ def collect(sources) -> list[Path]:
     for s in sources:
         s = Path(s).expanduser()
         if s.is_file():
-            runs += [Path(line.strip()) for line in s.read_text().splitlines() if line.strip()]
+            runs += [relocate(line.strip()) for line in s.read_text().splitlines() if line.strip()]
         elif (s / "metadata.json").exists():
             runs.append(s)
         elif s.is_dir():
