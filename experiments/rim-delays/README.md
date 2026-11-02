@@ -11,8 +11,9 @@
   `exp/common.py` (runner), `exp/exp_metrics.py` (metrics), `exp/plots.py`.
 - `pretests/`: interactive pre-tests T1–T5 (one preset per script, Ctrl-C ends, metrics follow).
 - `sim_teleop.py`, `sim_plant.py`: `fr3_teleop` against a simulated FR3 (constant task inertia).
-- `analysis/talk_figures.ipynb`: every talk figure (F1–F9), into `analysis/figures/`. Runs on any
-  laptop in the light `analysis` environment (`pixi run -e analysis figures`); how to move the data
+- `analysis/analysis.ipynb`: every analysis figure (F1–F9), into `analysis/figures/`; `analysis/talk_figures.ipynb`:
+  only the talk's, into `analysis/figures/talk/` (`pixi run -e analysis figures`). Both run on any
+  laptop in the light `analysis` environment; how to move the data
   there: [analysis/README.md](analysis/README.md).
 - `runs.py`: loads a saved run.
 - `old/`: the retired scripted-grid design (`run_conditions.py`, `conditions.yaml`, `analyze.py`).

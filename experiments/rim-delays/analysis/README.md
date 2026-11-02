@@ -1,6 +1,7 @@
 # Analysis — reproducing the talk figures on another machine
 
-`talk_figures.ipynb` renders every talk figure (F1–F9) into `figures/` (PDF and PNG). It runs in the
+`analysis.ipynb` renders every analysis figure (F1–F9) into `figures/` (PDF and PNG); `talk_figures.ipynb`
+renders only the figures that are in the talk, into `figures/talk/` (PDF, PNG and SVG). Both run in the
 light `analysis` pixi environment: no ROS, no robot stack, no CUDA (Linux or macOS).
 
 ## On the robot PC: pack the data
@@ -24,7 +25,8 @@ mkdir -p ~/data/franka/rim-delays
 tar xzf rim-delays-analysis-data.tar.gz -C ~/data/franka/rim-delays
 # elsewhere: export RIM_DELAYS_DATA=/path/to/the/extracted/folder
 
-pixi run -e analysis figures        # executes the notebook in place, figures -> analysis/figures/
+pixi run -e analysis figures          # talk_figures.ipynb in place -> analysis/figures/talk/
+pixi run -e analysis analysis-figures # analysis.ipynb in place -> analysis/figures/
 pixi run -e analysis jupyter lab    # or open it interactively
 ```
 

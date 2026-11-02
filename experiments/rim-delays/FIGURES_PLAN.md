@@ -1,6 +1,6 @@
 # Delayed RIM Teleoperation — Talk Figures
 
-Oct 27, 2026 · from the E1–E4 (2026-10-26), E6 (2026-10-27) and E5 (2026-10-28) sessions. Rendered by `analysis/talk_figures.ipynb` into `analysis/figures/` (PDF + PNG; `pixi run -e analysis figures`).
+Oct 27, 2026 · from the E1–E4 (2026-10-26), E6 (2026-10-27) and E5 (2026-10-28) sessions. Rendered by `analysis/analysis.ipynb` into `analysis/figures/` (PDF + PNG; `pixi run -e analysis analysis-figures`); the figures that are in the talk by `analysis/talk_figures.ipynb` into `analysis/figures/talk/`.
 
 ## Verdict
 

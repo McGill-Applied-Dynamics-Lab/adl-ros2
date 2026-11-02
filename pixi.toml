@@ -2,7 +2,7 @@
 authors = ["Charles Sirois <charles.sirois@mail.mcgill.ca>"]
 channels = ["conda-forge"]
 name = "adl-ros2"
-platforms = ["linux-64", "osx-arm64", "osx-64"]  # macOS for the analysis environment only
+platforms = ["linux-64", "win-64", "osx-arm64", "osx-64"]  # Desktop analysis is cross-platform; ROS remains Linux-only
 version = "0.1.0"
 
 [activation]
@@ -165,7 +165,7 @@ markdown-callouts = "*"
 # not installed: installing them pulls their ROS-side dependencies. The arm's model (Λ) comes from
 # experiments/rim-delays/analysis/model_cache.json. LaTeX text if a TeX install is found, else mathtext.
 [feature.analysis]
-platforms = ["linux-64", "osx-arm64", "osx-64"]
+platforms = ["linux-64", "win-64", "osx-arm64", "osx-64"]
 
 [feature.analysis.dependencies]
 python = "3.12.*"
@@ -181,4 +181,5 @@ nbconvert-core = "*"
 
 [feature.analysis.tasks]
 figures = { cmd = "jupyter nbconvert --to notebook --execute --inplace --ExecutePreprocessor.timeout=1800 talk_figures.ipynb", cwd = "experiments/rim-delays/analysis" }
+analysis-figures = { cmd = "jupyter nbconvert --to notebook --execute --inplace --ExecutePreprocessor.timeout=1800 analysis.ipynb", cwd = "experiments/rim-delays/analysis" }
 pack-data = { cmd = "python experiments/rim-delays/tools/pack_analysis_data.py" }
