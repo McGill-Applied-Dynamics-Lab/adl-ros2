@@ -1,4 +1,4 @@
-"""Read and plot a waveguide run recorded with `--record` (wg_teleop.py or sensor.py).
+"""Read and plot a waveguide run recorded with `--record` (wg_teleop.py, sensor.py or wg_body_demo.py).
 
 Standalone: needs only numpy, matplotlib and mcap (`pip install numpy matplotlib mcap`), not this repository.
 
@@ -9,11 +9,12 @@ Standalone: needs only numpy, matplotlib and mcap (`pip install numpy matplotlib
 
 The figure, against the time from the start of the run [s]:
 1. Echo: |averaged frame - background| over the echo time (darker: larger change), with the detected echo times
+   (not for wg_body_demo runs: the Teensy sends no frames)
 2. Detected hole of every frame, and the swipes (arrow from the start to the end hole; green: sent as a command,
-   grey: ignored)
+   grey: ignored). wg_body_demo: the detections past `min_presses` (allowed to move the arm) are ringed
 3. Echo amplitude of every frame, against the detection threshold
 4. End-effector position (x, y, z, relative to the start) and its commanded target (dashed); the executed
-   commands are the ticks at the top (wg_teleop runs only)
+   commands (wg_teleop), or the stops and bounding box hits (wg_body_demo), are the ticks at the top
 
 To use the data in your own code:
 
@@ -26,7 +27,9 @@ Each sample is a dict: `ts` (wall time [s]) and the recorded fields. Streams: `s
 `sensor/detection` (t_mono, detected, hole, hole2, distance_cm, amplitude, echo_time_ms, pressed),
 `sensor/background` (t_mono, frame), `sensor/calibration` (t_mono, file, threshold, hole_ids), `sensor/swipe`
 (t_mono, kind, start_hole, end_hole, duration_s, axis, distance, speed, ignored_reason), `robot/command` (t_mono,
-status, detail, axis, distance, speed, t_created, target), `robot/state` (t_mono, position, orientation, target).
+status, detail, axis, distance, speed, t_created, target), `robot/state` (t_mono, position, orientation, target;
+wg_body_demo: position, target, velocity, state), and for wg_body_demo `robot/event` (t_mono, state, message) and
+`body/mapping` (t_mono, direction_holes as JSON); its `sensor/detection` also has `covered`.
 """
 
 import argparse
@@ -139,22 +142,20 @@ def plot_run(
     t0 = min(s["t_mono"] for samples in run.values() for s in samples if s.get("t_mono") is not None)
     frames, detections = run.get("sensor/frame", []), run.get("sensor/detection", [])
     robot_states, commands = run.get("robot/state", []), run.get("robot/command", [])
+    events = [e for e in run.get("robot/event", []) if e["state"] in ("stop", "box")]
     has_robot = bool(robot_states)
 
-    n_panels = 4 if has_robot else 3
+    ratios = ([2.2] if frames else []) + [1.6, 1.2] + ([1.6] if has_robot else [])
     fig, axes = plt.subplots(
-        n_panels,
-        1,
-        figsize=(11, 2.6 * n_panels + 1),
-        sharex=True,
-        gridspec_kw={"height_ratios": [2.2, 1.6, 1.2] + ([1.6] if has_robot else [])},
+        len(ratios), 1, figsize=(11, 2.6 * len(ratios) + 1), sharex=True, gridspec_kw={"height_ratios": ratios}
     )
     plt.rcParams.update({"font.size": 10})
     fig.suptitle(title, x=0.01, ha="left", color=INK, fontsize=12)
+    panels = iter(axes)
 
     # 1. Echo waterfall: |averaged frame - latest background|
-    ax = axes[0]
     if frames:
+        ax = next(panels)
         t_frames = stack(frames, "t_mono") - t0
         images = np.array([s["frame"] for s in frames], dtype=float)
         backgrounds = run.get("sensor/background", [])
@@ -185,10 +186,10 @@ def plot_run(
         ax.plot([], [], color="#4A90C8", lw=6, label="|frame - background| (darker: larger)")
         _legend(ax)
         ax.set_ylim(0, min(echo_ms[-1], 5.0))
-    _style(ax, "Echo time (ms)")
+        _style(ax, "Echo time (ms)")
 
     # 2. Detected hole and swipes
-    ax = axes[1]
+    ax = next(panels)
     if detections:
         t_det = stack(detections, "t_mono") - t0
         hole = stack(detections, "hole")
@@ -197,6 +198,10 @@ def plot_run(
         second = stack(detections, "hole2")
         if np.any(np.isfinite(second[hit])):
             ax.scatter(t_det[hit], second[hit], s=12, color=PURPLE, linewidths=0, label="second hole")
+        if "covered" in detections[0]:  # wg_body_demo: the holes past min_presses
+            t_ok = [t for t, s in zip(t_det, detections) for _ in s["pressed"]]
+            holes_ok = [h for s in detections for h in s["pressed"]]
+            ax.scatter(t_ok, holes_ok, s=40, facecolors="none", edgecolors=GREEN, linewidths=1.2, label="past min_presses")
     for swipe in run.get("sensor/swipe", []):
         t_end = swipe["t_mono"] - t0 - debounce_s  # Last touch
         color = GREEN if swipe["axis"] is not None else GREY
@@ -208,13 +213,14 @@ def plot_run(
         )
         label = f"{swipe['axis']} {swipe['distance'] * 100:+.1f} cm" if swipe["axis"] is not None else "ignored"
         ax.annotate(label, (t_end, swipe["end_hole"]), xytext=(4, 4), textcoords="offset points", color=INK, fontsize=8)
-    ax.plot([], [], color=GREEN, lw=2, label="swipe (command)")
-    ax.plot([], [], color=GREY, lw=2, label="swipe (ignored)")
+    if run.get("sensor/swipe"):
+        ax.plot([], [], color=GREEN, lw=2, label="swipe (command)")
+        ax.plot([], [], color=GREY, lw=2, label="swipe (ignored)")
     _legend(ax)
     _style(ax, "Hole")
 
     # 3. Amplitude against the threshold
-    ax = axes[2]
+    ax = next(panels)
     if detections:
         t_det = stack(detections, "t_mono") - t0
         ax.plot(t_det, stack(detections, "amplitude"), color=BLUE, lw=1.5, label="amplitude")
@@ -238,7 +244,7 @@ def plot_run(
 
     # 4. End-effector position and target, relative to the start
     if has_robot:
-        ax = axes[3]
+        ax = next(panels)
         t_state = stack(robot_states, "t_mono") - t0
         position = np.array([s["position"] for s in robot_states], dtype=float)
         target = np.array([s["target"] if s.get("target") is not None else [np.nan] * 3 for s in robot_states], float)
@@ -257,7 +263,16 @@ def plot_run(
             )
         if executed:
             ax.plot([], [], color=INK, lw=1.5, label="command executed")
-        _legend(ax, ncols=5)
+        for kind, color, label in (("stop", VERMILLION, "stop"), ("box", ORANGE, "bounding box")):
+            t_event = [e["t_mono"] - t0 for e in events if e["state"] == kind]
+            if t_event:
+                ax.add_collection(
+                    LineCollection(
+                        [[(t, 0.88), (t, 1.0)] for t in t_event], colors=color, lw=2, transform=ax.get_xaxis_transform()
+                    )
+                )
+                ax.plot([], [], color=color, lw=2, label=label)
+        _legend(ax, ncols=6)
         _style(ax, "Position (cm)")
 
     axes[-1].set_xlabel("Time (s)", color=INK)

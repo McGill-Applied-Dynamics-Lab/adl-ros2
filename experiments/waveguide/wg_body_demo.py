@@ -4,10 +4,13 @@ The waveguide is wrapped around link 5. Each hole has a direction: the axis thro
 link, along which touching it moves the arm. The end-effector orientation is kept constant.
 
 - Holding holes accelerates the arm along their direction (their mean, for neighbouring holes covered by one
-  finger); on release, the arm keeps its velocity
+  finger); on release, the arm keeps its velocity. A hole moves the arm only once the sensor detected it in
+  `min_presses` frames in a row (`--min-presses`), so a single noisy detection does not move it
 - Touching a hole whose direction is more than `stop_angle_deg` from the velocity stops the arm immediately
-  ("collision detection"). It stays stopped until every hole is released
+  ("collision detection"), without waiting for `min_presses`. It stays stopped until every hole is released
 - The arm moves within an absolute bounding box (base frame): reaching it stops the arm
+- It starts at home + `start_offset` (4.5 cm forward in x); `--random-position` keeps that x and draws y and z
+  uniformly in the bounding box, `random_margin` from its faces
 
 Hole directions:
 - Calibration (`--calibrate`, with the arm at home): the script asks to touch all the holes of each base axis
@@ -33,6 +36,12 @@ the sensor and the plot on the bench.
     pixi run -e wg python experiments/waveguide/wg_body_demo.py --calibrate        # calibrate the hole -> direction mapping first
     pixi run -e wg python experiments/waveguide/wg_body_demo.py --input terminal   # covered holes typed in the terminal
     pixi run -e wg python experiments/waveguide/wg_body_demo.py --live-plot --no-robot --input terminal   # no arm, no sensor
+    pixi run -e wg python experiments/waveguide/wg_body_demo.py --record --notes "body demo, take 3"   # records the run
+    pixi run -e wg python experiments/waveguide/wg_body_demo.py --random-position  # start at a random y, z
+
+`--record` saves the Teensy results (and the holes past `min_presses`), the arm's measured and commanded position
+and velocity, its stops and bounding box hits, the hole mapping and a copy of the sensor calibration, to
+~/data/waveguide/body/<date-time> (see `recording.py`; `plot_run.py` plots it).
 """
 
 import argparse
@@ -41,11 +50,13 @@ import shutil
 import threading
 import time
 from collections import Counter
-from dataclasses import dataclass, field, replace
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 
 import numpy as np
-from touch import TeensyTouchSource, TerminalTouchSource, TouchFrame, TouchSource, add_teensy_args, teensy_config
+import recording
+from touch import (TeensyTouchSource, TerminalTouchSource, TouchFrame,
+                   TouchSource, add_teensy_args, teensy_config)
 
 DIRECTIONS = {
     "+x": np.array([1.0, 0.0, 0.0]),
@@ -76,9 +87,14 @@ class BodyDemoConfig:
     acceleration: float = 0.05  # m/s^2, along the held direction
     max_speed: float = 0.10  # m/s
     stop_angle_deg: float = 120.0  # A touch further than this from the velocity stops the arm (in (90, 180))
+    min_presses: int = 5  # Sensor frames in a row a hole must be detected in to move the arm (stops: 1)
     # Bounding box of the end-effector position, absolute (base frame) [m]. TODO: set for the setup
-    box_lower: tuple[float, float, float] = (0.30, -0.25, 0.20)
+    box_lower: tuple[float, float, float] = (0.30, -0.25, 0.10)
     box_upper: tuple[float, float, float] = (0.60, 0.25, 0.60)
+    start_offset: tuple[float, float, float] = (0.030, 0.0, 0.0)  # Start position, from home (base frame) [m]
+    random_margin: float = 0.05  # --random-position: distance kept from the bounding box faces [m]
+    start_speed: float = 0.10  # m/s, move from home to the start position
+    sim_home: tuple[float, float, float] = (0.31, 0.0, 0.49)  # --no-robot: home end-effector position (FR3) [m]
 
     rate_hz: float = 100.0  # Control loop
     max_dt_s: float = 0.05  # A stalled loop step integrates at most this, so the target does not jump
@@ -259,10 +275,18 @@ class JogLogic:
         self.velocity = np.zeros(3)
         self.stopped = True
 
-    def update(self, dt: float, covered: frozenset[int], rotation: np.ndarray | None = None) -> bool:
+    def update(
+        self,
+        dt: float,
+        covered: frozenset[int],
+        rotation: np.ndarray | None = None,
+        confirmed: frozenset[int] | None = None,
+    ) -> bool:
         """Update `velocity` from the holes covered during the last `dt` [s]. Returns True on a stop.
 
         `rotation` (3x3): rotation of the link since the calibration (`fixed_mapping=False`), None: none.
+        `confirmed`: the holes allowed to accelerate the arm (`PressCounter`), None: all of `covered`. Every
+        covered hole can stop it.
         """
         directions = self.directions(covered, rotation)
         if self.stopped:
@@ -274,6 +298,10 @@ class JogLogic:
         if speed > 0.0 and any(np.dot(d, self.velocity) < self._cos_stop * speed for d in directions):
             self.stop()
             return True
+        if confirmed is not None:
+            directions = self.directions(covered & confirmed, rotation)
+            if not directions:
+                return False
         push = np.mean(directions, axis=0)
         norm = float(np.linalg.norm(push))
         if norm < 1e-6:  # Opposite holes at once: no direction
@@ -283,6 +311,33 @@ class JogLogic:
         if speed > self.cfg.max_speed:
             self.velocity *= self.cfg.max_speed / speed
         return False
+
+
+def start_position(home: np.ndarray, cfg: BodyDemoConfig = CFG, rng: np.random.Generator | None = None) -> np.ndarray:
+    """Home + `start_offset`; with `rng` (--random-position), y and z drawn uniformly in the bounding box,
+    `random_margin` from its faces. ValueError if it is outside the bounding box."""
+    position = np.asarray(home, dtype=float) + np.array(cfg.start_offset)
+    lower, upper = np.array(cfg.box_lower), np.array(cfg.box_upper)
+    if rng is not None:
+        position[1:] = rng.uniform(lower[1:] + cfg.random_margin, upper[1:] - cfg.random_margin)
+    if np.any(position < lower) or np.any(position > upper):
+        raise ValueError(f"Start position {np.round(position, 3)} is outside the bounding box [{lower}, {upper}]")
+    return position
+
+
+class PressCounter:
+    """Holes detected in at least `n` sensor frames in a row (a frame is a new `TouchFrame` object)."""
+
+    def __init__(self, n: int):
+        self.n = n
+        self._counts: dict[int, int] = {}
+        self._last: TouchFrame | None = None
+
+    def update(self, frame: TouchFrame) -> frozenset[int]:
+        if frame is not self._last:
+            self._last = frame
+            self._counts = {h: self._counts.get(h, 0) + 1 for h in frame.covered}
+        return frozenset(h for h, n in self._counts.items() if n >= self.n)
 
 
 class Jogger:
@@ -300,14 +355,17 @@ class Jogger:
         """Stop where the arm is now; returns that position."""
         raise NotImplementedError
 
+    def measured_position(self) -> np.ndarray:
+        """Where the end-effector is now [m] (`--record`)."""
+        raise NotImplementedError
+
 
 class OscJogger(Jogger):
     """Streams pose + twist targets to osc_pd_controller, keeping the start orientation."""
 
     def __init__(self, robot):
-        from arm_client.robot import Pose, Twist
-
         from arm_client import CONFIG_DIR
+        from arm_client.robot import Pose, Twist
 
         self._Pose, self._Twist, self._config_dir = Pose, Twist, CONFIG_DIR
         self.robot = robot
@@ -332,12 +390,18 @@ class OscJogger(Jogger):
         self.step(position, np.zeros(3))
         return position
 
+    def measured_position(self) -> np.ndarray:
+        return np.asarray(self.robot.end_effector_pose.position, dtype=float)
+
 
 class SimJogger(Jogger):
-    """No arm (--no-robot): the commanded position is taken as reached. Starts in the middle of the bounding box."""
+    """No arm (--no-robot): the commanded position is taken as reached. Starts at `position`, by default the
+    middle of the bounding box."""
 
-    def __init__(self, cfg: BodyDemoConfig = CFG):
-        self.position = (np.array(cfg.box_lower) + np.array(cfg.box_upper)) / 2
+    def __init__(self, cfg: BodyDemoConfig = CFG, position: np.ndarray | None = None):
+        if position is None:
+            position = (np.array(cfg.box_lower) + np.array(cfg.box_upper)) / 2
+        self.position = np.array(position, dtype=float)
 
     def start(self) -> np.ndarray:
         return self.position.copy()
@@ -346,6 +410,9 @@ class SimJogger(Jogger):
         self.position = np.array(position, dtype=float)
 
     def hard_stop(self) -> np.ndarray:
+        return self.position.copy()
+
+    def measured_position(self) -> np.ndarray:
         return self.position.copy()
 
 
@@ -441,31 +508,44 @@ def run(
     link: LinkOrientation | None = None,
     calibration_rotation: np.ndarray | None = None,
     monitor: DemoMonitor | None = None,
+    recorder: recording.BodyRecorder | None = None,
 ) -> None:
     """Jog until Ctrl+C (or `q` in the terminal input, or `monitor.stop_event`).
 
     `link`: prints its drift; with `fixed_mapping=False`, needed with its orientation at the calibration,
     `calibration_rotation` (base <- link, 3x3). `monitor`: the live plot's view of the loop, and its controls.
+    `recorder` (`--record`): records the touches and the arm.
     """
     if not cfg.fixed_mapping and (link is None or calibration_rotation is None):
         raise ValueError("fixed_mapping=False needs the link and its orientation at the calibration")
 
-    def say(state: str, message: str) -> None:
+    state = "starting"
+
+    def say(new_state: str, message: str) -> None:
+        nonlocal state
+        state = new_state
         print(message)
         if monitor is not None:
-            monitor.set_state(state, message)
+            monitor.set_state(new_state, message)
+        if recorder is not None:
+            recorder.event(new_state, message)
 
     lower, upper = np.array(cfg.box_lower), np.array(cfg.box_upper)
     logic = JogLogic(cfg)
+    # Typed input holds one frame until the next line, and is not noisy
+    presses = PressCounter(1 if isinstance(touch, TerminalTouchSource) else cfg.min_presses)
     position = jogger.start()
     if np.any(position < lower) or np.any(position > upper):
         raise RuntimeError(f"Start position {position} is outside the bounding box [{lower}, {upper}]")
+    if recorder is not None:
+        recorder.mapping(cfg.direction_holes)
     say("idle", "Ready: touch the waveguide")
 
     period = 1.0 / cfg.rate_hz
     t_last = t_next = time.monotonic()
     t_drift = t_last
     drift_warned = False
+    recorded_frame = None
     while not (isinstance(touch, TerminalTouchSource) and touch.quit_requested.is_set()):
         if monitor is not None and monitor.stop_event.is_set():
             break
@@ -474,12 +554,23 @@ def run(
         now = time.monotonic()
         dt, t_last = min(now - t_last, cfg.max_dt_s), now
 
+        # Read before the pause below, so the touches are recorded while calibrating from the plot
+        frame = touch.latest()
+        confirmed = frozenset() if frame is None else presses.update(frame)
+        if recorder is not None:
+            if frame is not None and frame is not recorded_frame:
+                recorded_frame = frame
+                recorder.frame(frame, confirmed)
+            recorder.state(now, jogger.measured_position(), position, logic.velocity, state)
+
         if monitor is not None:
             monitor.publish(position, logic.velocity)
             mapping = monitor.take_mapping()
             if mapping is not None:  # Calibrated from the plot
                 logic = JogLogic(replace(cfg, direction_holes=mapping))
                 position = jogger.hard_stop()
+                if recorder is not None:
+                    recorder.mapping(mapping)
                 say("idle", f"New hole mapping: {mapping}")
             if monitor.paused.is_set():
                 if np.any(logic.velocity):
@@ -488,7 +579,6 @@ def run(
                     say("idle", "Paused: stopped")
                 continue
 
-        frame = touch.latest()
         if frame is None or now - frame.t > cfg.touch_timeout_s:
             if np.any(logic.velocity):
                 say("nodata", "No touch data: stopping")
@@ -501,7 +591,7 @@ def run(
             rotation = link.rotation() @ calibration_rotation.T
 
         moving, was_stopped = bool(np.any(logic.velocity)), logic.stopped
-        if logic.update(dt, frame.covered, rotation):
+        if logic.update(dt, frame.covered, rotation, confirmed):
             position = jogger.hard_stop()
             say("stop", f"STOP (touched holes {logic.touched(frame.covered)}) at {np.round(position, 3)}")
             continue
@@ -539,6 +629,7 @@ def run_with_live_plot(
     link: LinkOrientation | None,
     calibration_rotation: np.ndarray | None,
     sensor_calibration: Path,
+    recorder: recording.BodyRecorder | None = None,
 ) -> None:
     """`run` in a background thread, with the live plot (`body_live_plot.show`) in this one (Qt needs the main
     thread). Ends when the window is closed (or Ctrl+C) or `run` ends."""
@@ -548,7 +639,7 @@ def run_with_live_plot(
 
     def control() -> None:
         try:
-            run(jogger, touch, cfg, link, calibration_rotation, monitor)
+            run(jogger, touch, cfg, link, calibration_rotation, monitor, recorder)
         except Exception as e:  # noqa: BLE001, raised again below
             errors.append(e)
         finally:
@@ -578,7 +669,24 @@ def main():
     parser.add_argument("--calibrate", action="store_true", help="Calibrate the hole -> direction mapping first")
     parser.add_argument("--live-plot", action="store_true", help="Live plot, with the mapping calibration (⚙ tab)")
     parser.add_argument("--no-robot", action="store_true", help="No arm (no ROS): its motion is simulated")
+    parser.add_argument(
+        "--min-presses",
+        type=int,
+        default=CFG.min_presses,
+        help=f"sensor frames in a row a hole must be detected in to move the arm (default: {CFG.min_presses})",
+    )
+    parser.add_argument(
+        "--record", action="store_true", help=f"Record the run to {recording.DATA_DIR / 'body'}/<date-time>"
+    )
+    parser.add_argument("--notes", default="", help="--record: purpose of the run, saved in its metadata")
+    parser.add_argument(
+        "--random-position",
+        action="store_true",
+        help="Start at a random y, z in the bounding box (x: home + start_offset)",
+    )
     args = parser.parse_args()
+    if args.min_presses < 1:
+        parser.error("--min-presses must be at least 1")
     if args.calibrate and args.input != "waveguide":
         parser.error("--calibrate needs --input waveguide")
     if args.calibrate and args.live_plot:
@@ -586,7 +694,7 @@ def main():
     if (args.no_drift or args.no_robot) and not CFG.fixed_mapping:
         parser.error("--no-drift / --no-robot: the link orientation is needed with BodyDemoConfig.fixed_mapping=False")
 
-    cfg = CFG
+    cfg = replace(CFG, min_presses=args.min_presses)
     mapping = load_mapping(cfg.calibration_path)
     if mapping is not None:
         cfg = replace(cfg, direction_holes=mapping.direction_holes)
@@ -601,43 +709,80 @@ def main():
     else:
         touch = TerminalTouchSource(aliases=cfg.direction_holes)
 
+    rng = np.random.default_rng() if args.random_position else None
     robot, link = None, None
     if args.no_robot:
-        jogger = SimJogger(cfg)
+        try:
+            jogger = SimJogger(cfg, start_position(np.array(cfg.sim_home), cfg, rng))
+        except ValueError as e:
+            parser.exit(1, f"Error: {e}\n")
+        print(f"Start position: {np.round(jogger.position, 3)}")
     else:
         from arm_client.robot import Robot
 
         robot = Robot(namespace="fr3")
         robot.wait_until_ready()
         jogger = OscJogger(robot)
+
+    logger = recorder = None
+    if args.record:
+        metadata = {"args": vars(args), "body": asdict(cfg)}
+        if args.input == "waveguide":
+            metadata["teensy"] = asdict(teensy_config(args))
+        logger = recording.start_logger("body", args.notes, json.loads(json.dumps(metadata, default=str)))
+        recorder = recording.BodyRecorder(logger)
+        if args.input == "waveguide":
+            recorder.calibration(args.sensor_calibration, Path(logger.run_dir))
+        if cfg.calibration_path.exists():
+            shutil.copy2(cfg.calibration_path, Path(logger.run_dir) / cfg.calibration_path.name)
+
+    def go_to_start() -> None:
+        if robot is None:
+            return
+        from arm_client.robot import Pose
+
+        home = robot.end_effector_pose
+        position = start_position(home.position, cfg, rng)
+        print(f"Going to the start position {np.round(position, 3)}...")
+        robot.move_to(pose=Pose(position, home.orientation), speed=cfg.start_speed)  # IK + joint trajectory
+        if recorder is not None:
+            recorder.event("start", f"Start position {np.round(position, 3).tolist()}")
+
     try:
         if robot is not None:
             print("Going to home position...")
             robot.home()
+            # At home, as the hole mapping: its drift is from there
             link = None if args.no_drift else LinkOrientation(robot, cfg.link_name)
+        if not args.calibrate:
+            go_to_start()
         touch.start()
-        if args.calibrate:
+        if args.calibrate:  # At home
             mapping = calibrate(touch, cfg, link)
             cfg = replace(cfg, direction_holes=mapping.direction_holes)
+            go_to_start()
         print(f"Hole mapping: {cfg.direction_holes}")
 
         calibration_rotation = None if mapping is None else mapping.link_rotation
         if not cfg.fixed_mapping and calibration_rotation is None:
             # Placeholder or calibrated without the link orientation: assume it was at home, as now
-            print(f"No {cfg.link_name} orientation in the calibration: using the current one (at home)")
+            print(f"No {cfg.link_name} orientation in the calibration: using the one at home")
             calibration_rotation = link.start_rotation()
         if args.live_plot:
-            run_with_live_plot(jogger, touch, cfg, link, calibration_rotation, args.sensor_calibration)
+            run_with_live_plot(jogger, touch, cfg, link, calibration_rotation, args.sensor_calibration, recorder)
         else:
-            run(jogger, touch, cfg, link, calibration_rotation)
+            run(jogger, touch, cfg, link, calibration_rotation, recorder=recorder)
     except KeyboardInterrupt:
         print()
-    except (RuntimeError, TimeoutError) as e:
+    except (RuntimeError, TimeoutError, ValueError) as e:
         print(f"Stopping: {e}")
     finally:
         if robot is not None and jogger.orientation is not None:
             jogger.hard_stop()  # The robot holds this target
         touch.close()
+        if logger is not None:
+            logger.stop()
+            print(f"Recorded to {logger.run_dir}")
         if robot is not None:
             robot.shutdown()
 

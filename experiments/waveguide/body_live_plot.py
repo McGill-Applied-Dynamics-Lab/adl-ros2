@@ -113,6 +113,20 @@ def show(
         starting=c["muted"], idle=c["muted"], moving=c["command"], stop=c["touch"], box=c["reference"], nodata=c["muted"]
     )
     errors = []
+    brushes, pens = {}, {}
+
+    def brush(color):
+        """One brush per color, reused: the scatter plots render a symbol per brush object (pyqtgraph's
+        SymbolAtlas), so a new brush for every redraw re-renders every spot."""
+        key = color if isinstance(color, str) else tuple(int(v) for v in color)
+        if key not in brushes:
+            brushes[key] = pg.mkBrush(key) if isinstance(key, str) else pg.mkBrush(*key)
+        return brushes[key]
+
+    def line_pen(color):
+        if color not in pens:
+            pens[color] = tools.pen(color, width=4)
+        return pens[color]
 
     window = QtWidgets.QWidget()
     window.setWindowTitle("Waveguide body demo")
@@ -154,7 +168,7 @@ def show(
 
     # The spots are only recoloured, never moved or resized (see sensor.run_with_live_plot)
     idle_pen, covered_pen = pg.mkPen(c["hole_edge"], width=1.2), pg.mkPen(c["hole_covered_edge"], width=3)
-    holes = pg.ScatterPlotItem(x=hole_cm, y=np.zeros(len(hole_cm)), size=20, brush=pg.mkBrush(*idle_rgb), pen=idle_pen)
+    holes = pg.ScatterPlotItem(x=hole_cm, y=np.zeros(len(hole_cm)), size=20, brush=brush(idle_rgb), pen=idle_pen)
     holes.setZValue(5)
     guide.addItem(holes)
     for i, (hole, x) in enumerate(zip(hole_ids, hole_cm)):
@@ -171,7 +185,7 @@ def show(
         key = (frozenset(outlined), colors.tobytes())
         if key == shown_holes:
             return
-        holes.setBrush([pg.mkBrush(*color) for color in colors])
+        holes.setBrush([brush(color) for color in colors])
         holes.setPen([covered_pen if hole in outlined else idle_pen for hole in hole_ids])
         shown_holes = key
 
@@ -263,8 +277,8 @@ def show(
         colors = hole_colors(hole_vectors(direction_holes, cfg.interpolate_holes))
         calibrated = {h for hs in direction_holes.values() for h in hs}
         mapping.update(direction_holes=direction_holes, colors=colors, calibrated=calibrated)
-        mapping["brushes"] = {h: pg.mkBrush(*np.round(rgb).astype(int)) for h, rgb in colors.items()}
-        mapping["unmapped_brush"] = pg.mkBrush(c["muted"])
+        mapping["brushes"] = {h: brush(np.round(rgb)) for h, rgb in colors.items()}
+        mapping["unmapped_brush"] = brush(c["muted"])
         for label in direction_labels:
             guide.removeItem(label)
         direction_labels.clear()
@@ -412,7 +426,7 @@ def show(
         event_marks.setData(
             x=[t - now for t, _ in events],
             y=[top_hole + 1] * len(events),
-            brush=[pg.mkBrush(state_colors[kind]) for _, kind in events],
+            brush=[brush(state_colors[kind]) for _, kind in events],
         )
 
         # 2. Waveguide
@@ -461,7 +475,7 @@ def show(
             for (i, j), trail_curve, velocity_line, dot in views:
                 trail_curve.setData(points[:, i], points[:, j])
                 if abs(tip[i] - position[i]) + abs(tip[j] - position[j]) > 1e-6:
-                    velocity_line.setData([position[i], tip[i]], [position[j], tip[j]], pen=tools.pen(color, width=4))
+                    velocity_line.setData([position[i], tip[i]], [position[j], tip[j]], pen=line_pen(color))
                     velocity_line.show()
                 else:  # A zero-length line is drawn across the whole view
                     velocity_line.hide()

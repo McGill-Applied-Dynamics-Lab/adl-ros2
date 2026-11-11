@@ -14,7 +14,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from touch import HoleTouch, TerminalTouchSource, TouchFrame  # noqa: E402
-from wg_body_demo import BodyDemoConfig, DirectionCalibration, HoleMapping, JogLogic, hole_vectors, load_mapping, save_mapping  # noqa: E402
+from wg_body_demo import BodyDemoConfig, DirectionCalibration, HoleMapping, JogLogic, PressCounter, hole_vectors, load_mapping, save_mapping, start_position  # noqa: E402
 
 CFG = BodyDemoConfig(
     direction_holes={"+x": (1, 2), "-x": (3,), "+y": (4,), "-y": (5,), "+z": (6,), "-z": (7,)},
@@ -46,6 +46,41 @@ def test_speed_is_capped():
     logic = JogLogic(CFG)
     hold(logic, {1, 4}, 1000)
     assert np.linalg.norm(logic.velocity) == pytest.approx(CFG.max_speed)
+
+
+def test_press_counter_needs_n_frames_in_a_row():
+    presses = PressCounter(3)
+    frame = lambda *holes: TouchFrame(tuple(HoleTouch(h, 0.0, 1.0) for h in holes))  # noqa: E731
+    assert presses.update(frame(1)) == frozenset()
+    held = frame(1, 2)
+    assert presses.update(held) == frozenset()
+    assert presses.update(held) == frozenset()  # Same frame again: not counted
+    assert presses.update(frame(1, 2)) == {1}
+    assert presses.update(frame(2)) == {2}
+    assert presses.update(frame(1)) == frozenset()  # 1 missed a frame: counts again from 1
+
+
+def test_unconfirmed_holes_do_not_move_but_stop():
+    logic = JogLogic(CFG)
+    assert logic.update(DT, frozenset({1}), confirmed=frozenset()) is False
+    np.testing.assert_allclose(logic.velocity, 0.0)
+    logic.update(DT, frozenset({1}), confirmed=frozenset({1}))
+    assert logic.velocity[0] > 0
+    assert logic.update(DT, frozenset({3}), confirmed=frozenset()) is True
+
+
+def test_start_position_offset_and_random():
+    cfg = BodyDemoConfig()
+    home = np.array(cfg.sim_home)
+    np.testing.assert_allclose(start_position(home, cfg), home + cfg.start_offset)
+    rng = np.random.default_rng(0)
+    lower, upper = np.array(cfg.box_lower) + cfg.random_margin, np.array(cfg.box_upper) - cfg.random_margin
+    starts = np.array([start_position(home, cfg, rng) for _ in range(200)])
+    np.testing.assert_allclose(starts[:, 0], home[0] + cfg.start_offset[0])  # x kept
+    assert np.all(starts[:, 1:] >= lower[1:]) and np.all(starts[:, 1:] <= upper[1:])
+    assert np.ptp(starts[:, 1]) > 0.2 and np.ptp(starts[:, 2]) > 0.2  # Spread over the box
+    with pytest.raises(ValueError, match="outside the bounding box"):
+        start_position(np.array([0.9, 0.0, 0.4]), cfg)
 
 
 def test_opposite_touch_stops_until_release():
@@ -408,7 +443,7 @@ def test_monitor_pause_stops_and_new_mapping_applies():
     jogger, thread = _run_in_thread(cfg, touch, monitor)
     touch.covered = {1}
     _wait(lambda: monitor.snapshot()["state"] == "moving")
-    assert monitor.snapshot()["velocity"][0] > 0
+    _wait(lambda: monitor.snapshot()["velocity"][0] > 0)  # Published at the start of the next loop step
 
     monitor.paused.set()  # Calibrating: stops, and stays stopped while touched
     _wait(lambda: not np.any(monitor.snapshot()["velocity"]))

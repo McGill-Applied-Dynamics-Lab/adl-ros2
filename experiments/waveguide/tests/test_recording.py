@@ -127,3 +127,55 @@ def test_plot_run_reads_a_recorded_run(tmp_path, monkeypatch):
     assert "x -3.0 cm" in plot_run.summary(run)
     fig = plot_run.plot_run(run, title="test")
     assert len(fig.axes) == 4
+
+
+def test_body_demo_run_is_recorded_and_plotted(tmp_path, monkeypatch):
+    """wg_body_demo `run` with a recorder, the simulated arm and scripted Teensy results: the run folder is read back
+    and plotted by plot_run (no echo panel: no frames)."""
+    import threading
+
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import plot_run
+    import wg_body_demo
+    from touch import HoleTouch, TouchFrame, TouchSource
+
+    class Scripted(TouchSource):
+        """A new result every call: hole 1 (+x) for 0.3 s, then hole 2 (-x), the opposite: a stop."""
+
+        def __init__(self):
+            self.t0 = time.monotonic()
+
+        def latest(self):
+            hole = 1 if time.monotonic() - self.t0 < 0.3 else 2
+            return TouchFrame((HoleTouch(hole, 25.0, 50.0),))
+
+    monkeypatch.setattr(recording, "DATA_DIR", tmp_path)
+    cfg = wg_body_demo.BodyDemoConfig(direction_holes={"+x": (1,), "-x": (2,)}, acceleration=1.0, min_presses=3)
+    logger = recording.start_logger("body", "test", {})
+    recorder = recording.BodyRecorder(logger)
+    recorder.calibration(CALIBRATION_DIR / "calibration_dummy.npz", logger.run_dir)
+    monitor = wg_body_demo.DemoMonitor()
+    thread = threading.Thread(
+        target=wg_body_demo.run,
+        args=(wg_body_demo.SimJogger(cfg), Scripted(), cfg, None, None, monitor, recorder),
+        daemon=True,
+    )
+    thread.start()
+    time.sleep(0.6)
+    monitor.stop_event.set()
+    thread.join(timeout=1.0)
+    logger.stop()
+
+    run = plot_run.load_run(logger.run_dir)
+    detections = run["sensor/detection"]
+    assert detections[0]["covered"] == [1] and detections[0]["pressed"] == []  # Not yet min_presses
+    assert any(s["pressed"] == [1] for s in detections)
+    assert [e["state"] for e in run["robot/event"]][:3] == ["idle", "moving", "stop"]
+    assert json.loads(run["body/mapping"][0]["direction_holes"]) == {"+x": [1], "-x": [2]}
+    position = np.array([s["position"] for s in run["robot/state"]])
+    assert position[-1, 0] > position[0, 0]  # Moved along +x before the stop
+    assert (logger.run_dir / "calibration_1.npz").exists()
+    fig = plot_run.plot_run(run, title="body")
+    assert len(fig.axes) == 3

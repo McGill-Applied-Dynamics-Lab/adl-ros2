@@ -208,6 +208,14 @@ def add_teensy_args(parser: argparse.ArgumentParser, default: TeensyConfig = Tee
     )
     group.add_argument("--upload", action="store_true", help="upload the calibration even if the Teensy has one")
     group.add_argument("--method", default=default.method, help=f"detection method (default: {default.method})")
+    group.add_argument(
+        "--average",
+        type=int,
+        default=default.average,
+        choices=range(1, 33),
+        metavar="{1..32}",
+        help=f"cycles averaged per result on the Teensy (default: {default.average})",
+    )
 
 
 def teensy_config(args: argparse.Namespace, default: TeensyConfig = TeensyConfig()) -> TeensyConfig:
@@ -220,6 +228,7 @@ def teensy_config(args: argparse.Namespace, default: TeensyConfig = TeensyConfig
         calibration_path=args.sensor_calibration,
         force_upload=args.upload,
         method=args.method,
+        average=args.average,
     )
 
 

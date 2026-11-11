@@ -1,7 +1,7 @@
 """Data recording of the waveguide runs (`--record`), with the lab's `experiment_logger`.
 
 A run is a folder `~/data/waveguide/<kind>/<YYYYmmdd-HHMMSS>/` (kind: "teleop" for `wg_teleop.py`, "sensor"
-for `sensor.py`) with `samples.mcap` (Foxglove-openable; `experiment_logger.load_streams(run_dir)` gives one
+for `sensor.py`, "body" for `wg_body_demo.py`) with `samples.mcap` (Foxglove-openable; `experiment_logger.load_streams(run_dir)` gives one
 DataFrame per stream), `metadata.json` (git provenance, configs, notes) and a copy of every calibration used.
 The loader spreads lists over numbered columns (`frame_0` ... `frame_1499`, `position_0..2`, `pressed_0`, ...; a
 1-element list is a single column): `df.filter(regex=r"^frame_\d+$").to_numpy()` gives the frames.
@@ -10,7 +10,9 @@ Streams. Every sample is stamped with the wall time (MCAP log time) and has `t_m
 by the sensor and robot processes (the `t_created` of the commands is on the same clock):
 - `sensor/frame`: the averaged frame each estimate used (`frame`, ADC), one per frame once detecting
 - `sensor/detection`: the estimate of that frame: `detected`, `hole`, `hole2`, `distance_cm`, `amplitude`,
-  `echo_time_ms` (None: not available), `pressed` (the holes the gesture layer saw)
+  `echo_time_ms` (None: not available), `pressed` (the holes the gesture layer saw; wg_body_demo: the holes past
+  `min_presses`, allowed to move the arm). wg_body_demo also records `covered` (every hole of the Teensy result)
+  and has no `sensor/frame`: the Teensy sends its results only
 - `sensor/background`: each background recorded (`frame`), at start and after a recalibration
 - `sensor/calibration`: each calibration loaded: `file` (its copy in the run folder), `threshold`, `hole_ids`
 - `sensor/swipe`: each finished touch, ignored ones included: `kind`, `start_hole`, `end_hole`, `duration_s`,
@@ -18,11 +20,17 @@ by the sensor and robot processes (the `t_created` of the commands is on the sam
 - `robot/command` (wg_teleop): each command and what the robot did with it: `status` ("executed",
   "ignored_moving", "invalid", "home"), `detail`, `axis`, `distance`, `speed`, `t_created`, `target` [m]
 - `robot/state` (wg_teleop, `STATE_RATE_HZ`): `position` [m] and `orientation` (xyzw) of the end-effector, and
-  `target` [m], the commanded position
+  `target` [m], the commanded position. wg_body_demo (at most `STATE_RATE_HZ`): `position` (measured; with
+  --no-robot, the simulated one), `target`, `velocity` [m/s] (commanded) and `state` (`wg_body_demo.DemoMonitor`)
+- `robot/event` (wg_body_demo): each change of what the arm does: `state` ("start": the start position reached,
+  "idle", "moving", "stop", "box", "nodata") and `message`, as printed
+- `body/mapping` (wg_body_demo): the hole -> direction mapping (`direction_holes`, JSON), at the start and after
+  each calibration from the live plot
 
 Nothing here imports ROS.
 """
 
+import json
 import shutil
 import threading
 import time
@@ -244,3 +252,69 @@ class RobotRecorder:
                 },
                 wall_time(t),
             )
+
+
+class BodyRecorder:
+    """Records the robot body demo (wg_body_demo `run`, see the module docstring). Called from its control loop."""
+
+    def __init__(self, logger, rate_hz: float = STATE_RATE_HZ):
+        self.logger, self._period = logger, 1.0 / rate_hz
+        self._t_state = -np.inf
+
+    def calibration(self, path: Path, run_dir: Path) -> None:
+        """The sensor calibration uploaded (or already on the Teensy): a copy in `run_dir`, its threshold, holes."""
+        path, t = Path(path), time.monotonic()
+        copy = Path(run_dir) / f"calibration_1{path.suffix}"
+        shutil.copy2(path, copy)
+        with np.load(path) as data:
+            threshold, hole_ids = float(data["threshold"]), data["hole_ids"].astype(int).tolist()
+        self.logger.log_sample(
+            "sensor/calibration",
+            {"t_mono": t, "file": copy.name, "source": str(path), "threshold": threshold, "hole_ids": hole_ids},
+            wall_time(t),
+        )
+
+    def mapping(self, direction_holes: dict[str, tuple[int, ...]]) -> None:
+        t = time.monotonic()
+        mapping = {d: [int(h) for h in holes] for d, holes in direction_holes.items()}
+        self.logger.log_sample("body/mapping", {"t_mono": t, "direction_holes": json.dumps(mapping)}, wall_time(t))
+
+    def frame(self, frame, confirmed: frozenset[int]) -> None:
+        """A new Teensy result (`touch.TouchFrame`), and the holes past `min_presses` after it."""
+        holes = frame.holes
+        self.logger.log_sample(
+            "sensor/detection",
+            {
+                "t_mono": frame.t,
+                "detected": bool(holes),
+                "hole": holes[0].idx if holes else None,
+                "hole2": holes[1].idx if len(holes) > 1 else None,
+                "distance_cm": _number(holes[0].distance_cm) if holes else None,
+                "amplitude": float(frame.amplitude),
+                "echo_time_ms": None,
+                "pressed": sorted(confirmed),
+                "covered": sorted(frame.covered),
+            },
+            wall_time(frame.t),
+        )
+
+    def state(self, t_mono: float, position, target, velocity, state: str) -> None:
+        """The arm at this control step; recorded at most every 1 / `rate_hz`."""
+        if t_mono - self._t_state < self._period:
+            return
+        self._t_state = t_mono
+        self.logger.log_sample(
+            "robot/state",
+            {
+                "t_mono": t_mono,
+                "position": np.asarray(position, dtype=float),
+                "target": np.asarray(target, dtype=float),
+                "velocity": np.asarray(velocity, dtype=float),
+                "state": state,
+            },
+            wall_time(t_mono),
+        )
+
+    def event(self, state: str, message: str) -> None:
+        t = time.monotonic()
+        self.logger.log_sample("robot/event", {"t_mono": t, "state": state, "message": message}, wall_time(t))
